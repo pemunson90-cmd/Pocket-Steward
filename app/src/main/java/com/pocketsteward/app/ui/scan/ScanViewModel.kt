@@ -11,11 +11,15 @@ import com.pocketsteward.app.scan.ScanProgress
 import com.pocketsteward.app.scan.classifyByExtension
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.storage.StorageGateway
+import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
 
@@ -50,11 +54,20 @@ class ScanViewModel(
                     return@launch
                 }
 
-                val root = resolveRoot(target, mode, accessState.safTreeUri)
+                val gateway = container.gatewayFor(mode)
+                val root = resolveRoot(target, mode, accessState.safTreeUri, gateway)
                 val scanner = container.fileScanner(mode)
 
-                scanner.scan(root) { progress ->
-                    _uiState.value = ScanUiState.Scanning(progress)
+                // DirectStorageGateway's listChildren/stat are suspend
+                // functions doing blocking java.io.File work with no
+                // dispatcher of their own — without this, that I/O runs on
+                // Dispatchers.Main.immediate (viewModelScope's default) and
+                // a scan of "Everything" would freeze the UI thread long
+                // enough to ANR.
+                withContext(Dispatchers.IO) {
+                    scanner.scan(root) { progress ->
+                        _uiState.value = ScanUiState.Scanning(progress)
+                    }
                 }
 
                 val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
@@ -80,10 +93,20 @@ class ScanViewModel(
         _uiState.value = ScanUiState.Idle
     }
 
-    private fun resolveRoot(target: ScanTarget, mode: StorageAccessMode, safTreeUri: String?): FileRef {
+    private suspend fun resolveRoot(
+        target: ScanTarget,
+        mode: StorageAccessMode,
+        safTreeUri: String?,
+        gateway: StorageGateway,
+    ): FileRef {
         if (mode == StorageAccessMode.SAF) {
             val uri = requireNotNull(safTreeUri) { "SAF mode with no granted tree URI" }
-            return FileRef.Saf(uri)
+            // Must go through rootOf(), not a bare FileRef.Saf(uri): it
+            // normalizes the raw tree URI (".../tree/X") into document-URI
+            // form (".../tree/X/document/X"), which is what makes
+            // SafStorageGateway's fromTreeUri-based listing/stat resolve
+            // this node instead of misbehaving on an un-normalized ref.
+            return gateway.rootOf(StorageScope.Tree(FileRef.Saf(uri), "Granted folder"))
         }
         // Environment.getExternalStoragePublicDirectory is deprecated for
         // scoped-storage apps in general, but this app deliberately runs

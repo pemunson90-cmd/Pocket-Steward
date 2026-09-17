@@ -12,12 +12,16 @@ import java.io.InputStream
  *
  * Every [FileRef.Saf] this class hands out, including the tree's own root
  * (see [rootOf]), is a *document* URI (`.../tree/X/document/Y`), never a
- * bare tree URI (`.../tree/X`). That's deliberate: `DocumentFile.fromTreeUri`
- * only resolves the tree's root document no matter what URI you hand it, so
- * using it past the root would silently re-list the root instead of the
- * requested child. Normalizing every ref to document-URI form means
- * [listChildren]/[stat] can use `fromSingleUri` uniformly for every node,
- * root included, with no special-casing.
+ * bare tree URI (`.../tree/X`). [listChildren] and [stat] both reconstruct
+ * via `DocumentFile.fromTreeUri`, not `fromSingleUri`: per the library
+ * source, `fromTreeUri` checks `DocumentsContract.isDocumentUri` and, when
+ * true, resolves the *given* document rather than the tree's root —
+ * `rootOf`'s normalization is exactly what makes that check pass for every
+ * node. `fromSingleUri` was tried first and is wrong here: it returns a
+ * `SingleDocumentFile`, whose `listFiles()` unconditionally throws
+ * `UnsupportedOperationException`, which is why an SAF-mode scan used to
+ * fail immediately. (Caught by actually building and running this — see
+ * BUILD_ENVIRONMENT.md.)
  *
  * Note for Milestone 2: DocumentsContract.moveDocument only moves within the
  * same document tree/provider. A move across two separately granted trees
@@ -43,9 +47,9 @@ class SafStorageGateway(
 
     override suspend fun listChildren(directory: FileRef): List<FileEntry> {
         val uri = Uri.parse(directory.requireUri())
-        val doc = DocumentFile.fromSingleUri(context, uri)
-        val children = doc.listFiles()
-        return children.mapNotNull { child ->
+        val doc = DocumentFile.fromTreeUri(context, uri)
+            ?: error("SafStorageGateway could not resolve a DocumentFile for $uri")
+        return doc.listFiles().mapNotNull { child ->
             val name = child.name ?: return@mapNotNull null
             FileEntry(
                 ref = FileRef.Saf(child.uri.toString()),
@@ -58,7 +62,8 @@ class SafStorageGateway(
 
     override suspend fun stat(ref: FileRef): FileMetadata {
         val uri = Uri.parse(ref.requireUri())
-        val doc = DocumentFile.fromSingleUri(context, uri)
+        val doc = DocumentFile.fromTreeUri(context, uri)
+            ?: error("SafStorageGateway could not resolve a DocumentFile for $uri")
         val name = doc.name ?: uri.lastPathSegment ?: "unknown"
         val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         return FileMetadata(
