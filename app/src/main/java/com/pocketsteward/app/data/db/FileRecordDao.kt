@@ -26,6 +26,14 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef AND isDirectory = 0")
     suspend fun getFilesUnderScopeRoot(scopeRootRef: String): List<FileRecord>
 
+    /** Plan Section 16's "find the N largest files" quick action. */
+    @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef AND isDirectory = 0 ORDER BY sizeBytes DESC LIMIT :limit")
+    suspend fun getLargestFiles(scopeRootRef: String, limit: Int): List<FileRecord>
+
+    /** Plan Section 16's "find old files" quick action. Nulls (unknown modified time) never count as old. */
+    @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef AND isDirectory = 0 AND modifiedAt IS NOT NULL AND modifiedAt < :cutoffMillis ORDER BY modifiedAt ASC")
+    suspend fun getFilesOlderThan(scopeRootRef: String, cutoffMillis: Long): List<FileRecord>
+
     /** Files and directories, unlike [getFilesUnderScopeRoot] — what a [com.pocketsteward.app.plan.FileIndex] snapshot needs. */
     @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef")
     suspend fun getAllUnderScopeRoot(scopeRootRef: String): List<FileRecord>

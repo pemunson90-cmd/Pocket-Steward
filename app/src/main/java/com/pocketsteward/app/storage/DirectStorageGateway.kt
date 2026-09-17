@@ -59,7 +59,11 @@ class DirectStorageGateway(
 
     override suspend fun exists(ref: FileRef): Boolean = File(ref.requirePath()).exists()
 
-    override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 4 (content inspection)")
+    override suspend fun openRead(ref: FileRef): InputStream {
+        val file = File(ref.requirePath())
+        check(file.exists() && !file.isDirectory) { "Cannot open a non-existent file or a directory for reading: ${file.absolutePath}" }
+        return file.inputStream()
+    }
 
     override suspend fun createDirectory(parent: FileRef, name: String): MutationResult {
         val dir = File(File(parent.requirePath()), name)

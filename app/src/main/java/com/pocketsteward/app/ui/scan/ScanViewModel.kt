@@ -3,7 +3,11 @@ package com.pocketsteward.app.ui.scan
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketsteward.app.cleanup.CleanupPlanGenerator
+import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
+import com.pocketsteward.app.dedupe.DuplicateDetector
+import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.di.AppContainer
 import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.UndoSummary
@@ -20,6 +24,7 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
+import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
 
@@ -50,6 +56,10 @@ sealed interface ScanUiState {
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
     data class Undoing(val taskRunId: Long) : ScanUiState
     data class UndoDone(val summary: UndoSummary) : ScanUiState
+    /** Plan Section 8: duplicate candidates found by the size/fingerprint/hash cascade, not yet acted on. */
+    data class DuplicateReview(val groups: List<DuplicateGroup>, val scopeRoot: FileRef, val scopeLabel: String) : ScanUiState
+    /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
+    data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
     data class Error(val message: String) : ScanUiState
 }
 
@@ -152,6 +162,126 @@ class ScanViewModel(
                     rejected = validated.rejected,
                     scopeRoot = root,
                 )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * Plan Section 4/9: the rule engine plans, no model involved. Pulls
+     * [SettingsRepository.projectKeywords] so a user-configured term like
+     * "Leaseworld" groups by project before falling back to a plain
+     * extension category, then runs the result through the same
+     * [PlanValidator] every other plan goes through — nothing about being
+     * rule-generated exempts it from validation.
+     */
+    fun proposeSmartCleanup(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                val root = summary.scopeRoot
+                if (root !is FileRef.Direct) {
+                    _uiState.value = ScanUiState.Error("Smart cleanup is only wired up for broad storage access right now.")
+                    return@launch
+                }
+                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                val projectKeywords = settingsRepository.projectKeywords.first()
+                val plan = CleanupPlanGenerator.generate(root, records, projectKeywords)
+                if (plan.operations.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("Nothing under ${summary.scopeLabel} could be classified with full confidence — nothing to propose.")
+                    return@launch
+                }
+
+                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
+                val validated = PlanValidator.validate(plan.operations, index)
+
+                _uiState.value = ScanUiState.PlanPreview(
+                    goal = plan.goal,
+                    accepted = validated.accepted,
+                    rejected = validated.rejected,
+                    scopeRoot = root,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * Plan Section 8's cascade, run on demand rather than during every scan
+     * — hashing file contents is exactly what Section 22/23 mean by content
+     * inspection, which stays opt-in per action, not automatic.
+     */
+    fun findDuplicates(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                val root = summary.scopeRoot
+                val mode = summary.mode
+                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                val detector = DuplicateDetector(container.gatewayFor(mode))
+                val groups = withContext(Dispatchers.IO) { detector.findDuplicates(records) }
+                _uiState.value = ScanUiState.DuplicateReview(groups, root, summary.scopeLabel)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * Trashes every member of a duplicate group except the first — never a
+     * real delete, same `trash()` path as everything else, so the same
+     * manual review-in-Trash safety net applies. The Plan Preview screen
+     * still shows every one of these before anything moves; this only
+     * proposes, it does not execute.
+     */
+    fun proposeTrashDuplicates(review: ScanUiState.DuplicateReview) {
+        viewModelScope.launch {
+            try {
+                val operations = review.groups.flatMap { group ->
+                    group.members.drop(1).map { record ->
+                        PlannedOperation.Trash(
+                            source = parseFileRef(record.stableRef),
+                            reason = "Duplicate of ${group.members.first().displayName} (matching SHA-256)",
+                        )
+                    }
+                }
+                if (operations.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("No duplicates to trash.")
+                    return@launch
+                }
+                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(review.scopeRoot.rawValue()))
+                val validated = PlanValidator.validate(operations, index)
+                _uiState.value = ScanUiState.PlanPreview(
+                    goal = "Trash duplicate files under ${review.scopeLabel}",
+                    accepted = validated.accepted,
+                    rejected = validated.rejected,
+                    scopeRoot = review.scopeRoot,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Plan Section 16's "find the 50 largest files" quick action — browse only, nothing planned yet. */
+    fun findLargestFiles(summary: ScanUiState.Summary, limit: Int = 50) {
+        viewModelScope.launch {
+            try {
+                val records = container.database.fileRecordDao().getLargestFiles(summary.scopeRoot.rawValue(), limit)
+                _uiState.value = ScanUiState.FileListReview("$limit largest files under ${summary.scopeLabel}", records)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Plan Section 16's "find old files" quick action — browse only, nothing planned yet. */
+    fun findOldFiles(summary: ScanUiState.Summary, olderThanMonths: Int = 6) {
+        viewModelScope.launch {
+            try {
+                val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30L * olderThanMonths)
+                val records = container.database.fileRecordDao().getFilesOlderThan(summary.scopeRoot.rawValue(), cutoff)
+                _uiState.value = ScanUiState.FileListReview("Files older than $olderThanMonths months under ${summary.scopeLabel}", records)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }

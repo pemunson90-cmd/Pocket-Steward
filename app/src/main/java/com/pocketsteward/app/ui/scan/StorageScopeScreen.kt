@@ -29,6 +29,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.scan.FileCategory
@@ -78,6 +80,10 @@ fun StorageScopeScreen(onBack: () -> Unit) {
                     state = state,
                     onScanAgain = viewModel::reset,
                     onOrganizeApks = { viewModel.proposeOrganizeApks(state) },
+                    onSmartCleanup = { viewModel.proposeSmartCleanup(state) },
+                    onFindDuplicates = { viewModel.findDuplicates(state) },
+                    onFindLargestFiles = { viewModel.findLargestFiles(state) },
+                    onFindOldFiles = { viewModel.findOldFiles(state) },
                 )
                 is ScanUiState.PlanPreview -> PlanPreviewContent(
                     state = state,
@@ -91,6 +97,12 @@ fun StorageScopeScreen(onBack: () -> Unit) {
                 )
                 is ScanUiState.Undoing -> UndoingContent()
                 is ScanUiState.UndoDone -> UndoDoneContent(state, onDone = viewModel::reset)
+                is ScanUiState.DuplicateReview -> DuplicateReviewContent(
+                    state = state,
+                    onTrashDuplicates = { viewModel.proposeTrashDuplicates(state) },
+                    onBack = viewModel::reset,
+                )
+                is ScanUiState.FileListReview -> FileListReviewContent(state, onBack = viewModel::reset)
                 is ScanUiState.Error -> ErrorState(state.message, onRetry = viewModel::reset)
             }
         }
@@ -127,12 +139,20 @@ private fun ScanningState(state: ScanUiState.Scanning) {
 }
 
 @Composable
-private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Unit, onOrganizeApks: () -> Unit) {
-    Column {
+private fun ScanSummaryContent(
+    state: ScanUiState.Summary,
+    onScanAgain: () -> Unit,
+    onOrganizeApks: () -> Unit,
+    onSmartCleanup: () -> Unit,
+    onFindDuplicates: () -> Unit,
+    onFindLargestFiles: () -> Unit,
+    onFindOldFiles: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Text(text = state.scopeLabel)
         Text(text = "${state.totalFiles} files · ${formatBytes(state.totalBytes)}")
 
-        LazyColumn(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(FileCategory.entries) { category ->
                 val stat = state.byCategory[category]
                 Row(
@@ -143,20 +163,107 @@ private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Un
                     Text(text = "${stat?.fileCount ?: 0}")
                 }
             }
-        }
 
-        val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
-        if (apkCount > 0) {
-            // Milestone 2's own exercise of create+move+validator+executor+
-            // journal — a hard-coded plan, not a real "organize" feature.
-            // Real request-driven planning starts at Milestone 4/5.
-            Card(onClick = onOrganizeApks, modifier = Modifier.padding(top = 16.dp)) {
-                Text(text = "Test: move $apkCount APK(s) into an APKs subfolder", modifier = Modifier.padding(16.dp))
+            item {
+                // Plan Section 4/9: the rule engine's own generated plan —
+                // extension + project-keyword rules, no model. Distinct from
+                // the hard-coded APK-only test button below it.
+                Card(onClick = onSmartCleanup, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    Text(text = "Smart cleanup (rule-based, no AI)", modifier = Modifier.padding(16.dp))
+                }
+            }
+
+            val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
+            if (apkCount > 0) {
+                item {
+                    // Milestone 2's own exercise of create+move+validator+
+                    // executor+journal — a hard-coded plan, kept as-is since
+                    // it's still a useful minimal-case sanity check distinct
+                    // from the general rule engine above.
+                    Card(onClick = onOrganizeApks, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Text(text = "Test: move $apkCount APK(s) into an APKs subfolder", modifier = Modifier.padding(16.dp))
+                    }
+                }
+            }
+
+            item {
+                Card(onClick = onFindDuplicates, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(text = "Find duplicates", modifier = Modifier.padding(16.dp))
+                }
+            }
+            item {
+                Card(onClick = onFindLargestFiles, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(text = "Find largest files", modifier = Modifier.padding(16.dp))
+                }
+            }
+            item {
+                Card(onClick = onFindOldFiles, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(text = "Find files older than 6 months", modifier = Modifier.padding(16.dp))
+                }
             }
         }
 
         Card(onClick = onScanAgain, modifier = Modifier.padding(top = 16.dp)) {
             Text(text = "Scan again", modifier = Modifier.padding(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun DuplicateReviewContent(state: ScanUiState.DuplicateReview, onTrashDuplicates: () -> Unit, onBack: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = "${state.groups.size} duplicate set(s) found under ${state.scopeLabel}")
+        Text(text = "Exact match only (SHA-256) — never inferred from name or size alone.")
+
+        if (state.groups.isEmpty()) {
+            Card(onClick = onBack, modifier = Modifier.padding(top = 16.dp)) {
+                Text(text = "Back", modifier = Modifier.padding(16.dp))
+            }
+            return@Column
+        }
+
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.groups) { group -> DuplicateGroupCard(group) }
+        }
+
+        Row(modifier = Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(onClick = onTrashDuplicates) {
+                Text(text = "Propose trashing extra copies", modifier = Modifier.padding(16.dp))
+            }
+            Card(onClick = onBack) { Text(text = "Back", modifier = Modifier.padding(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun DuplicateGroupCard(group: DuplicateGroup) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(text = "${group.members.size} identical copies")
+            group.members.forEach { member ->
+                Text(text = "${member.displayName} (${formatBytes(member.sizeBytes)})")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileListReviewContent(state: ScanUiState.FileListReview, onBack: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = state.title)
+        Text(text = "${state.records.size} file(s) — browse only, nothing planned yet")
+
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(state.records) { record ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(text = record.displayName)
+                    Text(text = formatBytes(record.sizeBytes))
+                }
+            }
+        }
+
+        Card(onClick = onBack, modifier = Modifier.padding(top = 16.dp)) {
+            Text(text = "Back", modifier = Modifier.padding(16.dp))
         }
     }
 }

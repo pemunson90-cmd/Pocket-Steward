@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.settings.PrivacySettings
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
+import com.pocketsteward.app.rules.ProjectKeyword
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -17,6 +18,9 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
 
     val storageAccessState: StateFlow<StorageAccessState> = settingsRepository.storageAccessState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StorageAccessState())
+
+    val projectKeywords: StateFlow<List<ProjectKeyword>> = settingsRepository.projectKeywords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setMetadataIndexingEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setMetadataIndexingEnabled(enabled) }
@@ -32,5 +36,28 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
 
     fun setOnDeviceAiEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setOnDeviceAiEnabled(enabled) }
+    }
+
+    /**
+     * Parses one "term=folder" pair per line (blank lines and lines without
+     * an `=` are silently dropped rather than rejected — this is a plain
+     * text field, not a form with validation errors) and persists the
+     * result. [RuleEngine][com.pocketsteward.app.rules.RuleEngine] reads
+     * this list fresh each time Smart Cleanup runs, so a save here takes
+     * effect on the next cleanup proposal, no restart needed.
+     */
+    fun setProjectKeywordsFromText(text: String) {
+        val keywords = text.lineSequence()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val parts = line.split("=", limit = 2)
+                if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+                    ProjectKeyword(term = parts[0].trim(), projectFolder = parts[1].trim())
+                } else {
+                    null
+                }
+            }
+            .toList()
+        viewModelScope.launch { settingsRepository.setProjectKeywords(keywords) }
     }
 }

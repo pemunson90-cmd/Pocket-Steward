@@ -5,19 +5,27 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -43,6 +51,17 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     val privacy by viewModel.privacySettings.collectAsState()
     val storageAccess by viewModel.storageAccessState.collectAsState()
+    val storedKeywords by viewModel.projectKeywords.collectAsState()
+
+    // Seeded once from the stored value, not re-synced on every emission —
+    // otherwise an in-progress edit would get overwritten by the DataStore
+    // flow re-emitting the value this same screen just wrote.
+    var keywordsText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(storedKeywords) {
+        if (keywordsText == null) {
+            keywordsText = storedKeywords.joinToString("\n") { "${it.term}=${it.projectFolder}" }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -56,7 +75,13 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
             Text(text = stringResource(R.string.settings_storage_access_section))
             Text(
                 text = when (storageAccess.mode) {
@@ -94,6 +119,29 @@ fun SettingsScreen(onBack: () -> Unit) {
                 checked = privacy.onDeviceAiEnabled,
                 onCheckedChange = viewModel::setOnDeviceAiEnabled,
             )
+
+            HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
+
+            Text(
+                text = "Project keywords",
+                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+            )
+            Text(
+                text = "One per line, as term=folder. A filename containing the term groups into that folder during Smart Cleanup — e.g. Leaseworld=Leaseworld.",
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            OutlinedTextField(
+                value = keywordsText ?: "",
+                onValueChange = { keywordsText = it },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+            )
+            Card(
+                onClick = { viewModel.setProjectKeywordsFromText(keywordsText ?: "") },
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                Text(text = "Save keywords", modifier = Modifier.padding(16.dp))
+            }
         }
     }
 }
