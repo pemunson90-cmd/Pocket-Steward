@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -51,7 +52,7 @@ private val quickActions = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenSettings: () -> Unit) {
+fun HomeScreen(onOpenSettings: () -> Unit, onScanStorage: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: HomeViewModel = viewModel(
@@ -86,6 +87,10 @@ fun HomeScreen(onOpenSettings: () -> Unit) {
                 label = { Text(stringResource(R.string.home_prompt_placeholder)) },
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            Button(onClick = onScanStorage, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Text(text = "Scan storage")
+            }
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),

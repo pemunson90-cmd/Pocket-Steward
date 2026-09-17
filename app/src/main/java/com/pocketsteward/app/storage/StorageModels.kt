@@ -11,6 +11,12 @@ sealed interface FileRef {
     data class Saf(val documentUri: String) : FileRef
 }
 
+/** The path or URI a [FileRef] wraps, with no type tag — for display and as a DB column value. */
+fun FileRef.rawValue(): String = when (this) {
+    is FileRef.Direct -> absolutePath
+    is FileRef.Saf -> documentUri
+}
+
 enum class StorageAccessMode { DIRECT, SAF }
 
 /**

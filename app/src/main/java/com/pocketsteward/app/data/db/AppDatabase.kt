@@ -8,8 +8,8 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 
 @Database(
-    entities = [FileRecord::class, TaskRun::class, MutationRecord::class],
-    version = 1,
+    entities = [FileRecord::class, TaskRun::class, MutationRecord::class, ScanCheckpoint::class],
+    version = 2,
     exportSchema = true,
 )
 @TypeConverters(AppDatabase.Converters::class)
@@ -17,6 +17,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
     abstract fun taskRunDao(): TaskRunDao
     abstract fun mutationRecordDao(): MutationRecordDao
+    abstract fun scanCheckpointDao(): ScanCheckpointDao
 
     class Converters {
         @TypeConverter
@@ -37,6 +38,12 @@ abstract class AppDatabase : RoomDatabase() {
 
         @TypeConverter
         fun toMutationStatus(value: String): MutationStatus = MutationStatus.valueOf(value)
+
+        @TypeConverter
+        fun fromScanStatus(value: ScanStatus): String = value.name
+
+        @TypeConverter
+        fun toScanStatus(value: String): ScanStatus = ScanStatus.valueOf(value)
     }
 
     companion object {
@@ -51,7 +58,12 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     DATABASE_NAME,
-                ).build().also { instance = it }
+                )
+                    // Pre-1.0: schema is still moving milestone to milestone and no
+                    // scan data is precious yet. Revisit before Milestone 7 (polish).
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build()
+                    .also { instance = it }
             }
     }
 }

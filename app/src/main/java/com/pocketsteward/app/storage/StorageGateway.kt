@@ -8,12 +8,24 @@ import java.io.InputStream
  * nor the UI can perform an unvalidated mutation directly (see plan Section 5/11).
  *
  * Implementations: [DirectStorageGateway] (MANAGE_EXTERNAL_STORAGE) and
- * [SafStorageGateway] (Storage Access Framework). Real bodies land in
- * Milestone 1; Milestone 0 only needs this contract and the access-mode
- * detection used by onboarding.
+ * [SafStorageGateway] (Storage Access Framework). Read methods ([rootOf],
+ * [listChildren], [stat]) are real as of Milestone 1; the mutation methods
+ * stay `TODO()` until Milestone 2's validator/executor exist to gate them.
  */
 interface StorageGateway {
-    suspend fun list(scope: StorageScope): List<FileEntry>
+    /** The starting [FileRef] a scope resolves to — what a scanner walks from. */
+    suspend fun rootOf(scope: StorageScope): FileRef
+
+    /**
+     * Immediate children of [directory]. Not recursive — [FileScanner]
+     * (Milestone 1) does the walk by calling this repeatedly, so gateway
+     * implementations stay simple single-level listings.
+     */
+    suspend fun listChildren(directory: FileRef): List<FileEntry>
+
+    /** Convenience for "list what's directly under this scope's root." */
+    suspend fun list(scope: StorageScope): List<FileEntry> = listChildren(rootOf(scope))
+
     suspend fun stat(ref: FileRef): FileMetadata
     suspend fun openRead(ref: FileRef): InputStream
     suspend fun createDirectory(parent: FileRef, name: String): FileRef

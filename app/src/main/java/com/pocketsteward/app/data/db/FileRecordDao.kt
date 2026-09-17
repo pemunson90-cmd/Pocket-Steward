@@ -23,8 +23,14 @@ interface FileRecordDao {
     @Query("SELECT COUNT(*) FROM file_records WHERE parentRef = :parentRef")
     suspend fun countChildren(parentRef: String): Int
 
+    @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef AND isDirectory = 0")
+    suspend fun getFilesUnderScopeRoot(scopeRootRef: String): List<FileRecord>
+
     @Query("DELETE FROM file_records WHERE stableRef = :stableRef")
     suspend fun deleteByStableRef(stableRef: String)
+
+    @Query("DELETE FROM file_records WHERE scopeRootRef = :scopeRootRef")
+    suspend fun clearScopeRoot(scopeRootRef: String)
 
     @Query("DELETE FROM file_records")
     suspend fun clearAll()

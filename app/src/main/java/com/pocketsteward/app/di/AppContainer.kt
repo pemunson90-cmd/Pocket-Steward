@@ -3,8 +3,10 @@ package com.pocketsteward.app.di
 import android.content.Context
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.data.settings.SettingsRepository
+import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
+import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 
 /**
@@ -21,4 +23,13 @@ class AppContainer(context: Context) {
 
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
+
+    /** The gateway matching whichever access mode onboarding set up. */
+    fun gatewayFor(mode: StorageAccessMode): StorageGateway = when (mode) {
+        StorageAccessMode.DIRECT -> directStorageGateway
+        StorageAccessMode.SAF -> safStorageGateway
+    }
+
+    fun fileScanner(mode: StorageAccessMode): FileScanner =
+        FileScanner(gatewayFor(mode), database.fileRecordDao(), database.scanCheckpointDao())
 }
