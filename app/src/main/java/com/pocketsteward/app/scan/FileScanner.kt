@@ -57,6 +57,17 @@ class FileScanner(
             processedCount = existing.processedCount
         } else {
             fileRecordDao.clearScopeRoot(scopeKey)
+            // The walk below only ever indexes *children* it discovers via
+            // listChildren — the root itself was never getting a FileRecord
+            // of its own. That left a real blind spot: PlanValidator checks
+            // "does this operation's parent exist in the index" for
+            // CreateDirectory, and a plan creating a folder directly under
+            // the scan root (the common case) would always fail that check
+            // and get silently rejected, root included. Indexing the root
+            // as its own record (parentRef null — it has no parent within
+            // this scope) closes that for every future check against it,
+            // not just this one plan.
+            fileRecordDao.upsert(gateway.stat(root).toFileRecord(scopeKey, parent = null))
             queue.add(root)
             processedCount = 0
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
@@ -70,7 +81,7 @@ class FileScanner(
                 val batch = children.map { entry ->
                     val meta = gateway.stat(entry.ref)
                     if (meta.isDirectory) queue.addLast(entry.ref)
-                    meta.toFileRecord(scopeKey, directory)
+                    meta.toFileRecord(scopeKey, parent = directory)
                 }
                 if (batch.isNotEmpty()) {
                     fileRecordDao.upsertAll(batch)
@@ -110,7 +121,7 @@ class FileScanner(
     }
 }
 
-private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef): FileRecord {
+private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef?): FileRecord {
     val rawRef = ref.rawValue()
     return FileRecord(
         stableRef = rawRef,
@@ -119,7 +130,7 @@ private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef): Fi
         extension = extension,
         mimeType = mimeType,
         absolutePathOrUri = rawRef,
-        parentRef = parent.rawValue(),
+        parentRef = parent?.rawValue(),
         sizeBytes = sizeBytes,
         createdAt = createdAtEpochMs,
         modifiedAt = modifiedAtEpochMs,
