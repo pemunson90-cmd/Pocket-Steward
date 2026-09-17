@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pocket Steward</string>
+
+    <string name="onboarding_title">Grant file access</string>
+    <string name="onboarding_body">Pocket Steward needs access to your files to scan, organize, and clean up storage. Nothing leaves this device.</string>
+    <string name="onboarding_grant_broad_access">Grant file manager access</string>
+    <string name="onboarding_choose_folder_instead">Choose specific folders instead</string>
+    <string name="onboarding_access_granted">Access granted</string>
+
+    <string name="home_title">Pocket Steward</string>
+    <string name="home_prompt_placeholder">What should I clean up?</string>
+    <string name="home_quick_action_organize_downloads">Organize Downloads</string>
+    <string name="home_quick_action_find_duplicates">Find duplicates</string>
+    <string name="home_quick_action_find_large_files">Find large files</string>
+    <string name="home_quick_action_find_old_files">Find old files</string>
+    <string name="home_quick_action_review_uncategorized">Review uncategorized</string>
+    <string name="home_quick_action_recent_tasks">Recent tasks</string>
+    <string name="home_not_yet_implemented">Not built yet — arriving in a later milestone.</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_storage_access_section">Storage access</string>
+    <string name="settings_storage_mode_broad">File manager access (MANAGE_EXTERNAL_STORAGE)</string>
+    <string name="settings_storage_mode_saf">Selected folders only</string>
+    <string name="settings_privacy_section">Privacy</string>
+    <string name="settings_metadata_indexing">Metadata indexing</string>
+    <string name="settings_content_inspection">Document content inspection</string>
+    <string name="settings_image_analysis">Image analysis</string>
+    <string name="settings_on_device_ai">On-device AI</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only used for the window background before Compose draws; all real theming
+         lives in ui/theme/Theme.kt via Material 3 Compose. -->
+    <style name="Theme.PocketSteward" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

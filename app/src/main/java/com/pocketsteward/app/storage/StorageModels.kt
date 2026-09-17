@@ -1,0 +1,48 @@
+package com.pocketsteward.app.storage
+
+/**
+ * A reference to a single file or directory, independent of whether it was
+ * reached through a direct filesystem path or a SAF content URI. Nothing
+ * outside [StorageGateway] implementations should construct these from a raw
+ * path/URI string.
+ */
+sealed interface FileRef {
+    data class Direct(val absolutePath: String) : FileRef
+    data class Saf(val documentUri: String) : FileRef
+}
+
+enum class StorageAccessMode { DIRECT, SAF }
+
+/**
+ * What part of storage an operation is allowed to touch. [Broad] only applies
+ * when [StorageAccessMode.DIRECT] access has been granted; [Tree] wraps one
+ * SAF-granted directory tree.
+ */
+sealed interface StorageScope {
+    data object Broad : StorageScope
+    data class Tree(val rootRef: FileRef.Saf, val displayName: String) : StorageScope
+}
+
+data class FileEntry(
+    val ref: FileRef,
+    val displayName: String,
+    val isDirectory: Boolean,
+    val parentRef: FileRef?,
+)
+
+data class FileMetadata(
+    val ref: FileRef,
+    val displayName: String,
+    val extension: String,
+    val mimeType: String?,
+    val sizeBytes: Long,
+    val createdAtEpochMs: Long?,
+    val modifiedAtEpochMs: Long?,
+    val isDirectory: Boolean,
+    val isHidden: Boolean,
+)
+
+sealed interface MutationResult {
+    data class Success(val resultRef: FileRef) : MutationResult
+    data class Failure(val reason: String, val cause: Throwable? = null) : MutationResult
+}
