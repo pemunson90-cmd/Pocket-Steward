@@ -13,9 +13,18 @@ interface MutationRecordDao {
     @Update
     suspend fun update(record: MutationRecord)
 
+    @Query("SELECT * FROM mutation_records WHERE id = :id")
+    suspend fun getById(id: Long): MutationRecord?
+
     @Query("SELECT * FROM mutation_records WHERE taskRunId = :taskRunId ORDER BY sequence ASC")
     suspend fun getForTaskRun(taskRunId: Long): List<MutationRecord>
 
+    @Query("SELECT * FROM mutation_records WHERE taskRunId = :taskRunId ORDER BY sequence DESC")
+    suspend fun getForTaskRunReverse(taskRunId: Long): List<MutationRecord>
+
     @Query("SELECT * FROM mutation_records WHERE status = 'PENDING'")
     suspend fun getAllPending(): List<MutationRecord>
+
+    @Query("SELECT * FROM mutation_records WHERE undoState = 'PENDING'")
+    suspend fun getAllPendingUndo(): List<MutationRecord>
 }

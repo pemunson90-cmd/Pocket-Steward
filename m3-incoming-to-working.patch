@@ -1,0 +1,10 @@
+--- a/pocket-steward/app/src/main/java/com/pocketsteward/app/ui/history/HistoryScreen.kt	2026-09-17 05:43:31.000000000 -0400
++++ b/pocket-steward/app/src/main/java/com/pocketsteward/app/ui/history/HistoryScreen.kt	2026-09-17 07:00:46.929812474 -0400
+@@ -6,7 +6,6 @@
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.padding
+-import androidx.compose.foundation.layout.weight
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.material.icons.Icons

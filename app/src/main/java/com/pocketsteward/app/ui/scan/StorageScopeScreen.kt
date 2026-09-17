@@ -84,7 +84,13 @@ fun StorageScopeScreen(onBack: () -> Unit) {
                     onApprove = { viewModel.approvePlan(state) },
                     onCancel = viewModel::reset,
                 )
-                is ScanUiState.ExecutionDone -> ExecutionDoneContent(state, onDone = viewModel::reset)
+                is ScanUiState.ExecutionDone -> ExecutionDoneContent(
+                    state = state,
+                    onUndo = { viewModel.undoTask(state.summary.taskRunId) },
+                    onDone = viewModel::reset,
+                )
+                is ScanUiState.Undoing -> UndoingContent()
+                is ScanUiState.UndoDone -> UndoDoneContent(state, onDone = viewModel::reset)
                 is ScanUiState.Error -> ErrorState(state.message, onRetry = viewModel::reset)
             }
         }
@@ -205,7 +211,11 @@ private fun PlanPreviewContent(state: ScanUiState.PlanPreview, onApprove: () -> 
 }
 
 @Composable
-private fun ExecutionDoneContent(state: ScanUiState.ExecutionDone, onDone: () -> Unit) {
+private fun ExecutionDoneContent(
+    state: ScanUiState.ExecutionDone,
+    onUndo: () -> Unit,
+    onDone: () -> Unit,
+) {
     val summary = state.summary
     Column {
         Text(text = "Task complete")
@@ -216,6 +226,38 @@ private fun ExecutionDoneContent(state: ScanUiState.ExecutionDone, onDone: () ->
         if (summary.failed > 0) Text(text = "${summary.failed} failed")
         if (summary.leftUntouched.isNotEmpty()) Text(text = "${summary.leftUntouched.size} left untouched")
 
+        Row(modifier = Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (summary.succeededTotal > 0) {
+                Card(onClick = onUndo) {
+                    Text(text = "Undo task", modifier = Modifier.padding(16.dp))
+                }
+            }
+            Card(onClick = onDone) {
+                Text(text = "Done", modifier = Modifier.padding(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun UndoingContent() {
+    Column(verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxSize()) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Text(text = "Restoring files…", modifier = Modifier.padding(top = 16.dp))
+    }
+}
+
+@Composable
+private fun UndoDoneContent(state: ScanUiState.UndoDone, onDone: () -> Unit) {
+    val summary = state.summary
+    Column {
+        Text(text = if (summary.complete) "Undo complete" else "Undo needs attention")
+        Text(text = "${summary.undone} restored")
+        if (summary.blocked > 0) Text(text = "${summary.blocked} blocked")
+        if (summary.skipped > 0) Text(text = "${summary.skipped} skipped")
+        summary.messages.take(5).forEach { message ->
+            Text(text = message, modifier = Modifier.padding(top = 6.dp))
+        }
         Card(onClick = onDone, modifier = Modifier.padding(top = 16.dp)) {
             Text(text = "Done", modifier = Modifier.padding(16.dp))
         }

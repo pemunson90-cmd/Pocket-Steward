@@ -39,7 +39,7 @@ import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.R
 import kotlinx.coroutines.launch
 
-private data class QuickAction(val labelRes: Int)
+private data class QuickAction(val labelRes: Int, val opensHistory: Boolean = false)
 
 private val quickActions = listOf(
     QuickAction(R.string.home_quick_action_organize_downloads),
@@ -47,7 +47,7 @@ private val quickActions = listOf(
     QuickAction(R.string.home_quick_action_find_large_files),
     QuickAction(R.string.home_quick_action_find_old_files),
     QuickAction(R.string.home_quick_action_review_uncategorized),
-    QuickAction(R.string.home_quick_action_recent_tasks),
+    QuickAction(R.string.home_quick_action_recent_tasks, opensHistory = true),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,7 +101,7 @@ fun HomeScreen(onOpenSettings: () -> Unit, onScanStorage: () -> Unit, onOpenHist
                 items(quickActions) { action ->
                     Card(
                         onClick = {
-                            if (action.labelRes == R.string.home_quick_action_recent_tasks) {
+                            if (action.opensHistory) {
                                 onOpenHistory()
                             } else {
                                 scope.launch { snackbarHostState.showSnackbar(notYetImplementedMessage) }

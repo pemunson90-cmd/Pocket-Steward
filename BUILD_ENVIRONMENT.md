@@ -151,10 +151,16 @@ an emulator when the option to hand a build to the phone owner exists.
 
 ## Current state
 
-`./gradlew clean assembleDebug testDebugUnitTest` is green. Unit tests: 19
-passing across `PlanValidatorTest` (12), `FileCategoryTest` (3),
-`SettingsDefaultsTest` (2), `FileRefCodecTest` (2). Debug APK is 31.11 MiB,
-debug-signed, `com.pocketsteward.app` / `MainActivity`, minSdk 30,
-targetSdk 36. Milestone 2's exit criterion (a hard-coded plan safely
-reorganizing real files) is confirmed on real hardware: 17 APKs moved into
-`Downloads/APKs` on Pat's own phone.
+`./gradlew clean assembleDebug testDebugUnitTest` is green on Milestone 3.
+Unit tests: 23 passing across `PlanValidatorTest` (14), `FileCategoryTest`
+(3), `SettingsDefaultsTest` (2), `FileRefCodecTest` (2),
+`FileRefJournalCodecTest` (2). Debug APK is 31.36 MiB, debug-signed and
+`apksigner verify`-clean, `com.pocketsteward.app` / `MainActivity`,
+versionCode 4 / versionName `0.4.0-milestone3`, minSdk 30, targetSdk 36.
+Room schema `3.json` generated and committed. Full build log in
+`M3_BUILD_NOTES.md`. Milestone 2's exit criterion (a hard-coded plan safely
+reorganizing real files) remains confirmed on real hardware from that round:
+17 APKs moved into `Downloads/APKs` on Pat's own phone. Milestone 3's own
+exit criterion (undo and crash reconciliation actually working) is not yet
+confirmed on hardware — see `STATUS.md`'s Milestone 3 section for exactly
+what that build round did and did not prove.

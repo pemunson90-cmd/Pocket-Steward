@@ -1,5 +1,6 @@
 package com.pocketsteward.app.executor
 
+import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.db.FileRecordDao
 import com.pocketsteward.app.data.db.MutationOperationType
 import com.pocketsteward.app.data.db.MutationRecord
@@ -8,13 +9,16 @@ import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.TaskRunStatus
+import com.pocketsteward.app.data.db.UndoState
 import com.pocketsteward.app.plan.AgentPlan
-import com.pocketsteward.app.plan.InverseCalculator
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.storage.FileMetadata
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.FileRefJournalCodec
 import com.pocketsteward.app.storage.MutationResult
+import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
 
@@ -27,26 +31,14 @@ data class ExecutionSummary(
     val failed: Int,
     val leftUntouched: List<RejectedOperation>,
 ) {
-    /** Folder creations are not "moves" — kept separate so a completion screen doesn't conflate them. */
     val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed
 }
 
 /**
- * Plan Section 6/11: the deterministic executor. Takes an [AgentPlan],
- * validates it against the current index, and runs only the accepted
- * operations — this is the one place in the app allowed to call a
- * [StorageGateway] mutation method.
- *
- * Journaling follows [com.pocketsteward.app.scan.FileScanner]'s pattern:
- * each [MutationRecord] is written `PENDING` *before* the gateway call and
- * flipped to `COMMITTED`/`FAILED` only after, so a crash mid-operation
- * leaves a row reconciliation can find rather than an operation that
- * happened with no record of it. `sourceBefore`/`destinationAfter` are
- * exactly what [com.pocketsteward.app.plan.InverseCalculator] needs to
- * compute a MOVE/RENAME/TRASH inverse — no separate serialization — and
- * `undoState` carries the one bit CREATE_DIRECTORY needs that the other
- * three don't (see [willActuallyCreate]). Reversing the journal itself is
- * [UndoExecutor]'s job, not this class's.
+ * Deterministic mutation executor. Every real filesystem change is preceded
+ * by a durable PENDING journal row containing both the pre-operation ref and
+ * the expected post-operation ref. Recovery therefore has enough facts to
+ * determine whether an interrupted operation landed without asking a model.
  */
 class PlanExecutor(
     private val gateway: StorageGateway,
@@ -54,7 +46,11 @@ class PlanExecutor(
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
 ) {
-    suspend fun execute(plan: AgentPlan, scopeRootRef: String): ExecutionSummary {
+    suspend fun execute(
+        plan: AgentPlan,
+        scopeRootRef: String,
+        storageAccessMode: StorageAccessMode,
+    ): ExecutionSummary {
         val index = InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, index)
 
@@ -68,6 +64,9 @@ class PlanExecutor(
                 scanSnapshotId = null,
                 planJson = describePlan(plan),
                 summary = null,
+                scopeRootRef = scopeRootRef,
+                storageAccessMode = storageAccessMode,
+                undoCompletedAt = null,
             ),
         )
 
@@ -78,55 +77,79 @@ class PlanExecutor(
         var failed = 0
 
         validated.accepted.forEachIndexed { sequence, operation ->
+            val expectedDestination = try {
+                expectedDestination(operation)
+            } catch (t: Throwable) {
+                recordPreflightFailure(taskRunId, sequence, operation, t.message ?: t.javaClass.simpleName)
+                failed++
+                return@forEachIndexed
+            }
+
+            // CreateDirectory is intentionally idempotent, but an existing
+            // directory is a no-op owned by nobody. Journal it as such before
+            // moving on so Undo can never remove a directory we did not create.
+            if (operation is PlannedOperation.CreateDirectory && expectedDestination != null && gateway.exists(expectedDestination)) {
+                val existing = gateway.stat(expectedDestination)
+                if (existing.isDirectory) {
+                    mutationRecordDao.insert(
+                        newRecord(
+                            taskRunId = taskRunId,
+                            sequence = sequence,
+                            operation = operation,
+                            destination = expectedDestination,
+                            status = MutationStatus.COMMITTED,
+                            executedAt = System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                        ),
+                    )
+                    return@forEachIndexed
+                }
+                recordPreflightFailure(taskRunId, sequence, operation, "A file already occupies the requested directory path.", expectedDestination)
+                failed++
+                return@forEachIndexed
+            }
+
             val mutationId = mutationRecordDao.insert(
-                MutationRecord(
+                newRecord(
                     taskRunId = taskRunId,
                     sequence = sequence,
-                    operationType = operation.toOperationType(),
-                    sourceBefore = operation.sourceRef().rawValue(),
-                    destinationAfter = operation.destinationRefOrNull()?.rawValue(),
-                    sourceFingerprint = null,
+                    operation = operation,
+                    destination = expectedDestination,
                     status = MutationStatus.PENDING,
                     executedAt = null,
-                    undoState = null,
-                    error = null,
+                    undoState = UndoState.NOT_AVAILABLE,
                 ),
             )
 
-            // Whether a CreateDirectory is about to make a new directory or
-            // just find one already there (Section 12's idempotent-create
-            // case) has to be known *before* the gateway call runs it,
-            // since afterward the directory exists either way and there's
-            // no way to tell them apart from the result alone. Undo needs
-            // this distinction — see InverseCalculator.
-            val createDirectoryMadeSomethingNew = operation is PlannedOperation.CreateDirectory &&
-                willActuallyCreate(operation, index)
-
             when (val result = runOne(operation)) {
                 is MutationResult.Success -> {
-                    mutationRecordDao.update(
-                        MutationRecord(
-                            id = mutationId,
-                            taskRunId = taskRunId,
-                            sequence = sequence,
-                            operationType = operation.toOperationType(),
-                            sourceBefore = operation.sourceRef().rawValue(),
-                            destinationAfter = result.resultRef.rawValue(),
-                            sourceFingerprint = null,
-                            status = MutationStatus.COMMITTED,
-                            executedAt = System.currentTimeMillis(),
-                            undoState = if (createDirectoryMadeSomethingNew) InverseCalculator.CREATED_MARKER else null,
-                            error = null,
-                        ),
+                    val committed = MutationRecord(
+                        id = mutationId,
+                        taskRunId = taskRunId,
+                        sequence = sequence,
+                        operationType = operation.toOperationType(),
+                        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                        destinationAfter = FileRefJournalCodec.encode(result.resultRef),
+                        sourceFingerprint = null,
+                        status = MutationStatus.COMMITTED,
+                        executedAt = System.currentTimeMillis(),
+                        undoState = if (result.changed) UndoState.AVAILABLE else UndoState.NOT_AVAILABLE,
+                        undoAttemptedAt = null,
+                        error = null,
+                        undoError = null,
                     )
-                    reindexAfterMutation(operation, result.resultRef, scopeRootRef)
-                    when (operation) {
-                        is PlannedOperation.CreateDirectory -> foldersCreated++
-                        is PlannedOperation.Move -> filesMoved++
-                        is PlannedOperation.Rename -> filesRenamed++
-                        is PlannedOperation.Trash -> filesTrashed++
+                    mutationRecordDao.update(committed)
+                    if (result.changed) {
+                        reindexAfterMutation(operation, result.resultRef, scopeRootRef)
+                        when (operation) {
+                            is PlannedOperation.CreateDirectory -> foldersCreated++
+                            is PlannedOperation.Move -> filesMoved++
+                            is PlannedOperation.Rename -> filesRenamed++
+                            is PlannedOperation.Trash -> filesTrashed++
+                        }
                     }
                 }
+
                 is MutationResult.Failure -> {
                     mutationRecordDao.update(
                         MutationRecord(
@@ -134,13 +157,15 @@ class PlanExecutor(
                             taskRunId = taskRunId,
                             sequence = sequence,
                             operationType = operation.toOperationType(),
-                            sourceBefore = operation.sourceRef().rawValue(),
-                            destinationAfter = operation.destinationRefOrNull()?.rawValue(),
+                            sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                            destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
                             sourceFingerprint = null,
                             status = MutationStatus.FAILED,
                             executedAt = System.currentTimeMillis(),
-                            undoState = null,
+                            undoState = UndoState.NOT_AVAILABLE,
+                            undoAttemptedAt = null,
                             error = result.reason,
+                            undoError = null,
                         ),
                     )
                     failed++
@@ -148,17 +173,21 @@ class PlanExecutor(
             }
         }
 
-        val summary = ExecutionSummary(taskRunId, foldersCreated, filesMoved, filesRenamed, filesTrashed, failed, validated.rejected)
+        val summary = ExecutionSummary(
+            taskRunId,
+            foldersCreated,
+            filesMoved,
+            filesRenamed,
+            filesTrashed,
+            failed,
+            validated.rejected,
+        )
 
+        val finished = taskRunDao.getById(taskRunId) ?: error("Task run disappeared during execution")
         taskRunDao.update(
-            TaskRun(
-                id = taskRunId,
-                requestText = plan.goal,
-                startedAt = startedAt,
+            finished.copy(
                 completedAt = System.currentTimeMillis(),
                 status = if (failed == 0) TaskRunStatus.COMPLETED else TaskRunStatus.FAILED,
-                scanSnapshotId = null,
-                planJson = describePlan(plan),
                 summary = "${summary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
                     "$filesRenamed renamed, $filesTrashed trashed), $failed failed, ${validated.rejected.size} left untouched",
             ),
@@ -167,10 +196,61 @@ class PlanExecutor(
         return summary
     }
 
+    private suspend fun recordPreflightFailure(
+        taskRunId: Long,
+        sequence: Int,
+        operation: PlannedOperation,
+        reason: String,
+        destination: FileRef? = null,
+    ) {
+        mutationRecordDao.insert(
+            newRecord(
+                taskRunId = taskRunId,
+                sequence = sequence,
+                operation = operation,
+                destination = destination,
+                status = MutationStatus.FAILED,
+                executedAt = System.currentTimeMillis(),
+                undoState = UndoState.NOT_AVAILABLE,
+                error = reason,
+            ),
+        )
+    }
+
+    private fun newRecord(
+        taskRunId: Long,
+        sequence: Int,
+        operation: PlannedOperation,
+        destination: FileRef?,
+        status: MutationStatus,
+        executedAt: Long?,
+        undoState: UndoState,
+        error: String? = null,
+    ): MutationRecord = MutationRecord(
+        taskRunId = taskRunId,
+        sequence = sequence,
+        operationType = operation.toOperationType(),
+        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+        destinationAfter = destination?.let(FileRefJournalCodec::encode),
+        sourceFingerprint = null,
+        status = status,
+        executedAt = executedAt,
+        undoState = undoState,
+        undoAttemptedAt = null,
+        error = error,
+        undoError = null,
+    )
+
+    private suspend fun expectedDestination(operation: PlannedOperation): FileRef? = when (operation) {
+        is PlannedOperation.CreateDirectory -> childRef(operation.parent, operation.name)
+        is PlannedOperation.Move -> operation.destination
+        is PlannedOperation.Rename -> renameDestination(operation.source, operation.newName)
+        is PlannedOperation.Trash -> gateway.trashDestination(operation.source)
+    }
+
     private suspend fun runOne(operation: PlannedOperation): MutationResult = try {
         when (operation) {
-            is PlannedOperation.CreateDirectory ->
-                MutationResult.Success(gateway.createDirectory(operation.parent, operation.name))
+            is PlannedOperation.CreateDirectory -> gateway.createDirectory(operation.parent, operation.name)
             is PlannedOperation.Move -> gateway.move(operation.source, operation.destination)
             is PlannedOperation.Rename -> gateway.rename(operation.source, operation.newName)
             is PlannedOperation.Trash -> gateway.trash(operation.source)
@@ -179,53 +259,35 @@ class PlanExecutor(
         MutationResult.Failure(t.message ?: t.javaClass.simpleName, t)
     }
 
-    /**
-     * Keeps the moved/renamed/trashed row itself in sync with reality so a
-     * second operation later in the same plan (or the same screen without a
-     * rescan) sees the new location. Does *not* walk descendants of a moved
-     * directory — those stay stale in the index until the next scan. Not
-     * exercised by anything in this milestone (its own plan only ever moves
-     * individual files), called out here so it isn't rediscovered the hard
-     * way when a future milestone moves a whole subtree.
-     */
     private suspend fun reindexAfterMutation(operation: PlannedOperation, newRef: FileRef, scopeRootRef: String) {
-        if (operation is PlannedOperation.CreateDirectory) return // Nothing existed to reindex.
+        if (operation is PlannedOperation.CreateDirectory) {
+            fileRecordDao.upsert(gateway.stat(newRef).toFileRecord(scopeRootRef, newRef.parentRefOrNull()))
+            return
+        }
+
         val oldStableRef = operation.sourceRef().rawValue()
-        val existing = fileRecordDao.getByStableRef(oldStableRef) ?: return
+        val existing = fileRecordDao.getByStableRef(oldStableRef)
         fileRecordDao.deleteByStableRef(oldStableRef)
 
-        // A trashed file no longer lives under the scope it was scanned
-        // from — Trash isn't itself a scan target yet — so its old record
-        // is simply dropped rather than re-inserted under a scopeRootRef
-        // that would now be misleading. It reappears if Trash is ever
-        // scanned in its own right.
         if (operation is PlannedOperation.Trash) return
 
+        val meta = gateway.stat(newRef)
         fileRecordDao.upsert(
-            existing.copy(
+            (existing ?: meta.toFileRecord(scopeRootRef, newRef.parentRefOrNull())).copy(
                 stableRef = newRef.rawValue(),
                 scopeRootRef = scopeRootRef,
-                displayName = newRef.displayNameGuess(),
+                displayName = meta.displayName,
+                extension = meta.extension,
+                mimeType = meta.mimeType,
                 absolutePathOrUri = newRef.rawValue(),
+                parentRef = newRef.parentRefOrNull()?.rawValue(),
+                sizeBytes = meta.sizeBytes,
+                modifiedAt = meta.modifiedAtEpochMs,
                 lastScannedAt = System.currentTimeMillis(),
+                isDirectory = meta.isDirectory,
+                isHidden = meta.isHidden,
             ),
         )
-    }
-
-    /**
-     * Mirrors [com.pocketsteward.app.plan.PlanValidator]'s own
-     * idempotent-create check against the same index snapshot, but for a
-     * different purpose: the validator decides accept/reject, this decides
-     * whether the accepted operation is about to make something new. SAF's
-     * `createDirectory` is still `TODO()`, so the `FileRef.Saf` branch is
-     * unreachable in practice today; `true` there is the harmless default.
-     */
-    private fun willActuallyCreate(operation: PlannedOperation.CreateDirectory, index: InMemoryFileIndex): Boolean {
-        val parent = operation.parent
-        if (parent !is FileRef.Direct) return true
-        val candidate = FileRef.Direct("${parent.absolutePath.trimEnd('/')}/${operation.name}")
-        val alreadyExistsAsDirectory = index.exists(candidate) && index.isDirectory(candidate)
-        return !alreadyExistsAsDirectory
     }
 
     private fun describePlan(plan: AgentPlan): String =
@@ -239,11 +301,6 @@ private fun PlannedOperation.sourceRef(): FileRef = when (this) {
     is PlannedOperation.Trash -> source
 }
 
-private fun PlannedOperation.destinationRefOrNull(): FileRef? = when (this) {
-    is PlannedOperation.Move -> destination
-    else -> null
-}
-
 private fun PlannedOperation.toOperationType(): MutationOperationType = when (this) {
     is PlannedOperation.CreateDirectory -> MutationOperationType.CREATE_DIRECTORY
     is PlannedOperation.Move -> MutationOperationType.MOVE
@@ -251,4 +308,39 @@ private fun PlannedOperation.toOperationType(): MutationOperationType = when (th
     is PlannedOperation.Trash -> MutationOperationType.TRASH
 }
 
-private fun FileRef.displayNameGuess(): String = rawValue().substringAfterLast('/')
+private fun childRef(parent: FileRef, name: String): FileRef = when (parent) {
+    is FileRef.Direct -> FileRef.Direct("${parent.absolutePath.trimEnd('/')}/$name")
+    is FileRef.Saf -> error("SAF mutations are not implemented yet")
+}
+
+private fun renameDestination(source: FileRef, newName: String): FileRef = when (source) {
+    is FileRef.Direct -> {
+        val parent = source.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
+        require(parent.isNotBlank()) { "Cannot determine rename parent" }
+        FileRef.Direct("${parent.trimEnd('/')}/$newName")
+    }
+    is FileRef.Saf -> error("SAF mutations are not implemented yet")
+}
+
+private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
+    is FileRef.Direct -> absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
+        .takeIf { it.isNotBlank() }
+        ?.let(FileRef::Direct)
+    is FileRef.Saf -> null
+}
+
+private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef?): FileRecord = FileRecord(
+    stableRef = ref.rawValue(),
+    scopeRootRef = scopeRootRef,
+    displayName = displayName,
+    extension = extension,
+    mimeType = mimeType,
+    absolutePathOrUri = ref.rawValue(),
+    parentRef = parent?.rawValue(),
+    sizeBytes = sizeBytes,
+    createdAt = createdAtEpochMs,
+    modifiedAt = modifiedAtEpochMs,
+    lastScannedAt = System.currentTimeMillis(),
+    isDirectory = isDirectory,
+    isHidden = isHidden,
+)

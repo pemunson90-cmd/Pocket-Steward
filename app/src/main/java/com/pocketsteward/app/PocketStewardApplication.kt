@@ -11,19 +11,18 @@ class PocketStewardApplication : Application() {
     lateinit var container: AppContainer
         private set
 
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
 
-        // Plan Section 18: reconcile before anything else touches the
-        // journal. Cheap (a handful of rows at most for a personal app) and
-        // has to happen before any new scan or organize run so a crash
-        // that interrupted a previous run never gets mistaken for one that
-        // completed cleanly.
-        applicationScope.launch {
-            container.reconciliationService.reconcileInterruptedRuns()
+        // Resolve any write-ahead rows left by process death before the next
+        // user-initiated task relies on journal/history state. Recovery is
+        // deliberately conservative: ambiguous filesystem states become
+        // NEEDS_REVIEW rather than being guessed.
+        appScope.launch {
+            runCatching { container.mutationRecovery.recoverAll() }
         }
     }
 }

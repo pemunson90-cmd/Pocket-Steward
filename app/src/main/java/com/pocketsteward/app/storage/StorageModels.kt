@@ -17,16 +17,6 @@ fun FileRef.rawValue(): String = when (this) {
     is FileRef.Saf -> documentUri
 }
 
-/**
- * The inverse of [rawValue]: reconstructs a [FileRef] from a raw string
- * pulled back out of Room (a `FileRecord.stableRef`, a `MutationRecord`'s
- * `sourceBefore`/`destinationAfter`, ...). Content URIs always start with
- * `content://`; a direct filesystem path never does, so that prefix is a
- * safe, simple discriminator between the two [FileRef] cases.
- */
-fun parseFileRef(rawValue: String): FileRef =
-    if (rawValue.startsWith("content://")) FileRef.Saf(rawValue) else FileRef.Direct(rawValue)
-
 enum class StorageAccessMode { DIRECT, SAF }
 
 /**
@@ -59,6 +49,6 @@ data class FileMetadata(
 )
 
 sealed interface MutationResult {
-    data class Success(val resultRef: FileRef) : MutationResult
+    data class Success(val resultRef: FileRef, val changed: Boolean = true) : MutationResult
     data class Failure(val reason: String, val cause: Throwable? = null) : MutationResult
 }

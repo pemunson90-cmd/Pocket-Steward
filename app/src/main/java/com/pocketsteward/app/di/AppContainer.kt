@@ -3,8 +3,8 @@ package com.pocketsteward.app.di
 import android.content.Context
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.data.settings.SettingsRepository
+import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
-import com.pocketsteward.app.executor.ReconciliationService
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.storage.DirectStorageGateway
@@ -39,10 +39,16 @@ class AppContainer(context: Context) {
     fun planExecutor(mode: StorageAccessMode): PlanExecutor =
         PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
 
-    fun undoExecutor(mode: StorageAccessMode): UndoExecutor =
-        UndoExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
+    val undoExecutor: UndoExecutor by lazy {
+        UndoExecutor(
+            database.fileRecordDao(),
+            database.taskRunDao(),
+            database.mutationRecordDao(),
+            ::gatewayFor,
+        )
+    }
 
-    val reconciliationService: ReconciliationService by lazy {
-        ReconciliationService(database.taskRunDao(), database.mutationRecordDao())
+    val mutationRecovery: MutationRecovery by lazy {
+        MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), ::gatewayFor)
     }
 }

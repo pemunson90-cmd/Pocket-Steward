@@ -57,8 +57,8 @@ class PlanValidatorTest {
     @Test
     fun `rejects a move onto an existing destination`() {
         val index = FakeFileIndex(
-            existing = setOf(direct("/sd/Download/foo.apk"), direct("/sd/Download/APKs/foo.apk")),
-            directories = emptySet(),
+            existing = setOf(direct("/sd/Download/foo.apk"), direct("/sd/Download/APKs"), direct("/sd/Download/APKs/foo.apk")),
+            directories = setOf(direct("/sd/Download/APKs")),
         )
         val op = PlannedOperation.Move(direct("/sd/Download/foo.apk"), direct("/sd/Download/APKs/foo.apk"), "APK")
 
@@ -81,8 +81,8 @@ class PlanValidatorTest {
     @Test
     fun `rejects moving a directory inside itself`() {
         val index = FakeFileIndex(
-            existing = setOf(direct("/sd/Download/Sub")),
-            directories = setOf(direct("/sd/Download/Sub")),
+            existing = setOf(direct("/sd/Download/Sub"), direct("/sd/Download/Sub/Nested")),
+            directories = setOf(direct("/sd/Download/Sub"), direct("/sd/Download/Sub/Nested")),
         )
         val op = PlannedOperation.Move(direct("/sd/Download/Sub"), direct("/sd/Download/Sub/Nested/Sub"), "bad")
 
@@ -178,4 +178,40 @@ class PlanValidatorTest {
 
         assertThat(result.accepted).isEmpty()
     }
+    @Test
+    fun `rejects moving a file to a parent outside the indexed scope`() {
+        val index = FakeFileIndex(
+            existing = setOf(direct("/sd/Download/foo.apk")),
+            directories = setOf(direct("/sd/Download")),
+        )
+        val op = PlannedOperation.Move(
+            direct("/sd/Download/foo.apk"),
+            direct("/sd/Documents/foo.apk"),
+            "escape scope",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("outside")
+    }
+
+    @Test
+    fun `move may target a directory created earlier in the same accepted plan`() {
+        val root = direct("/sd/Download")
+        val source = direct("/sd/Download/foo.apk")
+        val newDir = direct("/sd/Download/APKs")
+        val index = FakeFileIndex(
+            existing = setOf(source),
+            directories = setOf(root),
+        )
+        val create = PlannedOperation.CreateDirectory(root, "APKs", "destination")
+        val move = PlannedOperation.Move(source, direct("${newDir.absolutePath}/foo.apk"), "APK")
+
+        val result = PlanValidator.validate(listOf(create, move), index)
+
+        assertThat(result.accepted).containsExactly(create, move).inOrder()
+        assertThat(result.rejected).isEmpty()
+    }
+
 }

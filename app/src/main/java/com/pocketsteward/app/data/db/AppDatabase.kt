@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 
 @Database(
     entities = [FileRecord::class, TaskRun::class, MutationRecord::class, ScanCheckpoint::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(AppDatabase.Converters::class)
@@ -38,6 +38,19 @@ abstract class AppDatabase : RoomDatabase() {
 
         @TypeConverter
         fun toMutationStatus(value: String): MutationStatus = MutationStatus.valueOf(value)
+
+        @TypeConverter
+        fun fromUndoState(value: UndoState): String = value.name
+
+        @TypeConverter
+        fun toUndoState(value: String): UndoState = UndoState.valueOf(value)
+
+        @TypeConverter
+        fun fromStorageAccessMode(value: com.pocketsteward.app.storage.StorageAccessMode): String = value.name
+
+        @TypeConverter
+        fun toStorageAccessMode(value: String): com.pocketsteward.app.storage.StorageAccessMode =
+            com.pocketsteward.app.storage.StorageAccessMode.valueOf(value)
 
         @TypeConverter
         fun fromScanStatus(value: ScanStatus): String = value.name

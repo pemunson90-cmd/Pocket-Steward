@@ -82,17 +82,22 @@ class SafStorageGateway(
         )
     }
 
-    override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 4 (content inspection)")
-    override suspend fun createDirectory(parent: FileRef, name: String): FileRef =
-        TODO("SAF mutations parked — move/rename need the source's parent document URI, which isn't reliably derivable from a single stored SAF node URI. See STATUS.md.")
-    override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
-        TODO("SAF mutations parked — see STATUS.md")
-    override suspend fun rename(source: FileRef, newName: String): MutationResult =
-        TODO("SAF mutations parked — see STATUS.md")
-    override suspend fun trash(source: FileRef): MutationResult =
-        TODO("SAF mutations parked — see STATUS.md")
-    override suspend fun removeIfEmpty(ref: FileRef): MutationResult =
-        TODO("SAF mutations parked — see STATUS.md")
+    override suspend fun exists(ref: FileRef): Boolean {
+        val uri = Uri.parse(ref.requireUri())
+        return DocumentFile.fromTreeUri(context, uri)?.exists() == true
+    }
+
+    override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 2")
+    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult = TODO("SAF mutation support is deliberately deferred")
+    override suspend fun move(source: FileRef, destination: FileRef): MutationResult = TODO("Milestone 2")
+    override suspend fun rename(source: FileRef, newName: String): MutationResult = TODO("Milestone 2")
+    override suspend fun trashDestination(source: FileRef): FileRef =
+        TODO("SAF mutation support is deliberately deferred")
+
+    override suspend fun trash(source: FileRef): MutationResult = TODO("Milestone 2/14")
+    override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult =
+        TODO("SAF mutation support is deliberately deferred")
+
 }
 
 private fun FileRef.requireUri(): String =

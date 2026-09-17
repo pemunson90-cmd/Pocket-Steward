@@ -4,6 +4,13 @@
 **Date:** 2026-09-16  
 **Primary constraint:** The phone is the entire runtime. No PC, companion desktop, remote executor, or required server.
 
+
+### Personal-use implementation amendment — 2026-09-17
+
+For the current build, personal use on Pat's own Android device is the primary target. Repository/GitHub setup is not part of the product dependency chain. Publishing/Play Store work is deferred unless later requested. Direct internal shared-storage access is the primary mutation path; SD-card/cross-volume and SAF mutation support are non-blocking follow-ons.
+
+Crash-safety wording is tightened as follows: a mutation journal row is written `PENDING` with the expected destination **before** the filesystem call, then changed to `COMMITTED` only after success. Undo uses the same write-ahead rule. Model-reported confidence is never validator input. Long generalized mutation runs should eventually use a foreground execution service, but correctness must remain checkpoint/journal-based so process death cannot cause silent data loss. Any Level-2 document/PDF parsing dependency must be chosen explicitly before Milestone 4 content inspection rather than added ad hoc.
+
 ---
 
 ## 1. Product definition

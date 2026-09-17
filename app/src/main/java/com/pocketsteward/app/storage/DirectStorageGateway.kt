@@ -57,16 +57,21 @@ class DirectStorageGateway(
         )
     }
 
+    override suspend fun exists(ref: FileRef): Boolean = File(ref.requirePath()).exists()
+
     override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 4 (content inspection)")
 
-    override suspend fun createDirectory(parent: FileRef, name: String): FileRef {
+    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult {
         val dir = File(File(parent.requirePath()), name)
         if (dir.exists()) {
-            if (dir.isDirectory) return FileRef.Direct(dir.absolutePath)
-            error("Cannot create directory — a file already occupies ${dir.absolutePath}")
+            return if (dir.isDirectory) {
+                MutationResult.Success(FileRef.Direct(dir.absolutePath), changed = false)
+            } else {
+                MutationResult.Failure("Cannot create directory — a file already occupies ${dir.absolutePath}")
+            }
         }
-        if (!dir.mkdirs()) error("Failed to create directory: ${dir.absolutePath}")
-        return FileRef.Direct(dir.absolutePath)
+        if (!dir.mkdirs()) return MutationResult.Failure("Failed to create directory: ${dir.absolutePath}")
+        return MutationResult.Success(FileRef.Direct(dir.absolutePath), changed = true)
     }
 
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
@@ -85,36 +90,41 @@ class DirectStorageGateway(
      * operation anywhere in this app that empties Trash — that's left as a
      * manual, outside-the-app action.
      */
+    override suspend fun trashDestination(source: FileRef): FileRef {
+        val sourceFile = File(source.requirePath())
+        val externalRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+        val sourcePath = sourceFile.absolutePath
+        require(sourcePath.startsWith("$externalRoot/")) {
+            "Source is outside external storage, can't compute a Trash path: $sourcePath"
+        }
+        val relativePath = sourcePath.removePrefix("$externalRoot/")
+        return FileRef.Direct(File(File(externalRoot, TRASH_RELATIVE_ROOT), relativePath).absolutePath)
+    }
+
     override suspend fun trash(source: FileRef): MutationResult {
         val sourceFile = File(source.requirePath())
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
-
-        val externalRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-        val sourcePath = sourceFile.absolutePath
-        if (!sourcePath.startsWith("$externalRoot/")) {
-            return MutationResult.Failure("Source is outside external storage, can't compute a Trash path: $sourcePath")
+        val destination = try {
+            trashDestination(source)
+        } catch (t: Throwable) {
+            return MutationResult.Failure(t.message ?: "Could not resolve Trash destination", t)
         }
-        val relativePath = sourcePath.removePrefix("$externalRoot/")
-        val destinationFile = File(File(externalRoot, TRASH_RELATIVE_ROOT), relativePath)
-        return moveFile(sourceFile, destinationFile)
+        return moveFile(sourceFile, File(destination.requirePath()))
     }
 
-    override suspend fun removeIfEmpty(ref: FileRef): MutationResult {
+    override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
         val dir = File(ref.requirePath())
-        if (!dir.exists()) {
-            // Already gone — undoing an undo, or someone removed it by
-            // hand. Nothing left to do, and that's success, not failure.
-            return MutationResult.Success(ref)
-        }
-        if (!dir.isDirectory) return MutationResult.Failure("Not a directory: ${dir.absolutePath}")
+        if (!dir.exists()) return MutationResult.Success(ref, changed = false)
+        if (!dir.isDirectory) return MutationResult.Failure("Undo target is not a directory: ${dir.absolutePath}")
         val children = dir.listFiles()
-        if (children != null && children.isNotEmpty()) {
-            return MutationResult.Failure("Directory is not empty, leaving it in place: ${dir.absolutePath}")
+            ?: return MutationResult.Failure("Could not inspect directory before undo: ${dir.absolutePath}")
+        if (children.isNotEmpty()) {
+            return MutationResult.Failure("Directory is no longer empty; refusing to remove it: ${dir.absolutePath}")
         }
         return if (dir.delete()) {
-            MutationResult.Success(ref)
+            MutationResult.Success(ref, changed = true)
         } else {
-            MutationResult.Failure("Could not remove directory: ${dir.absolutePath}")
+            MutationResult.Failure("Could not remove empty directory: ${dir.absolutePath}")
         }
     }
 

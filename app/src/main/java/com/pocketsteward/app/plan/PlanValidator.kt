@@ -29,15 +29,21 @@ object PlanValidator {
         // this same plan — a per-plan collision the index alone can't see,
         // since it reflects storage before any of these operations ran.
         val claimedDestinations = mutableSetOf<String>()
+        val plannedDirectories = mutableSetOf<String>()
 
         for (operation in operations) {
-            val reason = rejectionReason(operation, index, claimedDestinations)
+            val reason = rejectionReason(operation, index, claimedDestinations, plannedDirectories)
             if (reason != null) {
                 rejected += RejectedOperation(operation, reason)
                 continue
             }
             accepted += operation
-            destinationOf(operation)?.let { claimedDestinations += it.rawValue() }
+            destinationOf(operation)?.let { destination ->
+                claimedDestinations += destination.rawValue()
+                if (operation is PlannedOperation.CreateDirectory) {
+                    plannedDirectories += destination.rawValue()
+                }
+            }
         }
 
         return ValidatedPlan(accepted, rejected)
@@ -47,12 +53,13 @@ object PlanValidator {
         operation: PlannedOperation,
         index: FileIndex,
         claimedDestinations: Set<String>,
+        plannedDirectories: Set<String>,
     ): String? {
         traversalRejection(operation)?.let { return it }
 
         return when (operation) {
             is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index)
-            is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations)
+            is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Rename -> validateRename(operation, index, claimedDestinations)
             is PlannedOperation.Trash -> validateTrash(operation, index)
         }
@@ -79,9 +86,16 @@ object PlanValidator {
         op: PlannedOperation.Move,
         index: FileIndex,
         claimedDestinations: Set<String>,
+        plannedDirectories: Set<String>,
     ): String? {
         if (!index.exists(op.source)) return "Source does not exist in the index."
         if (op.source == op.destination) return "Source and destination are the same."
+        val destinationParent = parentOf(op.destination)
+            ?: return "Cannot determine destination parent."
+        val parentAuthorized = index.isDirectory(destinationParent) || destinationParent.rawValue() in plannedDirectories
+        if (!parentAuthorized) {
+            return "Destination parent is outside the indexed/authorized scope."
+        }
         if (index.isDirectory(op.source) && isNestedUnder(op.destination, op.source)) {
             return "Destination is inside the source directory — recursive move."
         }
@@ -163,7 +177,9 @@ object PlanValidator {
     private fun hasTraversalSegment(value: String): Boolean = value.split('/').any { it == ".." }
 
     private fun destinationOf(operation: PlannedOperation): FileRef? = when (operation) {
+        is PlannedOperation.CreateDirectory -> directRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
-        else -> null
+        is PlannedOperation.Rename -> parentOf(operation.source)?.let { directRef(it, operation.newName) }
+        is PlannedOperation.Trash -> null
     }
 }

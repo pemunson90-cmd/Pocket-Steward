@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.di.AppContainer
 import com.pocketsteward.app.executor.ExecutionSummary
+import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
@@ -47,6 +48,8 @@ sealed interface ScanUiState {
         val scopeRoot: FileRef,
     ) : ScanUiState
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
+    data class Undoing(val taskRunId: Long) : ScanUiState
+    data class UndoDone(val summary: UndoSummary) : ScanUiState
     data class Error(val message: String) : ScanUiState
 }
 
@@ -170,9 +173,23 @@ class ScanViewModel(
                 // executor's own validation pass to reject again.
                 val plan = AgentPlan(preview.goal, preview.accepted)
                 val summary = withContext(Dispatchers.IO) {
-                    executor.execute(plan, preview.scopeRoot.rawValue())
+                    executor.execute(plan, preview.scopeRoot.rawValue(), mode)
                 }
                 _uiState.value = ScanUiState.ExecutionDone(summary)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun undoTask(taskRunId: Long) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Undoing(taskRunId)
+            try {
+                val summary = withContext(Dispatchers.IO) {
+                    container.undoExecutor.undo(taskRunId)
+                }
+                _uiState.value = ScanUiState.UndoDone(summary)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }

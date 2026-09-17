@@ -5,12 +5,17 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+enum class MutationOperationType { CREATE_DIRECTORY, MOVE, RENAME, COPY, TRASH }
+enum class MutationStatus { PENDING, COMMITTED, FAILED, NEEDS_REVIEW, UNDONE }
+enum class UndoState { NOT_AVAILABLE, AVAILABLE, PENDING, UNDONE, BLOCKED, FAILED }
+
 /**
- * One filesystem mutation and its inverse (plan Section 15). [status] must be
- * written as PENDING *before* the filesystem call and flipped to COMMITTED
- * only after it succeeds, so a crash between the two leaves a row that
- * reconciliation on restart can detect as "outcome unknown" rather than
- * silently losing the operation.
+ * Durable write-ahead record for one filesystem mutation and its inverse.
+ *
+ * sourceBefore / destinationAfter are type-preserving FileRefJournalCodec
+ * strings, not raw paths. A PENDING row is inserted before touching the
+ * filesystem. That makes process death between the filesystem call and the
+ * COMMITTED update recoverable instead of invisible.
  */
 @Entity(
     tableName = "mutation_records",
@@ -34,6 +39,8 @@ data class MutationRecord(
     val sourceFingerprint: String?,
     val status: MutationStatus,
     val executedAt: Long?,
-    val undoState: String?,
+    val undoState: UndoState,
+    val undoAttemptedAt: Long?,
     val error: String?,
+    val undoError: String?,
 )
