@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.item
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -30,6 +31,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.plan.PlannedOperation
+import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -156,19 +158,41 @@ private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Un
 
 @Composable
 private fun PlanPreviewContent(state: ScanUiState.PlanPreview, onApprove: () -> Unit, onCancel: () -> Unit) {
-    Column {
-        Text(text = state.plan.goal)
+    // weight(1f) is load-bearing: without it this LazyColumn takes every
+    // remaining pixel of the Column and pushes the Approve/Cancel row past
+    // the bottom of the screen, with no outer scroll to reach it. A short
+    // plan hides the bug because a lazy list shorter than its max
+    // constraint sizes to content — any future long list in a plain Column
+    // has the same exposure.
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = state.goal)
         Text(
-            text = "${state.acceptedCount} action(s) ready" +
-                if (state.rejectedCount > 0) ", ${state.rejectedCount} left untouched" else "",
+            text = "${state.accepted.size} action(s) ready" +
+                if (state.rejected.isNotEmpty()) ", ${state.rejected.size} left untouched" else "",
         )
 
-        LazyColumn(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.plan.operations) { operation ->
+        LazyColumn(
+            modifier = Modifier.weight(1f).padding(top = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(state.accepted) { operation ->
                 Card {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(text = operationSummary(operation))
                         Text(text = operation.reason)
+                    }
+                }
+            }
+            if (state.rejected.isNotEmpty()) {
+                item {
+                    Text(text = "Left untouched", modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+            items(state.rejected) { rejected ->
+                Card {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(text = operationSummary(rejected.operation))
+                        Text(text = rejected.reason)
                     }
                 }
             }
@@ -183,11 +207,15 @@ private fun PlanPreviewContent(state: ScanUiState.PlanPreview, onApprove: () -> 
 
 @Composable
 private fun ExecutionDoneContent(state: ScanUiState.ExecutionDone, onDone: () -> Unit) {
+    val summary = state.summary
     Column {
         Text(text = "Task complete")
-        Text(text = "${state.summary.succeeded} moved")
-        if (state.summary.failed > 0) Text(text = "${state.summary.failed} failed")
-        if (state.summary.leftUntouched.isNotEmpty()) Text(text = "${state.summary.leftUntouched.size} left untouched")
+        if (summary.foldersCreated > 0) Text(text = "${summary.foldersCreated} folder(s) created")
+        if (summary.filesMoved > 0) Text(text = "${summary.filesMoved} moved")
+        if (summary.filesRenamed > 0) Text(text = "${summary.filesRenamed} renamed")
+        if (summary.filesTrashed > 0) Text(text = "${summary.filesTrashed} trashed")
+        if (summary.failed > 0) Text(text = "${summary.failed} failed")
+        if (summary.leftUntouched.isNotEmpty()) Text(text = "${summary.leftUntouched.size} left untouched")
 
         Card(onClick = onDone, modifier = Modifier.padding(top = 16.dp)) {
             Text(text = "Done", modifier = Modifier.padding(16.dp))
@@ -197,12 +225,18 @@ private fun ExecutionDoneContent(state: ScanUiState.ExecutionDone, onDone: () ->
 
 private fun operationSummary(operation: PlannedOperation): String = when (operation) {
     is PlannedOperation.CreateDirectory -> "Create folder: ${operation.name}"
-    is PlannedOperation.Move -> "Move ${operation.source.displayName()} → ${operation.destination.displayName()}"
+    is PlannedOperation.Move -> "Move ${operation.source.shortPath()} → ${operation.destination.shortPath()}"
     is PlannedOperation.Rename -> "Rename to ${operation.newName}"
-    is PlannedOperation.Trash -> "Trash ${operation.source.displayName()}"
+    is PlannedOperation.Trash -> "Trash ${operation.source.shortPath()}"
 }
 
-private fun FileRef.displayName(): String = rawValue().substringAfterLast('/')
+/**
+ * The last two path segments (parent folder + filename), not just the
+ * filename: a move's source and destination usually share a filename, so
+ * showing only the basename made every row in the preview read
+ * "X.apk → X.apk" with no way to tell what actually changed.
+ */
+private fun FileRef.shortPath(): String = rawValue().split('/').filter { it.isNotEmpty() }.takeLast(2).joinToString("/")
 
 @Composable
 private fun ErrorState(message: String, onRetry: () -> Unit) {

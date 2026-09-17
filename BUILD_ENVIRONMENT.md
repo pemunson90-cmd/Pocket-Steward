@@ -138,9 +138,23 @@ from now on costs nothing and is the cheap version of that decision. The
 `1.json` from Milestone 0 was generated in a previous sandbox and is not
 recoverable from this source tree.
 
+## Emulator reality (Milestone 2 build round)
+
+An emulator without KVM is viable but expensive: roughly 6 to 8 minutes to
+boot, then several more before MediaProvider mounts `/sdcard` and `appops`
+answers. On one of two attempts the emulated storage volume never mounted at
+all. Driving DocumentsUI (the SAF folder picker) by synthetic tap did not
+work in either session — that's why SAF mode still has no on-device
+confirmation as of Milestone 2. Device testing by a human is faster and more
+reliable than anything this arrangement can do; don't default to spinning up
+an emulator when the option to hand a build to the phone owner exists.
+
 ## Current state
 
-`./gradlew clean assembleDebug testDebugUnitTest` is green. Unit tests: 7
-passing across `SettingsDefaultsTest` (2), `FileCategoryTest` (3),
-`FileRefCodecTest` (2). Debug APK is 31.11 MiB, debug-signed,
-`com.pocketsteward.app` / `MainActivity`, minSdk 30, targetSdk 36.
+`./gradlew clean assembleDebug testDebugUnitTest` is green. Unit tests: 19
+passing across `PlanValidatorTest` (12), `FileCategoryTest` (3),
+`SettingsDefaultsTest` (2), `FileRefCodecTest` (2). Debug APK is 31.11 MiB,
+debug-signed, `com.pocketsteward.app` / `MainActivity`, minSdk 30,
+targetSdk 36. Milestone 2's exit criterion (a hard-coded plan safely
+reorganizing real files) is confirmed on real hardware: 17 APKs moved into
+`Downloads/APKs` on Pat's own phone.

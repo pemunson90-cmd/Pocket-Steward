@@ -19,10 +19,16 @@ import com.pocketsteward.app.storage.rawValue
 
 data class ExecutionSummary(
     val taskRunId: Long,
-    val succeeded: Int,
+    val foldersCreated: Int,
+    val filesMoved: Int,
+    val filesRenamed: Int,
+    val filesTrashed: Int,
     val failed: Int,
     val leftUntouched: List<RejectedOperation>,
-)
+) {
+    /** Folder creations are not "moves" — kept separate so a completion screen doesn't conflate them. */
+    val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed
+}
 
 /**
  * Plan Section 6/11: the deterministic executor. Takes an [AgentPlan],
@@ -61,7 +67,10 @@ class PlanExecutor(
             ),
         )
 
-        var succeeded = 0
+        var foldersCreated = 0
+        var filesMoved = 0
+        var filesRenamed = 0
+        var filesTrashed = 0
         var failed = 0
 
         validated.accepted.forEachIndexed { sequence, operation ->
@@ -98,7 +107,12 @@ class PlanExecutor(
                         ),
                     )
                     reindexAfterMutation(operation, result.resultRef, scopeRootRef)
-                    succeeded++
+                    when (operation) {
+                        is PlannedOperation.CreateDirectory -> foldersCreated++
+                        is PlannedOperation.Move -> filesMoved++
+                        is PlannedOperation.Rename -> filesRenamed++
+                        is PlannedOperation.Trash -> filesTrashed++
+                    }
                 }
                 is MutationResult.Failure -> {
                     mutationRecordDao.update(
@@ -121,6 +135,8 @@ class PlanExecutor(
             }
         }
 
+        val summary = ExecutionSummary(taskRunId, foldersCreated, filesMoved, filesRenamed, filesTrashed, failed, validated.rejected)
+
         taskRunDao.update(
             TaskRun(
                 id = taskRunId,
@@ -130,11 +146,12 @@ class PlanExecutor(
                 status = if (failed == 0) TaskRunStatus.COMPLETED else TaskRunStatus.FAILED,
                 scanSnapshotId = null,
                 planJson = describePlan(plan),
-                summary = "$succeeded moved, $failed failed, ${validated.rejected.size} left untouched",
+                summary = "${summary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
+                    "$filesRenamed renamed, $filesTrashed trashed), $failed failed, ${validated.rejected.size} left untouched",
             ),
         )
 
-        return ExecutionSummary(taskRunId, succeeded, failed, validated.rejected)
+        return summary
     }
 
     private suspend fun runOne(operation: PlannedOperation): MutationResult = try {

@@ -10,6 +10,7 @@ import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
+import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -40,9 +41,9 @@ sealed interface ScanUiState {
         val byCategory: Map<FileCategory, CategoryStat>,
     ) : ScanUiState
     data class PlanPreview(
-        val plan: AgentPlan,
-        val acceptedCount: Int,
-        val rejectedCount: Int,
+        val goal: String,
+        val accepted: List<PlannedOperation>,
+        val rejected: List<RejectedOperation>,
         val scopeRoot: FileRef,
     ) : ScanUiState
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
@@ -139,15 +140,13 @@ class ScanViewModel(
                         )
                     }
                 }
-                val plan = AgentPlan(goal = "Organize APKs under ${summary.scopeLabel}", operations = operations)
-
                 val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
                 val validated = PlanValidator.validate(operations, index)
 
                 _uiState.value = ScanUiState.PlanPreview(
-                    plan = plan,
-                    acceptedCount = validated.accepted.size,
-                    rejectedCount = validated.rejected.size,
+                    goal = "Organize APKs under ${summary.scopeLabel}",
+                    accepted = validated.accepted,
+                    rejected = validated.rejected,
                     scopeRoot = root,
                 )
             } catch (t: Throwable) {
@@ -165,8 +164,13 @@ class ScanViewModel(
                     return@launch
                 }
                 val executor = container.planExecutor(mode)
+                // Only the operations the preview showed as accepted are
+                // sent for execution — rejected ones stay untouched, per
+                // Decision 5, rather than being re-submitted for the
+                // executor's own validation pass to reject again.
+                val plan = AgentPlan(preview.goal, preview.accepted)
                 val summary = withContext(Dispatchers.IO) {
-                    executor.execute(preview.plan, preview.scopeRoot.rawValue())
+                    executor.execute(plan, preview.scopeRoot.rawValue())
                 }
                 _uiState.value = ScanUiState.ExecutionDone(summary)
             } catch (t: Throwable) {
