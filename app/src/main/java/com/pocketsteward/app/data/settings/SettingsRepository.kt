@@ -93,6 +93,18 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[Keys.SAF_TREE_URI] = uri }
     }
 
+    /**
+     * Forgets which access mode was chosen, so onboarding asks again. Does
+     * not revoke the OS-level grant — that is the system's to give and take,
+     * and only the user can do it from Android settings.
+     */
+    suspend fun clearStorageAccessChoice() {
+        context.dataStore.edit {
+            it.remove(Keys.STORAGE_MODE)
+            it.remove(Keys.SAF_TREE_URI)
+        }
+    }
+
     suspend fun setMetadataIndexingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.METADATA_INDEXING] = enabled }
     }

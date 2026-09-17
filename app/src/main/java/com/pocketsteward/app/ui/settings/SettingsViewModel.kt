@@ -46,6 +46,16 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
      * this list fresh each time Smart Cleanup runs, so a save here takes
      * effect on the next cleanup proposal, no restart needed.
      */
+    /**
+     * Clears the stored access choice so onboarding offers broad-vs-SAF again
+     * on next launch. Deliberately does not revoke anything at the OS level —
+     * it can't, and pretending otherwise would be the same dishonesty the
+     * dead Home tiles were. It only forgets *this app's* recorded preference.
+     */
+    fun clearStorageAccessChoice() {
+        viewModelScope.launch { settingsRepository.clearStorageAccessChoice() }
+    }
+
     fun setProjectKeywordsFromText(text: String) {
         val keywords = text.lineSequence()
             .filter { it.isNotBlank() }

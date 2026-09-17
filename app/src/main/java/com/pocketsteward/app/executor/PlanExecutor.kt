@@ -46,10 +46,18 @@ class PlanExecutor(
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
 ) {
+    /**
+     * [onProgress] fires after each accepted operation resolves, so a caller
+     * can show a moving count instead of a frozen screen while real files are
+     * being moved. Purely advisory: correctness never depends on anyone
+     * listening, and the write-ahead journal still governs what actually
+     * happened if this is interrupted partway (plan Section 18).
+     */
     suspend fun execute(
         plan: AgentPlan,
         scopeRootRef: String,
         storageAccessMode: StorageAccessMode,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ): ExecutionSummary {
         val index = InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, index)
@@ -171,7 +179,14 @@ class PlanExecutor(
                     failed++
                 }
             }
+            onProgress(sequence + 1, validated.accepted.size)
         }
+        // The loop's early-return paths (preflight failure, idempotent
+        // create) skip their own progress call. The count is absolute rather
+        // than incremental, so the next operation corrects it — but if the
+        // *last* operation took one of those paths, nothing would. This makes
+        // the final number right regardless of which path ended the run.
+        onProgress(validated.accepted.size, validated.accepted.size)
 
         val summary = ExecutionSummary(
             taskRunId,

@@ -40,7 +40,7 @@ import com.pocketsteward.app.storage.StorageAccessMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: SettingsViewModel = viewModel(
@@ -89,8 +89,33 @@ fun SettingsScreen(onBack: () -> Unit) {
                     StorageAccessMode.SAF -> stringResource(R.string.settings_storage_mode_saf)
                     null -> "Not granted"
                 },
-                modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+                modifier = Modifier.padding(top = 4.dp),
             )
+            if (storageAccess.mode == StorageAccessMode.SAF) {
+                Text(
+                    text = "In folder-only mode Pocket Steward can scan and browse, but can't move, trash, or read file contents.",
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            // Before this, once broad access was granted onboarding
+            // auto-advanced past the choice forever and revoking All Files
+            // Access in system settings was the only way back.
+            Card(
+                onClick = viewModel::clearStorageAccessChoice,
+                modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_change_storage_mode),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
+
+            Card(onClick = onOpenTrash, modifier = Modifier.padding(bottom = 16.dp)) {
+                Text(
+                    text = stringResource(R.string.settings_open_trash),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
 
             HorizontalDivider()
 

@@ -46,15 +46,18 @@ class FileScanner(
         val scopeKey = root.rawValue()
         val existing = scanCheckpointDao.get(scopeKey)
 
-        val isResume = existing != null && existing.status == ScanStatus.RUNNING
-        val startedAt = if (isResume) existing!!.startedAt else System.currentTimeMillis()
+        // Bound once as a local so the smart cast holds through both branches
+        // below — the previous shape needed `!!` twice to convince the
+        // compiler of something already guaranteed by this check.
+        val resumable = existing?.takeIf { it.status == ScanStatus.RUNNING }
+        val startedAt = resumable?.startedAt ?: System.currentTimeMillis()
 
         val queue = ArrayDeque<FileRef>()
         var processedCount: Int
 
-        if (isResume) {
-            queue.addAll(FileRefCodec.decodeList(existing!!.pendingDirectoriesJson))
-            processedCount = existing.processedCount
+        if (resumable != null) {
+            queue.addAll(FileRefCodec.decodeList(resumable.pendingDirectoriesJson))
+            processedCount = resumable.processedCount
         } else {
             fileRecordDao.clearScopeRoot(scopeKey)
             // The walk below only ever indexes *children* it discovers via

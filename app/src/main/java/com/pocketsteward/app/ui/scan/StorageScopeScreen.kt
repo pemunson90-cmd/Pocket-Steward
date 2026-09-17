@@ -19,6 +19,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -40,7 +41,7 @@ import com.pocketsteward.app.storage.rawValue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StorageScopeScreen(onBack: () -> Unit) {
+fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: ScanViewModel = viewModel(
@@ -51,6 +52,12 @@ fun StorageScopeScreen(onBack: () -> Unit) {
 
     val accessState by container.settingsRepository.storageAccessState.collectAsState(initial = null)
     val uiState by viewModel.uiState.collectAsState()
+
+    // A Home tile lands here with an action already chosen: scan Downloads,
+    // then run it. The ViewModel guards against a recomposition re-firing it.
+    LaunchedEffect(autoAction) {
+        if (autoAction != null) viewModel.startScanThen(ScanTarget.Downloads, autoAction)
+    }
 
     val targets = when (accessState?.mode) {
         StorageAccessMode.DIRECT -> listOf(
@@ -74,7 +81,7 @@ fun StorageScopeScreen(onBack: () -> Unit) {
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             when (val state = uiState) {
-                is ScanUiState.Idle -> TargetList(targets, onTargetSelected = viewModel::startScan)
+                is ScanUiState.Idle -> TargetList(targets, onTargetSelected = { target -> viewModel.startScan(target) })
                 is ScanUiState.Scanning -> ScanningState(state)
                 is ScanUiState.Summary -> ScanSummaryContent(
                     state = state,
@@ -84,6 +91,7 @@ fun StorageScopeScreen(onBack: () -> Unit) {
                     onFindDuplicates = { viewModel.findDuplicates(state) },
                     onFindLargestFiles = { viewModel.findLargestFiles(state) },
                     onFindOldFiles = { viewModel.findOldFiles(state) },
+                    onReviewUncategorized = { viewModel.findUncategorized(state) },
                 )
                 is ScanUiState.PlanPreview -> PlanPreviewContent(
                     state = state,
@@ -95,6 +103,7 @@ fun StorageScopeScreen(onBack: () -> Unit) {
                     onUndo = { viewModel.undoTask(state.summary.taskRunId) },
                     onDone = viewModel::reset,
                 )
+                is ScanUiState.Working -> WorkingContent(state)
                 is ScanUiState.Undoing -> UndoingContent()
                 is ScanUiState.UndoDone -> UndoDoneContent(state, onDone = viewModel::reset)
                 is ScanUiState.DuplicateReview -> DuplicateReviewContent(
@@ -147,7 +156,13 @@ private fun ScanSummaryContent(
     onFindDuplicates: () -> Unit,
     onFindLargestFiles: () -> Unit,
     onFindOldFiles: () -> Unit,
+    onReviewUncategorized: () -> Unit,
 ) {
+    // One fence for one limitation. SAF mode can scan and browse; it can't
+    // mutate or read contents, because those gateway methods are deliberately
+    // unimplemented. Rather than offering actions that then fail three
+    // different ways, the actions that need those capabilities aren't shown.
+    val canMutate = state.mode == StorageAccessMode.DIRECT
     Column(modifier = Modifier.fillMaxSize()) {
         Text(text = state.scopeLabel)
         Text(text = "${state.totalFiles} files · ${formatBytes(state.totalBytes)}")
@@ -164,33 +179,48 @@ private fun ScanSummaryContent(
                 }
             }
 
-            item {
-                // Plan Section 4/9: the rule engine's own generated plan —
-                // extension + project-keyword rules, no model. Distinct from
-                // the hard-coded APK-only test button below it.
-                Card(onClick = onSmartCleanup, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                    Text(text = "Smart cleanup (rule-based, no AI)", modifier = Modifier.padding(16.dp))
-                }
-            }
-
-            val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
-            if (apkCount > 0) {
+            if (!canMutate) {
                 item {
-                    // Milestone 2's own exercise of create+move+validator+
-                    // executor+journal — a hard-coded plan, kept as-is since
-                    // it's still a useful minimal-case sanity check distinct
-                    // from the general rule engine above.
-                    Card(onClick = onOrganizeApks, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Text(text = "Test: move $apkCount APK(s) into an APKs subfolder", modifier = Modifier.padding(16.dp))
+                    Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                        Text(
+                            text = "Folder-only access: scanning and browsing work here. Moving, trashing, and " +
+                                "duplicate detection need full file-manager access — change it in Settings.",
+                            modifier = Modifier.padding(16.dp),
+                        )
                     }
                 }
             }
 
-            item {
-                Card(onClick = onFindDuplicates, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    Text(text = "Find duplicates", modifier = Modifier.padding(16.dp))
+            if (canMutate) {
+                item {
+                    // Plan Section 4/9: the rule engine's own generated plan —
+                    // extension + project-keyword rules, no model. Distinct from
+                    // the hard-coded APK-only test button below it.
+                    Card(onClick = onSmartCleanup, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                        Text(text = "Smart cleanup (rule-based, no AI)", modifier = Modifier.padding(16.dp))
+                    }
+                }
+
+                val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
+                if (apkCount > 0) {
+                    item {
+                        // Milestone 2's own exercise of create+move+validator+
+                        // executor+journal — a hard-coded plan, kept as-is since
+                        // it's still a useful minimal-case sanity check distinct
+                        // from the general rule engine above.
+                        Card(onClick = onOrganizeApks, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            Text(text = "Test: move $apkCount APK(s) into an APKs subfolder", modifier = Modifier.padding(16.dp))
+                        }
+                    }
+                }
+
+                item {
+                    Card(onClick = onFindDuplicates, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Text(text = "Find duplicates", modifier = Modifier.padding(16.dp))
+                    }
                 }
             }
+
             item {
                 Card(onClick = onFindLargestFiles, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     Text(text = "Find largest files", modifier = Modifier.padding(16.dp))
@@ -199,6 +229,11 @@ private fun ScanSummaryContent(
             item {
                 Card(onClick = onFindOldFiles, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     Text(text = "Find files older than 6 months", modifier = Modifier.padding(16.dp))
+                }
+            }
+            item {
+                Card(onClick = onReviewUncategorized, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(text = "Review uncategorized", modifier = Modifier.padding(16.dp))
                 }
             }
         }
@@ -240,8 +275,16 @@ private fun DuplicateGroupCard(group: DuplicateGroup) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(text = "${group.members.size} identical copies")
-            group.members.forEach { member ->
-                Text(text = "${member.displayName} (${formatBytes(member.sizeBytes)})")
+            // Which copy survives is decided by KeeperSelector, not by scan
+            // order, and it's labelled here so the choice is visible before
+            // anything is proposed rather than discovered afterwards.
+            Text(text = "Keeping: ${group.keeper.displayName}", modifier = Modifier.padding(top = 4.dp))
+            Text(text = group.keeper.stableRef)
+            if (group.extras.isNotEmpty()) {
+                Text(text = "Would trash:", modifier = Modifier.padding(top = 4.dp))
+                group.extras.forEach { extra ->
+                    Text(text = "${extra.stableRef} (${formatBytes(extra.sizeBytes)})")
+                }
             }
         }
     }
@@ -343,6 +386,30 @@ private fun ExecutionDoneContent(
                 Text(text = "Done", modifier = Modifier.padding(16.dp))
             }
         }
+    }
+}
+
+/**
+ * Every long operation's feedback. Before this existed, tapping an action
+ * left the previous screen on display for the whole operation — on a 13,000
+ * file scope that is indistinguishable from a dead button.
+ */
+@Composable
+private fun WorkingContent(state: ScanUiState.Working) {
+    Column(verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxSize()) {
+        val processed = state.processed
+        val total = state.total
+        if (processed != null && total != null && total > 0) {
+            LinearProgressIndicator(
+                progress = { processed.toFloat() / total.toFloat() },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(text = "${state.label}: $processed of $total", modifier = Modifier.padding(top = 16.dp))
+        } else {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text(text = state.label, modifier = Modifier.padding(top = 16.dp))
+        }
+        state.detail?.let { Text(text = it, modifier = Modifier.padding(top = 4.dp)) }
     }
 }
 

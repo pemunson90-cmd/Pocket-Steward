@@ -37,6 +37,56 @@ class UndoExecutor(
     private val mutationRecordDao: MutationRecordDao,
     private val gatewayFor: (StorageAccessMode) -> StorageGateway,
 ) {
+    /**
+     * Reverses exactly one committed mutation, rather than a whole task run.
+     * This is what the Trash screen's per-file restore uses: a trashed file is
+     * one `TRASH` mutation, and putting it back is that mutation's own
+     * inverse — the same write-ahead PENDING-then-UNDONE path [undo] takes,
+     * not a second restore mechanism that could drift from it.
+     *
+     * Reverse order doesn't apply to a single operation, so the ordering
+     * argument [undo] makes (an earlier operation's safety can depend on a
+     * later one being undone first) is handled by [undoOne]'s own collision
+     * check: if something now occupies the original path, this blocks rather
+     * than overwriting.
+     */
+    suspend fun undoSingleMutation(mutationId: Long): MutationResult {
+        val record = mutationRecordDao.getById(mutationId)
+            ?: return MutationResult.Failure("No such journal entry: $mutationId")
+        if (record.status != MutationStatus.COMMITTED || record.undoState != UndoState.AVAILABLE) {
+            return MutationResult.Failure("That change is not in a reversible state (${record.status} / ${record.undoState}).")
+        }
+        val task = taskRunDao.getById(record.taskRunId)
+            ?: return MutationResult.Failure("The task that made this change is missing.")
+
+        val gateway = gatewayFor(task.storageAccessMode)
+        val pending = record.copy(
+            undoState = UndoState.PENDING,
+            undoAttemptedAt = System.currentTimeMillis(),
+            undoError = null,
+        )
+        mutationRecordDao.update(pending)
+
+        return when (val result = undoOne(pending, gateway)) {
+            is MutationResult.Success -> {
+                mutationRecordDao.update(
+                    pending.copy(
+                        status = MutationStatus.UNDONE,
+                        undoState = UndoState.UNDONE,
+                        undoError = null,
+                    ),
+                )
+                reindexAfterUndo(pending, task.scopeRootRef, gateway)
+                result
+            }
+
+            is MutationResult.Failure -> {
+                mutationRecordDao.update(pending.copy(undoState = UndoState.BLOCKED, undoError = result.reason))
+                result
+            }
+        }
+    }
+
     suspend fun undo(taskRunId: Long): UndoSummary {
         val task = taskRunDao.getById(taskRunId) ?: error("Unknown task run: $taskRunId")
         require(task.status == TaskRunStatus.COMPLETED || task.status == TaskRunStatus.FAILED) {

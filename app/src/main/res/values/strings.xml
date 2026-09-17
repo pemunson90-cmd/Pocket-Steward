@@ -16,7 +16,7 @@
     <string name="home_quick_action_find_old_files">Find old files</string>
     <string name="home_quick_action_review_uncategorized">Review uncategorized</string>
     <string name="home_quick_action_recent_tasks">Recent tasks</string>
-    <string name="home_not_yet_implemented">Not built yet — arriving in a later milestone.</string>
+    <string name="home_prompt_disabled">Typing requests arrives with on-device AI. Use the actions below for now.</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_storage_access_section">Storage access</string>
@@ -27,4 +27,10 @@
     <string name="settings_content_inspection">Document content inspection</string>
     <string name="settings_image_analysis">Image analysis</string>
     <string name="settings_on_device_ai">On-device AI</string>
+    <string name="settings_change_storage_mode">Change storage access</string>
+    <string name="settings_open_trash">Review trash</string>
+
+    <string name="trash_title">Trash</string>
+    <string name="trash_empty">Nothing has been trashed yet.</string>
+    <string name="trash_policy">Pocket Steward never deletes files. Trashed files are moved to PocketSteward/Trash and stay there until you remove them yourself with a file manager.</string>
 </resources>

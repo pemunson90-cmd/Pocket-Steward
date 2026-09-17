@@ -5,7 +5,16 @@ import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
 import java.security.MessageDigest
 
-data class DuplicateGroup(val sha256: String, val members: List<FileRecord>)
+/** Where the cascade currently is, for a UI that would otherwise show nothing for minutes. */
+data class DedupeProgress(val phase: String, val processed: Int, val total: Int)
+
+data class DuplicateGroup(val sha256: String, val members: List<FileRecord>) {
+    /** The copy that survives. [members] arrives ordered keeper-first, per [KeeperSelector]. */
+    val keeper: FileRecord get() = members.first()
+
+    /** Every other copy — what a trash-the-duplicates plan would act on. */
+    val extras: List<FileRecord> get() = members.drop(1)
+}
 
 /**
  * Plan Section 8's cascade, exactly: group by exact size first (free, from
@@ -18,26 +27,60 @@ data class DuplicateGroup(val sha256: String, val members: List<FileRecord>)
  * "Exact duplicate" means a matching cryptographic hash, full stop — never
  * inferred from filename, size, or a model's own judgment (Section 8's own
  * closing line). This class never deletes or trashes anything; it only
- * reports groups. What happens to a group is a planning decision made
- * elsewhere, same separation as everywhere else in this app.
+ * reports groups, already ordered so the keeper is first. What happens to a
+ * group is a planning decision made elsewhere, same separation as everywhere
+ * else in this app.
+ *
+ * [findDuplicates] reports progress per file hashed. On a real scope (Pat's
+ * Downloads: 13,738 files, 11.2 GB) the I/O phases take long enough that a
+ * caller with no progress to show is indistinguishable from a dead button.
  */
 class DuplicateDetector(private val gateway: StorageGateway) {
 
-    suspend fun findDuplicates(records: List<FileRecord>): List<DuplicateGroup> {
-        val bySize = records
+    suspend fun findDuplicates(
+        records: List<FileRecord>,
+        onProgress: (DedupeProgress) -> Unit = {},
+    ): List<DuplicateGroup> {
+        val sizeCandidates = records
             .filter { !it.isDirectory }
             .groupBy { it.sizeBytes }
             .values
             .filter { it.size > 1 }
             .flatten()
 
-        val byQuickFingerprint = groupBy(bySize) { quickFingerprint(it) }
-            .filter { it.size > 1 }
-            .flatten()
+        var fingerprinted = 0
+        val byQuickFingerprint = groupBy(sizeCandidates) { record ->
+            quickFingerprint(record).also {
+                onProgress(DedupeProgress(PHASE_FINGERPRINT, ++fingerprinted, sizeCandidates.size))
+            }
+        }
 
-        return groupBy(byQuickFingerprint) { sha256(it) }
-            .filter { it.size > 1 }
-            .map { group -> DuplicateGroup(sha256 = sha256(group.first()), members = group) }
+        val hashCandidates = byQuickFingerprint.values.filter { it.size > 1 }.flatten()
+
+        var hashed = 0
+        val byHash = groupBy(hashCandidates) { record ->
+            sha256(record).also {
+                onProgress(DedupeProgress(PHASE_CONFIRM, ++hashed, hashCandidates.size))
+            }
+        }
+
+        return byHash
+            .filter { (_, members) -> members.size > 1 }
+            .map { (hash, members) -> DuplicateGroup(sha256 = hash, members = keeperFirst(members)) }
+    }
+
+    /**
+     * Reorders a confirmed-identical group so [DuplicateGroup.keeper] is the
+     * copy [KeeperSelector] chose, rather than whichever one the grouping
+     * happened to encounter first. Everything downstream — the review screen's
+     * label, the trash plan's `extras` — reads that ordering, so the decision
+     * lives in exactly one place.
+     */
+    private fun keeperFirst(members: List<FileRecord>): List<FileRecord> {
+        val keeperIndex = KeeperSelector.keeperIndex(
+            members.map { KeeperCandidate(it.stableRef, it.modifiedAt, it.displayName) },
+        )
+        return listOf(members[keeperIndex]) + members.filterIndexed { index, _ -> index != keeperIndex }
     }
 
     private suspend fun quickFingerprint(record: FileRecord): String {
@@ -63,12 +106,20 @@ class DuplicateDetector(private val gateway: StorageGateway) {
         return digest.digest().toHex()
     }
 
-    private suspend fun groupBy(records: List<FileRecord>, key: suspend (FileRecord) -> String): List<List<FileRecord>> {
+    /**
+     * Keyed grouping that keeps the key — the previous version threw it away
+     * and then re-hashed one file per group to recover it, a full second read
+     * of a potentially large file for a value already computed.
+     */
+    private suspend fun groupBy(
+        records: List<FileRecord>,
+        key: suspend (FileRecord) -> String,
+    ): Map<String, List<FileRecord>> {
         val grouped = LinkedHashMap<String, MutableList<FileRecord>>()
         for (record in records) {
             grouped.getOrPut(key(record)) { mutableListOf() }.add(record)
         }
-        return grouped.values.toList()
+        return grouped
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
@@ -76,5 +127,7 @@ class DuplicateDetector(private val gateway: StorageGateway) {
     private companion object {
         const val QUICK_FINGERPRINT_BYTES = 4096
         const val READ_CHUNK_BYTES = 64 * 1024
+        const val PHASE_FINGERPRINT = "Fingerprinting"
+        const val PHASE_CONFIRM = "Confirming matches"
     }
 }

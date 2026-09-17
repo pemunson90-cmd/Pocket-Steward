@@ -3,7 +3,8 @@ package com.pocketsteward.app.ui.scan
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.pocketsteward.app.cleanup.CleanupPlanGenerator
+import com.pocketsteward.app.cleanup.PlanRequest
+import com.pocketsteward.app.cleanup.RuleBasedPlanSource
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
@@ -16,6 +17,8 @@ import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.rules.RuleEngine
+import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -60,7 +63,46 @@ sealed interface ScanUiState {
     data class DuplicateReview(val groups: List<DuplicateGroup>, val scopeRoot: FileRef, val scopeLabel: String) : ScanUiState
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
+
+    /**
+     * Any long-running operation that isn't a scan or an undo — hashing for
+     * duplicates, generating a plan, executing one. Before this existed, each
+     * of those assigned `_uiState` only after finishing, so the screen sat on
+     * the previous state for the whole operation and a tap was
+     * indistinguishable from a dead button.
+     *
+     * [processed]/[total] are null where the underlying operation genuinely
+     * can't count its work yet, which renders as an indeterminate bar rather
+     * than a fake number.
+     */
+    data class Working(
+        val label: String,
+        val detail: String? = null,
+        val processed: Int? = null,
+        val total: Int? = null,
+    ) : ScanUiState
+
     data class Error(val message: String) : ScanUiState
+}
+
+/**
+ * What a Home quick-action tile wants done once a scan has produced a
+ * summary. Home can't run these itself — every one of them needs an indexed
+ * scope first — so the tile navigates here, the scan runs with its existing
+ * progress UI, and the action fires on arrival.
+ */
+enum class PostScanAction {
+    SMART_CLEANUP,
+    FIND_DUPLICATES,
+    FIND_LARGEST,
+    FIND_OLD,
+    REVIEW_UNCATEGORIZED,
+    ;
+
+    companion object {
+        fun fromRoute(value: String?): PostScanAction? =
+            entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+    }
 }
 
 class ScanViewModel(
@@ -71,7 +113,22 @@ class ScanViewModel(
     private val _uiState = MutableStateFlow<ScanUiState>(ScanUiState.Idle)
     val uiState: StateFlow<ScanUiState> = _uiState
 
-    fun startScan(target: ScanTarget) {
+    /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
+    private var autoStarted = false
+
+    /**
+     * Entry point for a Home tile: scan [target], then immediately run
+     * [action] against the resulting summary. Idempotent across
+     * recompositions — the screen calls this on every composition and only
+     * the first one does anything.
+     */
+    fun startScanThen(target: ScanTarget, action: PostScanAction) {
+        if (autoStarted) return
+        autoStarted = true
+        startScan(target, action)
+    }
+
+    fun startScan(target: ScanTarget, thenRun: PostScanAction? = null) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Scanning(ScanProgress(0, null, ScanPhase.SCANNING))
             try {
@@ -105,7 +162,7 @@ class ScanViewModel(
                         CategoryStat(fileCount = files.size, totalBytes = files.sumOf { it.sizeBytes })
                     }
 
-                _uiState.value = ScanUiState.Summary(
+                val summary = ScanUiState.Summary(
                     scopeLabel = target.label,
                     scopeRoot = root,
                     mode = mode,
@@ -113,6 +170,16 @@ class ScanViewModel(
                     totalBytes = records.sumOf { it.sizeBytes },
                     byCategory = byCategory,
                 )
+                _uiState.value = summary
+
+                when (thenRun) {
+                    null -> Unit
+                    PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
+                    PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
+                    PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
+                    PostScanAction.FIND_OLD -> findOldFiles(summary)
+                    PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
+                }
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -127,10 +194,11 @@ class ScanViewModel(
      */
     fun proposeOrganizeApks(summary: ScanUiState.Summary) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Planning", "Collecting APKs under ${summary.scopeLabel}")
             try {
                 val root = summary.scopeRoot
                 if (root !is FileRef.Direct) {
-                    _uiState.value = ScanUiState.Error("Organizing is only wired up for broad storage access right now.")
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
                 val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
@@ -178,33 +246,70 @@ class ScanViewModel(
      */
     fun proposeSmartCleanup(summary: ScanUiState.Summary) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
             try {
                 val root = summary.scopeRoot
                 if (root !is FileRef.Direct) {
-                    _uiState.value = ScanUiState.Error("Smart cleanup is only wired up for broad storage access right now.")
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
                 val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
                 val projectKeywords = settingsRepository.projectKeywords.first()
-                val plan = CleanupPlanGenerator.generate(root, records, projectKeywords)
+                val plan = withContext(Dispatchers.Default) {
+                    RuleBasedPlanSource.proposePlan(PlanRequest(root, records, projectKeywords))
+                }
                 if (plan.operations.isEmpty()) {
-                    _uiState.value = ScanUiState.Error("Nothing under ${summary.scopeLabel} could be classified with full confidence — nothing to propose.")
+                    _uiState.value = ScanUiState.Error("Nothing under ${summary.scopeLabel} could be classified with full confidence — nothing to propose. Review uncategorized to see what was skipped and why.")
                     return@launch
                 }
 
-                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
-                val validated = PlanValidator.validate(plan.operations, index)
+                showPlanPreview(plan.goal, plan.operations, root)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
 
-                _uiState.value = ScanUiState.PlanPreview(
-                    goal = plan.goal,
-                    accepted = validated.accepted,
-                    rejected = validated.rejected,
-                    scopeRoot = root,
+    /**
+     * Plan Section 9's ambiguous set, made visible: every file the rule
+     * engine could not place with full confidence, which is exactly what
+     * Smart cleanup silently skips. Read-only — this is the honest answer to
+     * "why didn't it move that file", and later the input an AI planner takes.
+     */
+    fun findUncategorized(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Reviewing", "Checking what the rules can't place")
+            try {
+                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(summary.scopeRoot.rawValue())
+                val projectKeywords = settingsRepository.projectKeywords.first()
+                val uncategorized = withContext(Dispatchers.Default) {
+                    records.filter { RuleEngine.classify(it.displayName, it.extension, projectKeywords).isUncategorized() }
+                }
+                _uiState.value = ScanUiState.FileListReview(
+                    title = "Uncategorized under ${summary.scopeLabel}",
+                    records = uncategorized,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
+    }
+
+    /**
+     * The single path a plan takes to the screen, whatever produced it:
+     * validate, then preview. Nothing calls `PlanExecutor` without passing
+     * through here first, which is what keeps plan Decision 1 true when a
+     * second [com.pocketsteward.app.cleanup.PlanSource] (the AI one) arrives.
+     */
+    private suspend fun showPlanPreview(goal: String, operations: List<PlannedOperation>, root: FileRef) {
+        val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
+        val validated = PlanValidator.validate(operations, index)
+        _uiState.value = ScanUiState.PlanPreview(
+            goal = goal,
+            accepted = validated.accepted,
+            rejected = validated.rejected,
+            scopeRoot = root,
+        )
     }
 
     /**
@@ -214,12 +319,30 @@ class ScanViewModel(
      */
     fun findDuplicates(summary: ScanUiState.Summary) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Finding duplicates", "Grouping by size")
             try {
                 val root = summary.scopeRoot
                 val mode = summary.mode
+                // SAF's openRead is still TODO(), so hashing would throw a raw
+                // NotImplementedError rather than fail honestly. Guard here,
+                // with the same message every other mutation-needing action
+                // uses, instead of three different behaviors for one limit.
+                if (mode == StorageAccessMode.SAF) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
                 val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
                 val detector = DuplicateDetector(container.gatewayFor(mode))
-                val groups = withContext(Dispatchers.IO) { detector.findDuplicates(records) }
+                val groups = withContext(Dispatchers.IO) {
+                    detector.findDuplicates(records) { progress ->
+                        _uiState.value = ScanUiState.Working(
+                            label = "Finding duplicates",
+                            detail = progress.phase,
+                            processed = progress.processed,
+                            total = progress.total,
+                        )
+                    }
+                }
                 _uiState.value = ScanUiState.DuplicateReview(groups, root, summary.scopeLabel)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -236,12 +359,17 @@ class ScanViewModel(
      */
     fun proposeTrashDuplicates(review: ScanUiState.DuplicateReview) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Planning", "Building the trash plan")
             try {
+                // `extras` is every copy except the keeper, and the keeper was
+                // chosen deterministically by KeeperSelector when the group was
+                // built — not "whichever one came back first", which used to
+                // mean the surviving copy could differ between runs.
                 val operations = review.groups.flatMap { group ->
-                    group.members.drop(1).map { record ->
+                    group.extras.map { record ->
                         PlannedOperation.Trash(
                             source = parseFileRef(record.stableRef),
-                            reason = "Duplicate of ${group.members.first().displayName} (matching SHA-256)",
+                            reason = "Duplicate of ${group.keeper.displayName} (matching SHA-256)",
                         )
                     }
                 }
@@ -249,14 +377,7 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("No duplicates to trash.")
                     return@launch
                 }
-                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(review.scopeRoot.rawValue()))
-                val validated = PlanValidator.validate(operations, index)
-                _uiState.value = ScanUiState.PlanPreview(
-                    goal = "Trash duplicate files under ${review.scopeLabel}",
-                    accepted = validated.accepted,
-                    rejected = validated.rejected,
-                    scopeRoot = review.scopeRoot,
-                )
+                showPlanPreview("Trash duplicate files under ${review.scopeLabel}", operations, review.scopeRoot)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -266,6 +387,7 @@ class ScanViewModel(
     /** Plan Section 16's "find the 50 largest files" quick action — browse only, nothing planned yet. */
     fun findLargestFiles(summary: ScanUiState.Summary, limit: Int = 50) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Finding largest files", "Querying the index")
             try {
                 val records = container.database.fileRecordDao().getLargestFiles(summary.scopeRoot.rawValue(), limit)
                 _uiState.value = ScanUiState.FileListReview("$limit largest files under ${summary.scopeLabel}", records)
@@ -278,6 +400,7 @@ class ScanViewModel(
     /** Plan Section 16's "find old files" quick action — browse only, nothing planned yet. */
     fun findOldFiles(summary: ScanUiState.Summary, olderThanMonths: Int = 6) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Finding old files", "Querying the index")
             try {
                 val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30L * olderThanMonths)
                 val records = container.database.fileRecordDao().getFilesOlderThan(summary.scopeRoot.rawValue(), cutoff)
@@ -290,6 +413,12 @@ class ScanViewModel(
 
     fun approvePlan(preview: ScanUiState.PlanPreview) {
         viewModelScope.launch {
+            _uiState.value = ScanUiState.Working(
+                label = "Organizing files",
+                detail = "Starting",
+                processed = 0,
+                total = preview.accepted.size,
+            )
             try {
                 val accessState = settingsRepository.storageAccessState.first()
                 val mode = accessState.mode ?: run {
@@ -303,7 +432,14 @@ class ScanViewModel(
                 // executor's own validation pass to reject again.
                 val plan = AgentPlan(preview.goal, preview.accepted)
                 val summary = withContext(Dispatchers.IO) {
-                    executor.execute(plan, preview.scopeRoot.rawValue(), mode)
+                    executor.execute(plan, preview.scopeRoot.rawValue(), mode) { completed, total ->
+                        _uiState.value = ScanUiState.Working(
+                            label = "Organizing files",
+                            detail = "Moving and trashing — safe to interrupt, every step is journaled",
+                            processed = completed,
+                            total = total,
+                        )
+                    }
                 }
                 _uiState.value = ScanUiState.ExecutionDone(summary)
             } catch (t: Throwable) {
@@ -327,7 +463,22 @@ class ScanViewModel(
     }
 
     fun reset() {
+        autoStarted = false
         _uiState.value = ScanUiState.Idle
+    }
+
+    private companion object {
+        /**
+         * One message for one limitation. SAF mode used to produce three
+         * different outcomes for the same underlying gap — a clean guard
+         * message from the planners, a raw NotImplementedError from anything
+         * that opened a file, and silent success elsewhere. SAF mutations and
+         * content reads stay deliberately unimplemented (plan Section 5 /
+         * STATUS.md), so every path that needs them says the same thing.
+         */
+        const val SAF_UNSUPPORTED =
+            "This needs full file-manager access. In folder-only (SAF) mode Pocket Steward can scan and " +
+                "browse, but it can't move, trash, or read file contents. Change storage access in Settings."
     }
 
     private suspend fun resolveRoot(
