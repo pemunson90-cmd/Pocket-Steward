@@ -5,6 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.di.AppContainer
+import com.pocketsteward.app.executor.ExecutionSummary
+import com.pocketsteward.app.executor.InMemoryFileIndex
+import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.PlanValidator
+import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -28,10 +33,19 @@ sealed interface ScanUiState {
     data class Scanning(val progress: ScanProgress) : ScanUiState
     data class Summary(
         val scopeLabel: String,
+        val scopeRoot: FileRef,
+        val mode: StorageAccessMode,
         val totalFiles: Int,
         val totalBytes: Long,
         val byCategory: Map<FileCategory, CategoryStat>,
     ) : ScanUiState
+    data class PlanPreview(
+        val plan: AgentPlan,
+        val acceptedCount: Int,
+        val rejectedCount: Int,
+        val scopeRoot: FileRef,
+    ) : ScanUiState
+    data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
     data class Error(val message: String) : ScanUiState
 }
 
@@ -79,10 +93,82 @@ class ScanViewModel(
 
                 _uiState.value = ScanUiState.Summary(
                     scopeLabel = target.label,
+                    scopeRoot = root,
+                    mode = mode,
                     totalFiles = records.size,
                     totalBytes = records.sumOf { it.sizeBytes },
                     byCategory = byCategory,
                 )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * Milestone 2's own exercise of the executor: a hard-coded plan (plan
+     * Section 2's own example — "put APK installers under Downloads/APKs")
+     * built from what's already indexed, not from natural language or a
+     * rule engine. Real request-driven planning is Milestone 4/5.
+     */
+    fun proposeOrganizeApks(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                val root = summary.scopeRoot
+                if (root !is FileRef.Direct) {
+                    _uiState.value = ScanUiState.Error("Organizing is only wired up for broad storage access right now.")
+                    return@launch
+                }
+                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                val apkRecords = records.filter { classifyByExtension(it.extension) == FileCategory.APK }
+                if (apkRecords.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("No APKs found under ${summary.scopeLabel}.")
+                    return@launch
+                }
+
+                val apksFolder = FileRef.Direct("${root.absolutePath.trimEnd('/')}/APKs")
+                val operations = buildList {
+                    add(PlannedOperation.CreateDirectory(root, "APKs", "Destination for Android package installers"))
+                    for (record in apkRecords) {
+                        add(
+                            PlannedOperation.Move(
+                                source = FileRef.Direct(record.stableRef),
+                                destination = FileRef.Direct("${apksFolder.absolutePath}/${record.displayName}"),
+                                reason = "APK file",
+                            ),
+                        )
+                    }
+                }
+                val plan = AgentPlan(goal = "Organize APKs under ${summary.scopeLabel}", operations = operations)
+
+                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
+                val validated = PlanValidator.validate(operations, index)
+
+                _uiState.value = ScanUiState.PlanPreview(
+                    plan = plan,
+                    acceptedCount = validated.accepted.size,
+                    rejectedCount = validated.rejected.size,
+                    scopeRoot = root,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun approvePlan(preview: ScanUiState.PlanPreview) {
+        viewModelScope.launch {
+            try {
+                val accessState = settingsRepository.storageAccessState.first()
+                val mode = accessState.mode ?: run {
+                    _uiState.value = ScanUiState.Error("No storage access granted yet.")
+                    return@launch
+                }
+                val executor = container.planExecutor(mode)
+                val summary = withContext(Dispatchers.IO) {
+                    executor.execute(preview.plan, preview.scopeRoot.rawValue())
+                }
+                _uiState.value = ScanUiState.ExecutionDone(summary)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }

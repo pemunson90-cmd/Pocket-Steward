@@ -26,6 +26,13 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef AND isDirectory = 0")
     suspend fun getFilesUnderScopeRoot(scopeRootRef: String): List<FileRecord>
 
+    /** Files and directories, unlike [getFilesUnderScopeRoot] — what a [com.pocketsteward.app.plan.FileIndex] snapshot needs. */
+    @Query("SELECT * FROM file_records WHERE scopeRootRef = :scopeRootRef")
+    suspend fun getAllUnderScopeRoot(scopeRootRef: String): List<FileRecord>
+
+    @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
+    suspend fun getByStableRef(stableRef: String): FileRecord?
+
     @Query("DELETE FROM file_records WHERE stableRef = :stableRef")
     suspend fun deleteByStableRef(stableRef: String)
 

@@ -29,8 +29,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileCategory
+import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.storage.rawValue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +73,17 @@ fun StorageScopeScreen(onBack: () -> Unit) {
             when (val state = uiState) {
                 is ScanUiState.Idle -> TargetList(targets, onTargetSelected = viewModel::startScan)
                 is ScanUiState.Scanning -> ScanningState(state)
-                is ScanUiState.Summary -> ScanSummaryContent(state, onScanAgain = viewModel::reset)
+                is ScanUiState.Summary -> ScanSummaryContent(
+                    state = state,
+                    onScanAgain = viewModel::reset,
+                    onOrganizeApks = { viewModel.proposeOrganizeApks(state) },
+                )
+                is ScanUiState.PlanPreview -> PlanPreviewContent(
+                    state = state,
+                    onApprove = { viewModel.approvePlan(state) },
+                    onCancel = viewModel::reset,
+                )
+                is ScanUiState.ExecutionDone -> ExecutionDoneContent(state, onDone = viewModel::reset)
                 is ScanUiState.Error -> ErrorState(state.message, onRetry = viewModel::reset)
             }
         }
@@ -107,7 +120,7 @@ private fun ScanningState(state: ScanUiState.Scanning) {
 }
 
 @Composable
-private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Unit) {
+private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Unit, onOrganizeApks: () -> Unit) {
     Column {
         Text(text = state.scopeLabel)
         Text(text = "${state.totalFiles} files · ${formatBytes(state.totalBytes)}")
@@ -125,11 +138,71 @@ private fun ScanSummaryContent(state: ScanUiState.Summary, onScanAgain: () -> Un
             }
         }
 
+        val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
+        if (apkCount > 0) {
+            // Milestone 2's own exercise of create+move+validator+executor+
+            // journal — a hard-coded plan, not a real "organize" feature.
+            // Real request-driven planning starts at Milestone 4/5.
+            Card(onClick = onOrganizeApks, modifier = Modifier.padding(top = 16.dp)) {
+                Text(text = "Test: move $apkCount APK(s) into an APKs subfolder", modifier = Modifier.padding(16.dp))
+            }
+        }
+
         Card(onClick = onScanAgain, modifier = Modifier.padding(top = 16.dp)) {
             Text(text = "Scan again", modifier = Modifier.padding(16.dp))
         }
     }
 }
+
+@Composable
+private fun PlanPreviewContent(state: ScanUiState.PlanPreview, onApprove: () -> Unit, onCancel: () -> Unit) {
+    Column {
+        Text(text = state.plan.goal)
+        Text(
+            text = "${state.acceptedCount} action(s) ready" +
+                if (state.rejectedCount > 0) ", ${state.rejectedCount} left untouched" else "",
+        )
+
+        LazyColumn(modifier = Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.plan.operations) { operation ->
+                Card {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(text = operationSummary(operation))
+                        Text(text = operation.reason)
+                    }
+                }
+            }
+        }
+
+        Row(modifier = Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(onClick = onApprove) { Text(text = "Approve", modifier = Modifier.padding(16.dp)) }
+            Card(onClick = onCancel) { Text(text = "Cancel", modifier = Modifier.padding(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ExecutionDoneContent(state: ScanUiState.ExecutionDone, onDone: () -> Unit) {
+    Column {
+        Text(text = "Task complete")
+        Text(text = "${state.summary.succeeded} moved")
+        if (state.summary.failed > 0) Text(text = "${state.summary.failed} failed")
+        if (state.summary.leftUntouched.isNotEmpty()) Text(text = "${state.summary.leftUntouched.size} left untouched")
+
+        Card(onClick = onDone, modifier = Modifier.padding(top = 16.dp)) {
+            Text(text = "Done", modifier = Modifier.padding(16.dp))
+        }
+    }
+}
+
+private fun operationSummary(operation: PlannedOperation): String = when (operation) {
+    is PlannedOperation.CreateDirectory -> "Create folder: ${operation.name}"
+    is PlannedOperation.Move -> "Move ${operation.source.displayName()} → ${operation.destination.displayName()}"
+    is PlannedOperation.Rename -> "Rename to ${operation.newName}"
+    is PlannedOperation.Trash -> "Trash ${operation.source.displayName()}"
+}
+
+private fun FileRef.displayName(): String = rawValue().substringAfterLast('/')
 
 @Composable
 private fun ErrorState(message: String, onRetry: () -> Unit) {

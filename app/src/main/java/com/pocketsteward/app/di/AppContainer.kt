@@ -3,6 +3,7 @@ package com.pocketsteward.app.di
 import android.content.Context
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.data.settings.SettingsRepository
+import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
@@ -32,4 +33,7 @@ class AppContainer(context: Context) {
 
     fun fileScanner(mode: StorageAccessMode): FileScanner =
         FileScanner(gatewayFor(mode), database.fileRecordDao(), database.scanCheckpointDao())
+
+    fun planExecutor(mode: StorageAccessMode): PlanExecutor =
+        PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
 }
