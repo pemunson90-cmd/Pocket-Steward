@@ -3,6 +3,7 @@ package com.pocketsteward.app.executor
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
 
 /**
@@ -36,11 +37,8 @@ class InMemoryFileIndex(records: List<FileRecord>) : FileIndex {
         val candidates = byParentAndLowerName[collisionKey(directory.rawValue(), name)] ?: return null
         val excludingRaw = excluding?.rawValue()
         val match = candidates.firstOrNull { it.stableRef != excludingRaw } ?: return null
-        return refFor(match.stableRef)
+        return parseFileRef(match.stableRef)
     }
 
     private fun collisionKey(parentRawValue: String, name: String) = "$parentRawValue\u0000${name.lowercase()}"
-
-    private fun refFor(rawValue: String): FileRef =
-        if (rawValue.startsWith("content://")) FileRef.Saf(rawValue) else FileRef.Direct(rawValue)
 }

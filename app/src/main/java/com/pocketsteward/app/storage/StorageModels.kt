@@ -17,6 +17,20 @@ fun FileRef.rawValue(): String = when (this) {
     is FileRef.Saf -> documentUri
 }
 
+/**
+ * The inverse of [rawValue]: reconstructs a [FileRef] from a raw string
+ * pulled back out of Room (a `FileRecord.stableRef`, a plan operation's own
+ * source/destination). Content URIs always start with `content://`; a
+ * direct filesystem path never does, so that prefix is a safe, simple
+ * discriminator between the two [FileRef] cases. Not used for
+ * `MutationRecord.sourceBefore`/`destinationAfter`, which are encoded via
+ * [com.pocketsteward.app.storage.FileRefJournalCodec] instead — a
+ * type-tagged format chosen for the journal specifically so recovery never
+ * has to guess from a bare string.
+ */
+fun parseFileRef(rawValue: String): FileRef =
+    if (rawValue.startsWith("content://")) FileRef.Saf(rawValue) else FileRef.Direct(rawValue)
+
 enum class StorageAccessMode { DIRECT, SAF }
 
 /**
