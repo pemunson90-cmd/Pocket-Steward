@@ -32,4 +32,17 @@ interface StorageGateway {
     suspend fun move(source: FileRef, destination: FileRef): MutationResult
     suspend fun rename(source: FileRef, newName: String): MutationResult
     suspend fun trash(source: FileRef): MutationResult
+
+    /**
+     * Undo's inverse of [createDirectory] (plan Section 15's own example:
+     * "CREATE DIRECTORY X / undo = REMOVE X only if empty and created by
+     * this task"). Removes [ref] only if it's a directory and currently has
+     * no children; if anything has been put into it since, this is a no-op
+     * failure, not a forced removal — undoing a folder creation must never
+     * take other data down with it. This is the one place in the app that
+     * removes anything from disk outright rather than trashing it, and it's
+     * narrow by design: an empty directory that this exact task created has
+     * nothing in it to lose.
+     */
+    suspend fun removeIfEmpty(ref: FileRef): MutationResult
 }

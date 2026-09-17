@@ -52,7 +52,7 @@ private val quickActions = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onOpenSettings: () -> Unit, onScanStorage: () -> Unit) {
+fun HomeScreen(onOpenSettings: () -> Unit, onScanStorage: () -> Unit, onOpenHistory: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: HomeViewModel = viewModel(
@@ -101,7 +101,11 @@ fun HomeScreen(onOpenSettings: () -> Unit, onScanStorage: () -> Unit) {
                 items(quickActions) { action ->
                     Card(
                         onClick = {
-                            scope.launch { snackbarHostState.showSnackbar(notYetImplementedMessage) }
+                            if (action.labelRes == R.string.home_quick_action_recent_tasks) {
+                                onOpenHistory()
+                            } else {
+                                scope.launch { snackbarHostState.showSnackbar(notYetImplementedMessage) }
+                            }
                         },
                     ) {
                         Text(

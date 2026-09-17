@@ -5,6 +5,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.pocketsteward.app.ui.history.HistoryScreen
 import com.pocketsteward.app.ui.home.HomeScreen
 import com.pocketsteward.app.ui.onboarding.OnboardingScreen
 import com.pocketsteward.app.ui.scan.StorageScopeScreen
@@ -15,6 +16,7 @@ object Routes {
     const val HOME = "home"
     const val SETTINGS = "settings"
     const val STORAGE_SCOPE = "storage_scope"
+    const val HISTORY = "history"
 }
 
 @Composable
@@ -33,6 +35,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
             HomeScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onScanStorage = { navController.navigate(Routes.STORAGE_SCOPE) },
+                onOpenHistory = { navController.navigate(Routes.HISTORY) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -40,6 +43,9 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
         }
         composable(Routes.STORAGE_SCOPE) {
             StorageScopeScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.HISTORY) {
+            HistoryScreen(onBack = { navController.popBackStack() })
         }
     }
 }

@@ -9,6 +9,7 @@ import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.InverseCalculator
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
@@ -40,9 +41,12 @@ data class ExecutionSummary(
  * each [MutationRecord] is written `PENDING` *before* the gateway call and
  * flipped to `COMMITTED`/`FAILED` only after, so a crash mid-operation
  * leaves a row reconciliation can find rather than an operation that
- * happened with no record of it. Computing and storing the *inverse* of
- * each operation, and an actual undo path, is Milestone 3 — this milestone
- * only has to execute safely and journal what it did.
+ * happened with no record of it. `sourceBefore`/`destinationAfter` are
+ * exactly what [com.pocketsteward.app.plan.InverseCalculator] needs to
+ * compute a MOVE/RENAME/TRASH inverse — no separate serialization — and
+ * `undoState` carries the one bit CREATE_DIRECTORY needs that the other
+ * three don't (see [willActuallyCreate]). Reversing the journal itself is
+ * [UndoExecutor]'s job, not this class's.
  */
 class PlanExecutor(
     private val gateway: StorageGateway,
@@ -89,6 +93,15 @@ class PlanExecutor(
                 ),
             )
 
+            // Whether a CreateDirectory is about to make a new directory or
+            // just find one already there (Section 12's idempotent-create
+            // case) has to be known *before* the gateway call runs it,
+            // since afterward the directory exists either way and there's
+            // no way to tell them apart from the result alone. Undo needs
+            // this distinction — see InverseCalculator.
+            val createDirectoryMadeSomethingNew = operation is PlannedOperation.CreateDirectory &&
+                willActuallyCreate(operation, index)
+
             when (val result = runOne(operation)) {
                 is MutationResult.Success -> {
                     mutationRecordDao.update(
@@ -102,7 +115,7 @@ class PlanExecutor(
                             sourceFingerprint = null,
                             status = MutationStatus.COMMITTED,
                             executedAt = System.currentTimeMillis(),
-                            undoState = null,
+                            undoState = if (createDirectoryMadeSomethingNew) InverseCalculator.CREATED_MARKER else null,
                             error = null,
                         ),
                     )
@@ -197,6 +210,22 @@ class PlanExecutor(
                 lastScannedAt = System.currentTimeMillis(),
             ),
         )
+    }
+
+    /**
+     * Mirrors [com.pocketsteward.app.plan.PlanValidator]'s own
+     * idempotent-create check against the same index snapshot, but for a
+     * different purpose: the validator decides accept/reject, this decides
+     * whether the accepted operation is about to make something new. SAF's
+     * `createDirectory` is still `TODO()`, so the `FileRef.Saf` branch is
+     * unreachable in practice today; `true` there is the harmless default.
+     */
+    private fun willActuallyCreate(operation: PlannedOperation.CreateDirectory, index: InMemoryFileIndex): Boolean {
+        val parent = operation.parent
+        if (parent !is FileRef.Direct) return true
+        val candidate = FileRef.Direct("${parent.absolutePath.trimEnd('/')}/${operation.name}")
+        val alreadyExistsAsDirectory = index.exists(candidate) && index.isDirectory(candidate)
+        return !alreadyExistsAsDirectory
     }
 
     private fun describePlan(plan: AgentPlan): String =

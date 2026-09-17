@@ -19,4 +19,8 @@ interface TaskRunDao {
 
     @Query("SELECT * FROM task_runs ORDER BY startedAt DESC")
     fun observeAll(): Flow<List<TaskRun>>
+
+    /** Used at startup to find task runs a crash interrupted mid-execution — see ReconciliationService. */
+    @Query("SELECT * FROM task_runs WHERE status = :status")
+    suspend fun getAllWithStatus(status: TaskRunStatus): List<TaskRun>
 }

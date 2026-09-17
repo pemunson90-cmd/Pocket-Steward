@@ -99,6 +99,25 @@ class DirectStorageGateway(
         return moveFile(sourceFile, destinationFile)
     }
 
+    override suspend fun removeIfEmpty(ref: FileRef): MutationResult {
+        val dir = File(ref.requirePath())
+        if (!dir.exists()) {
+            // Already gone — undoing an undo, or someone removed it by
+            // hand. Nothing left to do, and that's success, not failure.
+            return MutationResult.Success(ref)
+        }
+        if (!dir.isDirectory) return MutationResult.Failure("Not a directory: ${dir.absolutePath}")
+        val children = dir.listFiles()
+        if (children != null && children.isNotEmpty()) {
+            return MutationResult.Failure("Directory is not empty, leaving it in place: ${dir.absolutePath}")
+        }
+        return if (dir.delete()) {
+            MutationResult.Success(ref)
+        } else {
+            MutationResult.Failure("Could not remove directory: ${dir.absolutePath}")
+        }
+    }
+
     private fun moveFile(sourceFile: File, destinationFile: File): MutationResult {
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
         if (destinationFile.exists()) return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
