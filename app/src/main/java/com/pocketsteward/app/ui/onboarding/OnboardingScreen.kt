@@ -31,7 +31,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.R
 import com.pocketsteward.app.data.settings.StorageAccessState
-import com.pocketsteward.app.storage.StorageAccessMode
 
 @Composable
 fun OnboardingScreen(onAccessGranted: () -> Unit) {
@@ -49,10 +48,17 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
 
     // Covers cold start after a previous run: if the user already picked a SAF
     // tree, that grant survives app restarts and a reboot, so don't re-prompt.
+    //
+    // Navigation is driven off the persisted state, not off the button press:
+    // the writes below run in viewModelScope, and navigating away pops this
+    // destination, which clears the ViewModel and cancels that scope. Waiting
+    // for the mode to actually land in DataStore before leaving is what stops
+    // the grant from being silently dropped. Also covers cold start after a
+    // previous run, where the grant already survives.
     val storageAccessState by container.settingsRepository.storageAccessState
         .collectAsState(initial = StorageAccessState())
     LaunchedEffect(storageAccessState) {
-        if (storageAccessState.mode == StorageAccessMode.SAF) {
+        if (storageAccessState.mode != null) {
             onAccessGranted()
         }
     }
@@ -72,14 +78,12 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
             viewModel.onSafTreeSelected(uri.toString())
-            onAccessGranted()
         }
     }
 
     LaunchedEffect(broadAccessGranted) {
         if (broadAccessGranted) {
             viewModel.onBroadAccessGranted()
-            onAccessGranted()
         }
     }
 
