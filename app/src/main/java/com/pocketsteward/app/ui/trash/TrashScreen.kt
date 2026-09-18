@@ -107,6 +107,9 @@ private fun TrashedFileCard(file: TrashedFile, restoring: Boolean, onRestore: ()
         Column(modifier = Modifier.padding(12.dp)) {
             Text(text = file.displayName)
             Text(text = "From ${file.originalPath}")
+            file.keptInsteadPath?.let {
+                Text(text = "Kept instead: $it")
+            }
             file.trashedAt?.let {
                 Text(
                     text = "Trashed ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}",

@@ -9,6 +9,8 @@ import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.parseFileRef
 
+data class GeneratedCleanup(val plan: AgentPlan, val scopeReport: CleanupScopeReport)
+
 /**
  * Plan Section 4/9: the rule engine does the planning, no model involved.
  * One [PlannedOperation.CreateDirectory] per destination folder actually
@@ -17,6 +19,16 @@ import com.pocketsteward.app.storage.parseFileRef
  * 1.0 is simply never turned into an operation — Decision 5's "leave this
  * alone" applies at generation time, the same way it applies in
  * [com.pocketsteward.app.plan.PlanValidator] for a different reason.
+ *
+ * **What it is allowed to touch is decided by [SortScope], not here.** On
+ * 2026-09-17 this generator pulled 4,829 files out of the folders they were
+ * already in, because it iterated every file at any depth and sent each one
+ * to a category folder off the scan root, never consulting `parentRef`. Two
+ * mechanisms now bound it: a depth default that only sorts what is loose in
+ * the scan root, and marker files that put a folder off limits entirely.
+ * Enforcement lives here, reading the filesystem index — deliberately not in
+ * a model, so a protection that is already a file on disk cannot be weakened
+ * by a model changing, going offline, or being removed.
  *
  * Deliberately does not try to detect "this file is already in the right
  * folder" itself: [com.pocketsteward.app.plan.PlanValidator] already
@@ -27,17 +39,29 @@ import com.pocketsteward.app.storage.parseFileRef
  * just be the same rule enforced twice.
  */
 object CleanupPlanGenerator {
+
     fun generate(
         scopeRoot: FileRef,
         records: List<FileRecord>,
         projectKeywords: List<ProjectKeyword> = emptyList(),
-    ): AgentPlan {
+        includeSubfolders: Boolean = false,
+    ): GeneratedCleanup {
         require(scopeRoot is FileRef.Direct) { "Smart cleanup currently only supports a Direct-mode scope root, got $scopeRoot" }
+
+        val partition = SortScope.partition(
+            candidates = records.map { it.toSortCandidate() },
+            scopeRoot = scopeRoot.absolutePath,
+            includeSubfolders = includeSubfolders,
+        )
+        val sortableRefs = partition.sortable.mapTo(mutableSetOf()) { it.stableRef }
 
         val operations = mutableListOf<PlannedOperation>()
         val foldersAlreadyPlanned = mutableSetOf<String>()
+        var sorted = 0
 
-        for (record in records.filter { !it.isDirectory }) {
+        for (record in records) {
+            if (record.stableRef !in sortableRefs) continue
+
             val result = RuleEngine.classify(record.displayName, record.extension, projectKeywords)
             if (result.confidence < 1.0f) continue
 
@@ -56,11 +80,28 @@ object CleanupPlanGenerator {
                 destination = destination,
                 reason = result.reason,
             )
+            sorted++
         }
 
-        return AgentPlan(goal = "Smart cleanup", operations = operations)
+        return GeneratedCleanup(
+            plan = AgentPlan(goal = "Smart cleanup", operations = operations),
+            scopeReport = CleanupScopeReport(
+                protectedFolderCount = partition.protectedFolders.size,
+                skippedByProtection = partition.skippedByProtection,
+                skippedByDepth = partition.skippedByDepth,
+                sortedCount = sorted,
+            ),
+        )
     }
 }
 
+private fun FileRecord.toSortCandidate(): SortCandidate = SortCandidate(
+    stableRef = stableRef,
+    parentRef = parentRef,
+    displayName = displayName,
+    isDirectory = isDirectory,
+)
+
 private fun FileCategory.folderName(): String =
     name.lowercase().split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+

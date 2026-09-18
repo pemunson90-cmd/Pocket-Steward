@@ -87,9 +87,26 @@ class UndoExecutor(
         }
     }
 
-    suspend fun undo(taskRunId: Long): UndoSummary {
+    /**
+     * [onProgress] fires once per journal row examined, so undoing thousands
+     * of moves shows a moving count instead of a static "Restoring files…"
+     * for the whole run. Advisory only: what actually gets reversed is
+     * decided by the journal, not by anyone watching.
+     */
+    suspend fun undo(
+        taskRunId: Long,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+    ): UndoSummary {
         val task = taskRunDao.getById(taskRunId) ?: error("Unknown task run: $taskRunId")
-        require(task.status == TaskRunStatus.COMPLETED || task.status == TaskRunStatus.FAILED) {
+        // PARTIAL belongs here for the same reason it exists at all: a run
+        // that moved 4,829 files and missed one has 4,829 reversible
+        // mutations in the journal, and leaving it out of this set would make
+        // exactly the runs most worth undoing the ones that cannot be.
+        require(
+            task.status == TaskRunStatus.COMPLETED ||
+                task.status == TaskRunStatus.PARTIAL ||
+                task.status == TaskRunStatus.FAILED,
+        ) {
             "Task is not in an undoable state: ${task.status}"
         }
         val initialRecords = mutationRecordDao.getForTaskRunReverse(taskRunId)
@@ -105,14 +122,16 @@ class UndoExecutor(
         var blocked = 0
         val messages = mutableListOf<String>()
 
-        for (record in initialRecords) {
+        val total = initialRecords.size
+        initialRecords.forEachIndexed { examined, record ->
+            onProgress(examined, total)
             if (record.status == MutationStatus.UNDONE || record.undoState == UndoState.UNDONE) {
                 skipped++
-                continue
+                return@forEachIndexed
             }
             if (record.status != MutationStatus.COMMITTED || record.undoState != UndoState.AVAILABLE) {
                 skipped++
-                continue
+                return@forEachIndexed
             }
 
             val pending = record.copy(
@@ -147,6 +166,7 @@ class UndoExecutor(
                 }
             }
         }
+        onProgress(total, total)
 
         val now = System.currentTimeMillis()
         val latestTask = taskRunDao.getById(taskRunId) ?: task
@@ -171,6 +191,18 @@ class UndoExecutor(
 
         return when (record.operationType) {
             MutationOperationType.CREATE_DIRECTORY -> gateway.removeEmptyDirectory(destinationAfter)
+            // Trashed, not deleted. Undoing a written file is the one place
+            // where a real delete would be defensible — the app created the
+            // file itself, moments ago — and it still goes to Trash, because
+            // "nothing in this app permanently deletes" is a property worth
+            // more than saving the user one manual step.
+            MutationOperationType.WRITE_TEXT_FILE -> {
+                if (!gateway.exists(destinationAfter)) {
+                    MutationResult.Success(destinationAfter, changed = false)
+                } else {
+                    gateway.trash(destinationAfter)
+                }
+            }
             MutationOperationType.MOVE,
             MutationOperationType.RENAME,
             MutationOperationType.TRASH,
@@ -195,7 +227,9 @@ class UndoExecutor(
     private suspend fun reindexAfterUndo(record: MutationRecord, scopeRootRef: String, gateway: StorageGateway) {
         val destinationAfter = record.destinationAfter?.let(FileRefJournalCodec::decode) ?: return
         when (record.operationType) {
-            MutationOperationType.CREATE_DIRECTORY -> {
+            MutationOperationType.CREATE_DIRECTORY,
+            MutationOperationType.WRITE_TEXT_FILE,
+            -> {
                 fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
             }
             MutationOperationType.MOVE,

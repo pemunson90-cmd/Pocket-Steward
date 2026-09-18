@@ -6,6 +6,7 @@ import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
+import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
@@ -46,6 +47,10 @@ class AppContainer(context: Context) {
             database.mutationRecordDao(),
             ::gatewayFor,
         )
+    }
+
+    val taskManifestService: TaskManifestService by lazy {
+        TaskManifestService(database.taskRunDao(), database.mutationRecordDao())
     }
 
     val mutationRecovery: MutationRecovery by lazy {

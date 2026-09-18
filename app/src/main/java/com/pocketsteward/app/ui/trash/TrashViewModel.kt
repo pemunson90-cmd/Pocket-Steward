@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.db.MutationRecord
 import com.pocketsteward.app.data.db.MutationRecordDao
 import com.pocketsteward.app.di.AppContainer
+import com.pocketsteward.app.report.TaskManifest
+import com.pocketsteward.app.report.keeperPathFrom
 import com.pocketsteward.app.storage.FileRefJournalCodec
 import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.rawValue
@@ -26,6 +28,15 @@ data class TrashedFile(
     val displayName: String,
     val originalPath: String,
     val trashedAt: Long?,
+    /**
+     * For a file trashed as a duplicate, the full path of the copy that
+     * survived. This is the question Pat actually asked of a Trash folder
+     * holding 3,316 files — "is this all dupes?" — and the answer has to be
+     * per file, because a folder listing cannot prove it.
+     */
+    val keptInsteadPath: String?,
+    /** The run that trashed it, so a whole-task manifest can be found in Task history. */
+    val taskRunId: Long,
 )
 
 sealed interface RestoreState {
@@ -40,7 +51,19 @@ class TrashViewModel(
 ) : ViewModel() {
 
     val trashed: StateFlow<List<TrashedFile>> = mutationRecordDao.observeTrashed()
-        .map { records -> records.map { it.toTrashedFile() } }
+        .map { records ->
+            // One planJson read per task rather than per file: the 2026-09-17
+            // duplicate pass put 3,316 rows in here, all from one run.
+            val reasonsByTask = mutableMapOf<Long, Map<Int, String>>()
+            records.map { record ->
+                val reasons = reasonsByTask.getOrPut(record.taskRunId) {
+                    container.database.taskRunDao().getById(record.taskRunId)
+                        ?.let { TaskManifest.reasonsBySequence(it.planJson) }
+                        ?: emptyMap()
+                }
+                record.toTrashedFile(keeperPathFrom(reasons[record.sequence]))
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
@@ -73,12 +96,14 @@ class TrashViewModel(
     }
 }
 
-private fun MutationRecord.toTrashedFile(): TrashedFile {
+private fun MutationRecord.toTrashedFile(keptInsteadPath: String?): TrashedFile {
     val original = FileRefJournalCodec.decode(sourceBefore).rawValue()
     return TrashedFile(
         mutationId = id,
         displayName = original.substringAfterLast('/'),
         originalPath = original,
         trashedAt = executedAt,
+        keptInsteadPath = keptInsteadPath,
+        taskRunId = taskRunId,
     )
 }

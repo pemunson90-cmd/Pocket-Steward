@@ -3,8 +3,14 @@ package com.pocketsteward.app.ui.scan
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketsteward.app.cleanup.CleanupScopeReport
+import com.pocketsteward.app.cleanup.DO_NOT_SORT_MARKER
+import com.pocketsteward.app.cleanup.DO_NOT_SORT_TEMPLATE
+import com.pocketsteward.app.cleanup.SortCandidate
+import com.pocketsteward.app.cleanup.SortScope
 import com.pocketsteward.app.cleanup.PlanRequest
 import com.pocketsteward.app.cleanup.RuleBasedPlanSource
+import com.pocketsteward.app.cleanup.previewLines
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
@@ -16,6 +22,7 @@ import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
+import com.pocketsteward.app.report.duplicateTrashReason
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
@@ -39,6 +46,14 @@ import java.util.concurrent.TimeUnit
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
 
+/** One folder and whether Smart cleanup is currently allowed to touch its contents. */
+data class ProtectableFolder(
+    val stableRef: String,
+    val displayName: String,
+    val fileCount: Int,
+    val isProtected: Boolean,
+)
+
 sealed interface ScanUiState {
     data object Idle : ScanUiState
     data class Scanning(val progress: ScanProgress) : ScanUiState
@@ -55,14 +70,36 @@ sealed interface ScanUiState {
         val accepted: List<PlannedOperation>,
         val rejected: List<RejectedOperation>,
         val scopeRoot: FileRef,
+        /**
+         * What the generator declined to touch and why, in the user's words
+         * rather than counts the screen has to interpret. Empty when a plan
+         * source spared nothing, which renders as no section at all.
+         */
+        val scopeNotes: List<String> = emptyList(),
     ) : ScanUiState
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
-    data class Undoing(val taskRunId: Long) : ScanUiState
+    data class Undoing(
+        val taskRunId: Long,
+        val completed: Int = 0,
+        val total: Int = 0,
+    ) : ScanUiState
     data class UndoDone(val summary: UndoSummary) : ScanUiState
     /** Plan Section 8: duplicate candidates found by the size/fingerprint/hash cascade, not yet acted on. */
     data class DuplicateReview(val groups: List<DuplicateGroup>, val scopeRoot: FileRef, val scopeLabel: String) : ScanUiState
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
+
+    /**
+     * Spec 6b: every folder under the scan root, with whether a
+     * [DO_NOT_SORT_MARKER] is already in it. Protecting one writes that file
+     * through the normal plan/preview/journal chain, so it shows up in Task
+     * history and can be undone like anything else.
+     */
+    data class ProtectFolders(
+        val scopeRoot: FileRef,
+        val scopeLabel: String,
+        val folders: List<ProtectableFolder>,
+    ) : ScanUiState
 
     /**
      * Any long-running operation that isn't a scan or an undo — hashing for
@@ -221,15 +258,7 @@ class ScanViewModel(
                         )
                     }
                 }
-                val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
-                val validated = PlanValidator.validate(operations, index)
-
-                _uiState.value = ScanUiState.PlanPreview(
-                    goal = "Organize APKs under ${summary.scopeLabel}",
-                    accepted = validated.accepted,
-                    rejected = validated.rejected,
-                    scopeRoot = root,
-                )
+                showPlanPreview("Organize APKs under ${summary.scopeLabel}", operations, root)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -244,7 +273,7 @@ class ScanViewModel(
      * [PlanValidator] every other plan goes through — nothing about being
      * rule-generated exempts it from validation.
      */
-    fun proposeSmartCleanup(summary: ScanUiState.Summary) {
+    fun proposeSmartCleanup(summary: ScanUiState.Summary, includeSubfolders: Boolean = false) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
             try {
@@ -255,15 +284,102 @@ class ScanViewModel(
                 }
                 val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
                 val projectKeywords = settingsRepository.projectKeywords.first()
-                val plan = withContext(Dispatchers.Default) {
-                    RuleBasedPlanSource.proposePlan(PlanRequest(root, records, projectKeywords))
+                val generated = withContext(Dispatchers.Default) {
+                    RuleBasedPlanSource.proposePlan(
+                        PlanRequest(
+                            scopeRoot = root,
+                            records = records,
+                            projectKeywords = projectKeywords,
+                            includeSubfolders = includeSubfolders,
+                        ),
+                    )
                 }
+                val plan = generated.plan
+                val scopeNotes = generated.scopeReport.previewLines()
                 if (plan.operations.isEmpty()) {
-                    _uiState.value = ScanUiState.Error("Nothing under ${summary.scopeLabel} could be classified with full confidence — nothing to propose. Review uncategorized to see what was skipped and why.")
+                    _uiState.value = ScanUiState.Error(nothingToProposeMessage(summary.scopeLabel, generated.scopeReport))
                     return@launch
                 }
 
-                showPlanPreview(plan.goal, plan.operations, root)
+                showPlanPreview(plan.goal, plan.operations, root, scopeNotes)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * "Nothing to propose" has three different causes now that scope is
+     * bounded, and they need three different answers. Telling someone their
+     * files "couldn't be classified" when the real reason is that every one
+     * of them is inside a subfolder sends them to the wrong screen.
+     */
+    private fun nothingToProposeMessage(scopeLabel: String, report: CleanupScopeReport): String = when {
+        report.skippedByProtection > 0 && report.skippedByDepth == 0 ->
+            "Everything under $scopeLabel is inside a folder protected by $DO_NOT_SORT_MARKER — nothing to propose."
+        report.skippedByDepth > 0 ->
+            "Nothing is loose directly in $scopeLabel. ${report.skippedByDepth} files are already inside folders, and Smart cleanup leaves those alone unless you turn on \"Include files in subfolders\"."
+        else ->
+            "Nothing under $scopeLabel could be classified with full confidence — nothing to propose. Review uncategorized to see what was skipped and why."
+    }
+
+    /**
+     * Spec 6b. Lists the folders under a scanned scope and whether each one
+     * already holds a [DO_NOT_SORT_MARKER], entirely from the index — no
+     * filesystem read, because the scan already recorded every folder and
+     * every file in it.
+     */
+    fun reviewFolderProtection(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Reading folders", "Checking which are already protected")
+            try {
+                val root = summary.scopeRoot
+                if (root !is FileRef.Direct) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+                val records = container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue())
+                val folders = withContext(Dispatchers.Default) {
+                    val protectedFolders = SortScope.protectedFolders(records.map { it.toSortCandidate() })
+                    val fileCounts = records.filter { !it.isDirectory }.groupingBy { it.parentRef }.eachCount()
+                    records
+                        .filter { it.isDirectory && it.stableRef != root.rawValue() }
+                        .sortedBy { it.stableRef }
+                        .map { folder ->
+                            ProtectableFolder(
+                                stableRef = folder.stableRef,
+                                displayName = folder.stableRef.removePrefix(root.absolutePath.trimEnd('/')).trimStart('/'),
+                                fileCount = fileCounts[folder.stableRef] ?: 0,
+                                isProtected = folder.stableRef in protectedFolders,
+                            )
+                        }
+                }
+                _uiState.value = ScanUiState.ProtectFolders(root, summary.scopeLabel, folders)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * Proposes writing a protection marker into [folder]. Deliberately a
+     * one-operation plan rather than a direct gateway call: spec item 7 wants
+     * an AI's first mutation-adjacent power to be exactly this, and routing
+     * the manual version through the same validate/preview/journal chain is
+     * what makes the AI version a change of planner rather than a new path
+     * into the mutation layer.
+     */
+    fun proposeProtectFolder(state: ScanUiState.ProtectFolders, folder: ProtectableFolder) {
+        viewModelScope.launch {
+            try {
+                val operation = PlannedOperation.WriteTextFile(
+                    parent = parseFileRef(folder.stableRef),
+                    name = DO_NOT_SORT_MARKER,
+                    content = DO_NOT_SORT_TEMPLATE,
+                    reason = "Marks ${folder.displayName} as off limits to Smart cleanup, permanently, " +
+                        "until this file is removed.",
+                )
+                showPlanPreview("Protect ${folder.displayName}", listOf(operation), state.scopeRoot)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -301,7 +417,12 @@ class ScanViewModel(
      * through here first, which is what keeps plan Decision 1 true when a
      * second [com.pocketsteward.app.cleanup.PlanSource] (the AI one) arrives.
      */
-    private suspend fun showPlanPreview(goal: String, operations: List<PlannedOperation>, root: FileRef) {
+    private suspend fun showPlanPreview(
+        goal: String,
+        operations: List<PlannedOperation>,
+        root: FileRef,
+        scopeNotes: List<String> = emptyList(),
+    ) {
         val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
         val validated = PlanValidator.validate(operations, index)
         _uiState.value = ScanUiState.PlanPreview(
@@ -309,6 +430,7 @@ class ScanViewModel(
             accepted = validated.accepted,
             rejected = validated.rejected,
             scopeRoot = root,
+            scopeNotes = scopeNotes,
         )
     }
 
@@ -369,7 +491,12 @@ class ScanViewModel(
                     group.extras.map { record ->
                         PlannedOperation.Trash(
                             source = parseFileRef(record.stableRef),
-                            reason = "Duplicate of ${group.keeper.displayName} (matching SHA-256)",
+                            // The keeper's full path, not its display name.
+                            // Two duplicate sets can share a filename, and a
+                            // manifest that names the survivor as "cover.jpg"
+                            // cannot say which cover.jpg survived.
+                            reason = duplicateTrashReason(group.keeper.stableRef),
+                            sourceFingerprint = group.sha256,
                         )
                     }
                 }
@@ -453,7 +580,9 @@ class ScanViewModel(
             _uiState.value = ScanUiState.Undoing(taskRunId)
             try {
                 val summary = withContext(Dispatchers.IO) {
-                    container.undoExecutor.undo(taskRunId)
+                    container.undoExecutor.undo(taskRunId) { completed, total ->
+                        _uiState.value = ScanUiState.Undoing(taskRunId, completed, total)
+                    }
                 }
                 _uiState.value = ScanUiState.UndoDone(summary)
             } catch (t: Throwable) {
@@ -515,3 +644,10 @@ class ScanViewModel(
         }
     }
 }
+
+private fun FileRecord.toSortCandidate(): SortCandidate = SortCandidate(
+    stableRef = stableRef,
+    parentRef = parentRef,
+    displayName = displayName,
+    isDirectory = isDirectory,
+)

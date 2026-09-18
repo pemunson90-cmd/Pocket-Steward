@@ -215,3 +215,89 @@ class PlanValidatorTest {
     }
 
 }
+
+class WriteTextFileValidationTest {
+
+    @Test
+    fun `a marker file in an indexed folder is accepted`() {
+        val index = FakeFileIndex(
+            existing = setOf(direct("/sd/Download/Project/cover.jpg")),
+            directories = setOf(direct("/sd/Download"), direct("/sd/Download/Project")),
+        )
+        val op = PlannedOperation.WriteTextFile(
+            parent = FileRef.Direct("/sd/Download/Project"),
+            name = "POCKETSTEWARD-DO-NOT-SORT.md",
+            content = "anything",
+            reason = "protect",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).containsExactly(op)
+    }
+
+    @Test
+    fun `an existing file at the destination is never overwritten`() {
+        val index = FakeFileIndex(
+            existing = setOf(direct("/sd/Download/Project/POCKETSTEWARD-DO-NOT-SORT.md")),
+            directories = setOf(direct("/sd/Download"), direct("/sd/Download/Project")),
+        )
+        val op = PlannedOperation.WriteTextFile(
+            parent = FileRef.Direct("/sd/Download/Project"),
+            name = "POCKETSTEWARD-DO-NOT-SORT.md",
+            content = "anything",
+            reason = "protect",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("already exists")
+    }
+
+    @Test
+    fun `a path separator in the name is rejected`() {
+        val index = FakeFileIndex(existing = emptySet(), directories = setOf(direct("/sd/Download")))
+        val op = PlannedOperation.WriteTextFile(
+            parent = FileRef.Direct("/sd/Download"),
+            name = "sub/marker.md",
+            content = "x",
+            reason = "protect",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.rejected.single().reason).contains("path separator")
+    }
+
+    @Test
+    fun `traversal in the name is rejected`() {
+        val index = FakeFileIndex(existing = emptySet(), directories = setOf(direct("/sd/Download")))
+        val op = PlannedOperation.WriteTextFile(
+            parent = FileRef.Direct("/sd/Download"),
+            name = "../escape.md",
+            content = "x",
+            reason = "protect",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.rejected.single().reason).contains("..")
+    }
+
+    @Test
+    fun `two writes to the same destination in one plan collide`() {
+        val index = FakeFileIndex(existing = emptySet(), directories = setOf(direct("/sd/Download")))
+        val op = PlannedOperation.WriteTextFile(
+            parent = FileRef.Direct("/sd/Download"),
+            name = "manifest.md",
+            content = "x",
+            reason = "first",
+        )
+
+        val result = PlanValidator.validate(listOf(op, op.copy(reason = "second")), index)
+
+        assertThat(result.accepted).hasSize(1)
+        assertThat(result.rejected.single().reason).contains("already claimed")
+    }
+}

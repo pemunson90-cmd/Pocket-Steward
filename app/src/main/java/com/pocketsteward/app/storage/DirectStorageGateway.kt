@@ -78,6 +78,24 @@ class DirectStorageGateway(
         return MutationResult.Success(FileRef.Direct(dir.absolutePath), changed = true)
     }
 
+    override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult {
+        val target = File(File(parent.requirePath()), name)
+        if (target.exists()) {
+            return MutationResult.Failure("Refusing to overwrite an existing file: ${target.absolutePath}")
+        }
+        val parentDir = target.parentFile
+            ?: return MutationResult.Failure("Cannot determine parent directory for ${target.absolutePath}")
+        if (!parentDir.isDirectory) {
+            return MutationResult.Failure("Parent is not a directory: ${parentDir.absolutePath}")
+        }
+        return try {
+            target.writeText(content)
+            MutationResult.Success(FileRef.Direct(target.absolutePath), changed = true)
+        } catch (t: Throwable) {
+            MutationResult.Failure(t.message ?: "Failed to write ${target.absolutePath}", t)
+        }
+    }
+
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
         moveFile(File(source.requirePath()), File(destination.requirePath()))
 

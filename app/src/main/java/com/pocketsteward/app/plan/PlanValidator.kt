@@ -62,6 +62,7 @@ object PlanValidator {
             is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Rename -> validateRename(operation, index, claimedDestinations)
             is PlannedOperation.Trash -> validateTrash(operation, index)
+            is PlannedOperation.WriteTextFile -> validateWriteTextFile(operation, index, claimedDestinations)
         }
     }
 
@@ -124,6 +125,30 @@ object PlanValidator {
         return null
     }
 
+    /**
+     * Same shape as [validateCreateDirectory] except for the last rule: an
+     * existing directory makes a create a harmless no-op, but an existing
+     * *file* can never make a write a no-op, because the content would have
+     * to be compared and a mismatch would mean overwriting. So anything at
+     * the destination is a rejection, and a marker that is already there is
+     * reported as "already exists" rather than silently rewritten.
+     */
+    private fun validateWriteTextFile(
+        op: PlannedOperation.WriteTextFile,
+        index: FileIndex,
+        claimedDestinations: Set<String>,
+    ): String? {
+        if (!index.exists(op.parent)) return "Parent directory does not exist in the index."
+        if (!index.isDirectory(op.parent)) return "Parent is not a directory."
+        if (op.name.isBlank()) return "File name is blank."
+        if (op.name.contains('/')) return "File name cannot contain a path separator."
+        if (index.caseInsensitiveMatch(op.parent, op.name) != null) {
+            return "A file with that name already exists here."
+        }
+        val destination = directRef(op.parent, op.name) ?: return "Cannot determine destination path."
+        return checkDestinationFree(destination, index, claimedDestinations)
+    }
+
     private fun checkDestinationFree(
         destination: FileRef,
         index: FileIndex,
@@ -164,10 +189,12 @@ object PlanValidator {
             is PlannedOperation.Move -> listOf(operation.source, operation.destination)
             is PlannedOperation.Rename -> listOf(operation.source)
             is PlannedOperation.Trash -> listOf(operation.source)
+            is PlannedOperation.WriteTextFile -> listOf(operation.parent)
         }
         val names = when (operation) {
             is PlannedOperation.CreateDirectory -> listOf(operation.name)
             is PlannedOperation.Rename -> listOf(operation.newName)
+            is PlannedOperation.WriteTextFile -> listOf(operation.name)
             else -> emptyList()
         }
         val hasTraversal = refs.any { hasTraversalSegment(it.rawValue()) } || names.any { hasTraversalSegment(it) }
@@ -181,5 +208,6 @@ object PlanValidator {
         is PlannedOperation.Move -> operation.destination
         is PlannedOperation.Rename -> parentOf(operation.source)?.let { directRef(it, operation.newName) }
         is PlannedOperation.Trash -> null
+        is PlannedOperation.WriteTextFile -> directRef(operation.parent, operation.name)
     }
 }

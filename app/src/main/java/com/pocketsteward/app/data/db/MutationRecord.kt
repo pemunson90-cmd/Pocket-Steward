@@ -5,7 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class MutationOperationType { CREATE_DIRECTORY, MOVE, RENAME, COPY, TRASH }
+enum class MutationOperationType { CREATE_DIRECTORY, MOVE, RENAME, COPY, TRASH, WRITE_TEXT_FILE }
 enum class MutationStatus { PENDING, COMMITTED, FAILED, NEEDS_REVIEW, UNDONE }
 enum class UndoState { NOT_AVAILABLE, AVAILABLE, PENDING, UNDONE, BLOCKED, FAILED }
 

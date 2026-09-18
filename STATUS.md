@@ -172,6 +172,43 @@ What changed:
 
 **What's verified vs. reviewed-only:** `KeeperSelector` and `isUncategorized` — real compiler, real tests, 34 pure-Kotlin tests passing in total across `plan`, `rules`, `dedupe`, and `storage`. Everything touching Room or Compose (all UI, navigation, the progress plumbing, Trash, the SAF fencing, `undoSingleMutation`) is reviewed by hand and cross-checked for call-site and import consistency, but not compiled here. Expect at least one real bug on first build, as every prior milestone has produced.
 
+## Milestone 6 — Transparency pass (non-AI): written, partially verified
+
+Against `M6_TRANSPARENCY_SPEC.md`. Triggered by the 2026-09-17 run on Pat's phone: Smart cleanup moved 4,829 files and created 5 folders with 1 failure, a duplicate pass trashed 3,316 files, and neither could be audited afterward from inside the app. A separate finding in the same run: Smart cleanup pulled files out of folders that meant something as a unit, because the generator iterated every file at any depth and never consulted `parentRef`.
+
+### Scope and folder protection (spec 6a/6b)
+
+- **`cleanup/SortScope.kt`** — new, pure Kotlin, 10 tests. Two independent mechanisms, and they are not substitutes for each other. A *depth default* (`includeSubfolders = false`) means only files sitting loose directly in the scan root get sorted; a file someone already put in a folder has been organized by a human. A *marker file*, `POCKETSTEWARD-DO-NOT-SORT.md`, puts a folder and everything under it off limits whatever the depth setting says. The marker is deliberately not a dotfile, its presence is the entire signal (an empty file works, nothing ever parses it), and it lives in the filesystem rather than the database so it survives app reinstall, a destructive schema migration, and moving storage to another device.
+- **`CleanupPlanGenerator.generate`** now consults `SortScope.partition` and returns `GeneratedCleanup(plan, scopeReport)`. The depth default alone would have prevented the 4,829-file flattening with no configuration and nothing for the user to remember.
+- **The preview states what was spared** ("2 folders protected by POCKETSTEWARD-DO-NOT-SORT.md, sparing 340 files"), so protection is visible rather than silent. 3 tests on the rendering, including that a report which spared nothing produces no lines at all rather than a "0 folders protected" row that trains the eye to skip the block.
+- **"Include files inside subfolders"** is a per-run switch on the scan summary, off by default and re-defaulted to off every time the screen is composed. A depth guard that silently remembers "on" is not a guard.
+- **"Protect folders from sorting"** lists every folder under the scanned scope with whether it is already protected, entirely from the index. Protecting one is a one-operation plan, not a direct gateway call — see below.
+- Spec 6c (arbitrary folder scope selection) is **deferred**. The spec itself calls it convenience and 6a/6b the safety, and scoping only protects a user who remembers to narrow it.
+
+### A new mutation primitive, deliberately
+
+`PlannedOperation.WriteTextFile` and `StorageGateway.writeTextFile`. It creates a file and can never overwrite one: the validator rejects anything already at the destination and the gateway refuses again at write time, because the validator judges a snapshot and the file could have appeared since. 5 validator tests.
+
+It is an operation on the plan list rather than a direct call from the UI on purpose. Spec item 7 wants an AI's first mutation-adjacent power to be "propose a protection marker", and routing the manual version through validate → preview → journal is what makes the AI version a change of planner rather than a new pathway into the mutation layer. Undoing a written file **trashes** it rather than deleting it — the one place a real delete would have been defensible, and it still goes to Trash.
+
+### Accounting for what a run did (spec items 1–3)
+
+- **`report/TaskManifest.kt`** — new, pure Kotlin, 12 tests. Renders one task run as plain text: per duplicate group, the surviving copy's full path, each trashed copy's original path, where it now sits under `PocketSteward/Trash/`, and the group's SHA-256. Headline assertion up top — *N groups, N copies kept, M copies trashed* — counted from the journal rather than from the planner that produced it, and when groups and kept-copies disagree it says `CHECK THIS:` instead of printing two numbers and moving on.
+- **Exportable to a file** in the run's scope root. This matters more than it looks: `AppDatabase` is still on `fallbackToDestructiveMigration`, so the journal the manifest is built from does not survive the next schema change, and an exported manifest is the only durable account. It goes straight to the gateway rather than through a plan, because journaling it would make the account depend on the thing it is insurance against.
+- **Zero schema changes, on purpose.** Pat's phone currently holds the undo record for a 4,829-operation run. Any new column or entity triggers `fallbackToDestructiveMigration` and wipes it. So: the duplicate's SHA-256 goes into the existing, previously-always-null `sourceFingerprint` column; the surviving copy's **full path** (not its display name — two sets can share a filename) rides in the Trash operation's reason, written and read by one round-tripped pair of functions and nothing else; and `TaskRun.planJson`, already a free-text column, now holds `sequence<TAB>TYPE<TAB>reason` per accepted operation so a manifest can recover each reason by joining on the journal's own sequence number. Adding an enum *value* is safe (the TypeConverter stores a String); adding a *column* is not.
+- **Failures are visible.** `ExecutionSummary` now carries the failed operations with their error text, and the completion screen renders them in the same shape as the existing "Left untouched" section. The reason was in the database and nowhere else.
+- **`TaskRunStatus.PARTIAL`.** `FAILED` now means what it says: nothing succeeded, or the executor threw. A run with at least one success and one failure is partial, shown in a different colour from an error, with its own line pointing at the manifest. `MutationRecovery` makes the same distinction for a run that died partway, and `UndoExecutor` accepts `PARTIAL` as undoable — leaving it out would have made exactly the runs most worth undoing the ones that cannot be.
+
+### Duplicates and undo (spec items 4–5)
+
+- The duplicate review states *N groups · N copies kept · M copies would move to Trash* before anything is proposed. A preview of 3,316 rows is not reviewable in practice, which is why the one-line assertion carries the weight. The keeper was already labelled per group as of M5.
+- The Trash screen now names, per file, the copy that survived instead of it. One `planJson` read per task rather than per file, since 3,316 rows came from one run.
+- **Undo reports progress** ("Restoring 412 of 4,834…") in both Task history and the scan flow, and **asks first** above 25 reversible operations. Undoing 4,829 moves by accidental tap is worse than the original organize, because the files end up somewhere nobody chose. The threshold counts what Undo would actually reverse, not how many operations the run had.
+
+**What's verified vs. reviewed-only:** 64 pure-Kotlin tests passing against a real compiler across `plan`, `rules`, `dedupe`, `storage`, `cleanup`, and `report` — including all of `SortScope`, the scope-report rendering, the `WriteTextFile` validator rules, the keeper-reason round trip, and the manifest's kept-count assertion. Everything touching Room or Compose (all UI, the executor and undo changes, the manifest service, the Trash screen) is reviewed by hand and cross-checked for call-site and import consistency, but not compiled here.
+
+**Correctness already confirmed on hardware (M5 round, 2026-09-17):** undo at scale — 4,834 restored, 0 blocked, 1 skipped, performed after a force-close and reopen of the app. The `1 skipped` is correct: it is the one operation that failed during the forward run, so there was nothing to reverse.
+
 ## Not started
 
-Milestones 6–7 (on-device AI, polish) per the plan's own sequencing, plus item 7's foreground execution service.
+Milestone 7 (on-device AI, polish) per the plan's own sequencing, plus item 7's foreground execution service. Spec 6c, arbitrary folder scope selection, is deferred rather than dropped.

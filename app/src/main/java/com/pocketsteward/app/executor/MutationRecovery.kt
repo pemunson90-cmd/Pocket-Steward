@@ -56,6 +56,24 @@ class MutationRecovery(
                             error = "Recovered after interruption: directory creation did not land.",
                         )
                     }
+                    // A written file either landed or it didn't, and its
+                    // source (the parent directory) was never going to
+                    // change, so the source/destination reasoning the move
+                    // cases use doesn't apply.
+                    MutationOperationType.WRITE_TEXT_FILE -> when {
+                        destinationExists -> record.copy(
+                            status = MutationStatus.COMMITTED,
+                            executedAt = record.executedAt ?: System.currentTimeMillis(),
+                            undoState = UndoState.AVAILABLE,
+                            error = "Recovered after interruption: written file exists.",
+                        )
+                        else -> record.copy(
+                            status = MutationStatus.FAILED,
+                            executedAt = record.executedAt ?: System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                            error = "Recovered after interruption: the file was never written.",
+                        )
+                    }
                     MutationOperationType.MOVE,
                     MutationOperationType.RENAME,
                     MutationOperationType.TRASH,
@@ -112,6 +130,20 @@ class MutationRecovery(
                         }
                     }
                 }
+                // Undoing a write trashes the file. Gone from where it was
+                // written means the trash landed; still there means it can
+                // safely be retried, because trashing is idempotent in the
+                // only direction that matters.
+                MutationOperationType.WRITE_TEXT_FILE -> {
+                    if (!gateway.exists(destinationAfter)) {
+                        record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE, undoError = null)
+                    } else {
+                        record.copy(
+                            undoState = UndoState.AVAILABLE,
+                            undoError = "Undo was interrupted before the written file was moved to Trash; safe to retry.",
+                        )
+                    }
+                }
                 MutationOperationType.MOVE,
                 MutationOperationType.RENAME,
                 MutationOperationType.TRASH,
@@ -158,8 +190,16 @@ class MutationRecovery(
                     TaskRunStatus.UNDONE
                 task.status == TaskRunStatus.RUNNING && records.isEmpty() ->
                     TaskRunStatus.FAILED
+                // Same distinction PlanExecutor makes at the end of a clean
+                // run, applied to a run that died partway: a failure beside
+                // committed work is PARTIAL, and only a run where nothing
+                // landed is FAILED.
                 task.status == TaskRunStatus.RUNNING && records.any { it.status == MutationStatus.FAILED } ->
-                    TaskRunStatus.FAILED
+                    if (records.any { it.status == MutationStatus.COMMITTED }) {
+                        TaskRunStatus.PARTIAL
+                    } else {
+                        TaskRunStatus.FAILED
+                    }
                 task.status == TaskRunStatus.RUNNING && records.none { it.status == MutationStatus.PENDING } ->
                     TaskRunStatus.COMPLETED
                 else -> task.status

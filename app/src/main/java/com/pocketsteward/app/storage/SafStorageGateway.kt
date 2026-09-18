@@ -89,6 +89,8 @@ class SafStorageGateway(
 
     override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 2")
     override suspend fun createDirectory(parent: FileRef, name: String): MutationResult = TODO("SAF mutation support is deliberately deferred")
+    override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult =
+        TODO("SAF mutation support is deliberately deferred")
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult = TODO("Milestone 2")
     override suspend fun rename(source: FileRef, newName: String): MutationResult = TODO("Milestone 2")
     override suspend fun trashDestination(source: FileRef): FileRef =

@@ -23,6 +23,14 @@ interface StorageGateway {
      */
     suspend fun createDirectory(parent: FileRef, name: String): MutationResult
 
+    /**
+     * Creates a new text file. Never overwrites: an existing entry at the
+     * destination is a Failure, not a rewrite. That refusal is repeated here
+     * rather than left to `PlanValidator` on purpose — the validator judges a
+     * snapshot of the index, and the file could have appeared since.
+     */
+    suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult
+
     suspend fun move(source: FileRef, destination: FileRef): MutationResult
     suspend fun rename(source: FileRef, newName: String): MutationResult
 

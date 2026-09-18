@@ -14,6 +14,7 @@ import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.plan.ValidatedPlan
 import com.pocketsteward.app.storage.FileMetadata
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.FileRefJournalCodec
@@ -28,11 +29,26 @@ data class ExecutionSummary(
     val filesMoved: Int,
     val filesRenamed: Int,
     val filesTrashed: Int,
+    val filesWritten: Int,
     val failed: Int,
     val leftUntouched: List<RejectedOperation>,
+    /**
+     * Every operation that failed, with the error the gateway gave. The
+     * count alone was in the journal and nowhere on screen, so "1 failed" on
+     * a 4,835-operation run named neither the file nor the reason.
+     */
+    val failures: List<OperationFailure> = emptyList(),
 ) {
-    val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed
+    val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed + filesWritten
 }
+
+/** One failed operation, in the shape the completion screen and Task history both need. */
+data class OperationFailure(
+    val sequence: Int,
+    val operationType: MutationOperationType,
+    val subject: String,
+    val reason: String,
+)
 
 /**
  * Deterministic mutation executor. Every real filesystem change is preceded
@@ -70,7 +86,7 @@ class PlanExecutor(
                 completedAt = null,
                 status = TaskRunStatus.RUNNING,
                 scanSnapshotId = null,
-                planJson = describePlan(plan),
+                planJson = describePlan(plan.goal, validated),
                 summary = null,
                 scopeRootRef = scopeRootRef,
                 storageAccessMode = storageAccessMode,
@@ -82,13 +98,17 @@ class PlanExecutor(
         var filesMoved = 0
         var filesRenamed = 0
         var filesTrashed = 0
+        var filesWritten = 0
         var failed = 0
+        val failures = mutableListOf<OperationFailure>()
 
         validated.accepted.forEachIndexed { sequence, operation ->
             val expectedDestination = try {
                 expectedDestination(operation)
             } catch (t: Throwable) {
-                recordPreflightFailure(taskRunId, sequence, operation, t.message ?: t.javaClass.simpleName)
+                val reason = t.message ?: t.javaClass.simpleName
+                recordPreflightFailure(taskRunId, sequence, operation, reason)
+                failures += operation.toFailure(sequence, reason)
                 failed++
                 return@forEachIndexed
             }
@@ -112,7 +132,9 @@ class PlanExecutor(
                     )
                     return@forEachIndexed
                 }
-                recordPreflightFailure(taskRunId, sequence, operation, "A file already occupies the requested directory path.", expectedDestination)
+                val reason = "A file already occupies the requested directory path."
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
                 failed++
                 return@forEachIndexed
             }
@@ -138,7 +160,7 @@ class PlanExecutor(
                         operationType = operation.toOperationType(),
                         sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                         destinationAfter = FileRefJournalCodec.encode(result.resultRef),
-                        sourceFingerprint = null,
+                        sourceFingerprint = operation.fingerprintOrNull(),
                         status = MutationStatus.COMMITTED,
                         executedAt = System.currentTimeMillis(),
                         undoState = if (result.changed) UndoState.AVAILABLE else UndoState.NOT_AVAILABLE,
@@ -154,6 +176,7 @@ class PlanExecutor(
                             is PlannedOperation.Move -> filesMoved++
                             is PlannedOperation.Rename -> filesRenamed++
                             is PlannedOperation.Trash -> filesTrashed++
+                            is PlannedOperation.WriteTextFile -> filesWritten++
                         }
                     }
                 }
@@ -167,7 +190,7 @@ class PlanExecutor(
                             operationType = operation.toOperationType(),
                             sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
-                            sourceFingerprint = null,
+                            sourceFingerprint = operation.fingerprintOrNull(),
                             status = MutationStatus.FAILED,
                             executedAt = System.currentTimeMillis(),
                             undoState = UndoState.NOT_AVAILABLE,
@@ -176,6 +199,7 @@ class PlanExecutor(
                             undoError = null,
                         ),
                     )
+                    failures += operation.toFailure(sequence, result.reason)
                     failed++
                 }
             }
@@ -189,22 +213,33 @@ class PlanExecutor(
         onProgress(validated.accepted.size, validated.accepted.size)
 
         val summary = ExecutionSummary(
-            taskRunId,
-            foldersCreated,
-            filesMoved,
-            filesRenamed,
-            filesTrashed,
-            failed,
-            validated.rejected,
+            taskRunId = taskRunId,
+            foldersCreated = foldersCreated,
+            filesMoved = filesMoved,
+            filesRenamed = filesRenamed,
+            filesTrashed = filesTrashed,
+            filesWritten = filesWritten,
+            failed = failed,
+            leftUntouched = validated.rejected,
+            failures = failures,
         )
 
         val finished = taskRunDao.getById(taskRunId) ?: error("Task run disappeared during execution")
         taskRunDao.update(
             finished.copy(
                 completedAt = System.currentTimeMillis(),
-                status = if (failed == 0) TaskRunStatus.COMPLETED else TaskRunStatus.FAILED,
+                // Spec item 3. FAILED now means what it says: nothing landed.
+                // A run that moved 4,829 files and missed one is PARTIAL, and
+                // filing it as FAILED made an audit trail read like a disaster
+                // directly above its own "4834 succeeded" summary line.
+                status = when {
+                    failed == 0 -> TaskRunStatus.COMPLETED
+                    summary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
+                    else -> TaskRunStatus.FAILED
+                },
                 summary = "${summary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
-                    "$filesRenamed renamed, $filesTrashed trashed), $failed failed, ${validated.rejected.size} left untouched",
+                    "$filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed, " +
+                    "${validated.rejected.size} left untouched",
             ),
         )
 
@@ -247,7 +282,7 @@ class PlanExecutor(
         operationType = operation.toOperationType(),
         sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
         destinationAfter = destination?.let(FileRefJournalCodec::encode),
-        sourceFingerprint = null,
+        sourceFingerprint = operation.fingerprintOrNull(),
         status = status,
         executedAt = executedAt,
         undoState = undoState,
@@ -261,6 +296,7 @@ class PlanExecutor(
         is PlannedOperation.Move -> operation.destination
         is PlannedOperation.Rename -> renameDestination(operation.source, operation.newName)
         is PlannedOperation.Trash -> gateway.trashDestination(operation.source)
+        is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
 
     private suspend fun runOne(operation: PlannedOperation): MutationResult = try {
@@ -269,13 +305,18 @@ class PlanExecutor(
             is PlannedOperation.Move -> gateway.move(operation.source, operation.destination)
             is PlannedOperation.Rename -> gateway.rename(operation.source, operation.newName)
             is PlannedOperation.Trash -> gateway.trash(operation.source)
+            is PlannedOperation.WriteTextFile ->
+                gateway.writeTextFile(operation.parent, operation.name, operation.content)
         }
     } catch (t: Throwable) {
         MutationResult.Failure(t.message ?: t.javaClass.simpleName, t)
     }
 
     private suspend fun reindexAfterMutation(operation: PlannedOperation, newRef: FileRef, scopeRootRef: String) {
-        if (operation is PlannedOperation.CreateDirectory) {
+        // Both of these create a new entry and leave their source (the
+        // parent directory) exactly where it was. Falling through to the
+        // move/rename path below would delete the parent's index row.
+        if (operation is PlannedOperation.CreateDirectory || operation is PlannedOperation.WriteTextFile) {
             fileRecordDao.upsert(gateway.stat(newRef).toFileRecord(scopeRootRef, newRef.parentRefOrNull()))
             return
         }
@@ -305,8 +346,33 @@ class PlanExecutor(
         )
     }
 
-    private fun describePlan(plan: AgentPlan): String =
-        "${plan.goal}\n" + plan.operations.joinToString("\n") { "- $it" }
+    /**
+     * The durable record of what was *asked for*, beside the journal's record
+     * of what happened.
+     *
+     * The accepted lines are numbered with the same sequence the journal
+     * uses, which is the index into `validated.accepted` — not into the
+     * original plan, because a rejected operation never gets a journal row
+     * and numbering from the raw plan would silently shift every line after
+     * the first rejection. A manifest built later joins on that number to
+     * recover each operation's stated reason, which is where a
+     * duplicate-trash names the copy it kept.
+     *
+     * Tab-separated rather than JSON because the reason text is free-form and
+     * this has to survive being read by a human in a text editor.
+     */
+    private fun describePlan(goal: String, validated: ValidatedPlan): String = buildString {
+        appendLine(goal)
+        validated.accepted.forEachIndexed { sequence, operation ->
+            appendLine("$sequence\t${operation.toOperationType()}\t${operation.reason}")
+        }
+        if (validated.rejected.isNotEmpty()) {
+            appendLine("# left untouched")
+            validated.rejected.forEach { rejected ->
+                appendLine("-\t${rejected.operation.toOperationType()}\t${rejected.reason}")
+            }
+        }
+    }
 }
 
 private fun PlannedOperation.sourceRef(): FileRef = when (this) {
@@ -314,6 +380,8 @@ private fun PlannedOperation.sourceRef(): FileRef = when (this) {
     is PlannedOperation.Move -> source
     is PlannedOperation.Rename -> source
     is PlannedOperation.Trash -> source
+    // The parent, same as CreateDirectory: the thing that existed before.
+    is PlannedOperation.WriteTextFile -> parent
 }
 
 private fun PlannedOperation.toOperationType(): MutationOperationType = when (this) {
@@ -321,7 +389,25 @@ private fun PlannedOperation.toOperationType(): MutationOperationType = when (th
     is PlannedOperation.Move -> MutationOperationType.MOVE
     is PlannedOperation.Rename -> MutationOperationType.RENAME
     is PlannedOperation.Trash -> MutationOperationType.TRASH
+    is PlannedOperation.WriteTextFile -> MutationOperationType.WRITE_TEXT_FILE
 }
+
+private fun PlannedOperation.fingerprintOrNull(): String? =
+    (this as? PlannedOperation.Trash)?.sourceFingerprint
+
+/** The path or name a person would recognise this operation by, for a failure list. */
+private fun PlannedOperation.toFailure(sequence: Int, reason: String): OperationFailure = OperationFailure(
+    sequence = sequence,
+    operationType = toOperationType(),
+    subject = when (this) {
+        is PlannedOperation.CreateDirectory -> "${parent.rawValue().trimEnd('/')}/$name"
+        is PlannedOperation.Move -> source.rawValue()
+        is PlannedOperation.Rename -> source.rawValue()
+        is PlannedOperation.Trash -> source.rawValue()
+        is PlannedOperation.WriteTextFile -> "${parent.rawValue().trimEnd('/')}/$name"
+    },
+    reason = reason,
+)
 
 private fun childRef(parent: FileRef, name: String): FileRef = when (parent) {
     is FileRef.Direct -> FileRef.Direct("${parent.absolutePath.trimEnd('/')}/$name")

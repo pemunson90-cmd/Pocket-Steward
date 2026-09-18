@@ -16,10 +16,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -30,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.cleanup.DO_NOT_SORT_MARKER
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.plan.PlannedOperation
@@ -87,11 +92,12 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
                     state = state,
                     onScanAgain = viewModel::reset,
                     onOrganizeApks = { viewModel.proposeOrganizeApks(state) },
-                    onSmartCleanup = { viewModel.proposeSmartCleanup(state) },
+                    onSmartCleanup = { includeSubfolders -> viewModel.proposeSmartCleanup(state, includeSubfolders) },
                     onFindDuplicates = { viewModel.findDuplicates(state) },
                     onFindLargestFiles = { viewModel.findLargestFiles(state) },
                     onFindOldFiles = { viewModel.findOldFiles(state) },
                     onReviewUncategorized = { viewModel.findUncategorized(state) },
+                    onProtectFolders = { viewModel.reviewFolderProtection(state) },
                 )
                 is ScanUiState.PlanPreview -> PlanPreviewContent(
                     state = state,
@@ -104,7 +110,7 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
                     onDone = viewModel::reset,
                 )
                 is ScanUiState.Working -> WorkingContent(state)
-                is ScanUiState.Undoing -> UndoingContent()
+                is ScanUiState.Undoing -> UndoingContent(state)
                 is ScanUiState.UndoDone -> UndoDoneContent(state, onDone = viewModel::reset)
                 is ScanUiState.DuplicateReview -> DuplicateReviewContent(
                     state = state,
@@ -112,6 +118,11 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
                     onBack = viewModel::reset,
                 )
                 is ScanUiState.FileListReview -> FileListReviewContent(state, onBack = viewModel::reset)
+                is ScanUiState.ProtectFolders -> ProtectFoldersContent(
+                    state = state,
+                    onProtect = { folder -> viewModel.proposeProtectFolder(state, folder) },
+                    onBack = viewModel::reset,
+                )
                 is ScanUiState.Error -> ErrorState(state.message, onRetry = viewModel::reset)
             }
         }
@@ -152,17 +163,22 @@ private fun ScanSummaryContent(
     state: ScanUiState.Summary,
     onScanAgain: () -> Unit,
     onOrganizeApks: () -> Unit,
-    onSmartCleanup: () -> Unit,
+    onSmartCleanup: (Boolean) -> Unit,
     onFindDuplicates: () -> Unit,
     onFindLargestFiles: () -> Unit,
     onFindOldFiles: () -> Unit,
     onReviewUncategorized: () -> Unit,
+    onProtectFolders: () -> Unit,
 ) {
     // One fence for one limitation. SAF mode can scan and browse; it can't
     // mutate or read contents, because those gateway methods are deliberately
     // unimplemented. Rather than offering actions that then fail three
     // different ways, the actions that need those capabilities aren't shown.
     val canMutate = state.mode == StorageAccessMode.DIRECT
+    // Milestone 6 spec 6a: off by default, and deliberately re-defaulted to
+    // off every time this screen is composed. A depth guard that silently
+    // remembers "on" from a previous run is not a guard.
+    var includeSubfolders by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize()) {
         Text(text = state.scopeLabel)
         Text(text = "${state.totalFiles} files · ${formatBytes(state.totalBytes)}")
@@ -196,8 +212,37 @@ private fun ScanSummaryContent(
                     // Plan Section 4/9: the rule engine's own generated plan —
                     // extension + project-keyword rules, no model. Distinct from
                     // the hard-coded APK-only test button below it.
-                    Card(onClick = onSmartCleanup, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                        Text(text = "Smart cleanup (rule-based, no AI)", modifier = Modifier.padding(16.dp))
+                    Card(
+                        onClick = { onSmartCleanup(includeSubfolders) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Smart cleanup (rule-based, no AI)")
+                            Text(
+                                text = if (includeSubfolders) {
+                                    "Will also sort files already inside folders"
+                                } else {
+                                    "Only files sitting loose in ${state.scopeLabel}"
+                                },
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    // The opt-in itself, outside the tile so tapping it can't
+                    // start a run. Spec 6a: sorting into existing folders is a
+                    // per-run choice someone has to make on purpose.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(text = "Include files inside subfolders")
+                        Switch(
+                            checked = includeSubfolders,
+                            onCheckedChange = { includeSubfolders = it },
+                        )
                     }
                 }
 
@@ -236,6 +281,17 @@ private fun ScanSummaryContent(
                     Text(text = "Review uncategorized", modifier = Modifier.padding(16.dp))
                 }
             }
+
+            if (canMutate) {
+                item {
+                    Card(onClick = onProtectFolders, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Protect folders from sorting")
+                            Text(text = "Puts a $DO_NOT_SORT_MARKER file in a folder. Survives reinstall.")
+                        }
+                    }
+                }
+            }
         }
 
         Card(onClick = onScanAgain, modifier = Modifier.padding(top = 16.dp)) {
@@ -245,10 +301,72 @@ private fun ScanSummaryContent(
 }
 
 @Composable
+private fun ProtectFoldersContent(
+    state: ScanUiState.ProtectFolders,
+    onProtect: (ProtectableFolder) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = "Folders under ${state.scopeLabel}")
+        Text(
+            text = "A protected folder and everything inside it is off limits to Smart cleanup, " +
+                "whatever the subfolder setting says. Remove the marker file to undo that.",
+        )
+
+        if (state.folders.isEmpty()) {
+            Text(text = "No subfolders here.", modifier = Modifier.padding(top = 16.dp))
+            Card(onClick = onBack, modifier = Modifier.padding(top = 16.dp)) {
+                Text(text = "Back", modifier = Modifier.padding(16.dp))
+            }
+            return@Column
+        }
+
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.folders) { folder ->
+                // A protected folder is not tappable: removing protection
+                // means deleting a file, and nothing in this app deletes.
+                // The marker is removed by hand, in a file manager, which is
+                // the same rule Trash follows.
+                if (folder.isProtected) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(text = folder.displayName)
+                            Text(text = "Protected · ${folder.fileCount} file(s)")
+                        }
+                    }
+                } else {
+                    Card(onClick = { onProtect(folder) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(text = folder.displayName)
+                            Text(text = "${folder.fileCount} file(s) · tap to protect")
+                        }
+                    }
+                }
+            }
+        }
+
+        Card(onClick = onBack, modifier = Modifier.padding(top = 16.dp)) {
+            Text(text = "Back", modifier = Modifier.padding(16.dp))
+        }
+    }
+}
+
+@Composable
 private fun DuplicateReviewContent(state: ScanUiState.DuplicateReview, onTrashDuplicates: () -> Unit, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(text = "${state.groups.size} duplicate set(s) found under ${state.scopeLabel}")
         Text(text = "Exact match only (SHA-256) — never inferred from name or size alone.")
+        if (state.groups.isNotEmpty()) {
+            // Spec item 4: the assertion that matters, stated before
+            // approval. A preview of 3,316 rows is not reviewable; one line
+            // saying every group keeps exactly one copy is.
+            val kept = state.groups.size
+            val wouldTrash = state.groups.sumOf { it.extras.size }
+            Text(
+                text = "$kept group(s) · $kept copy(ies) kept · $wouldTrash copy(ies) would move to Trash",
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
 
         if (state.groups.isEmpty()) {
             Card(onClick = onBack, modifier = Modifier.padding(top = 16.dp)) {
@@ -326,6 +444,20 @@ private fun PlanPreviewContent(state: ScanUiState.PlanPreview, onApprove: () -> 
                 if (state.rejected.isNotEmpty()) ", ${state.rejected.size} left untouched" else "",
         )
 
+        // Spec 6b: a protection that applies silently is indistinguishable
+        // from a bug. Whatever the plan source declined to touch gets stated
+        // here, above the row list, because a 3,000-row list is not read.
+        if (state.scopeNotes.isNotEmpty()) {
+            Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(text = "Left out of this plan")
+                    for (note in state.scopeNotes) {
+                        Text(text = note)
+                    }
+                }
+            }
+        }
+
         LazyColumn(
             modifier = Modifier.weight(1f).padding(top = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -367,14 +499,54 @@ private fun ExecutionDoneContent(
     onDone: () -> Unit,
 ) {
     val summary = state.summary
-    Column {
-        Text(text = "Task complete")
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(
+            text = when {
+                summary.failed == 0 -> "Task complete"
+                summary.succeededTotal > 0 -> "Partly done"
+                else -> "Task failed"
+            },
+        )
         if (summary.foldersCreated > 0) Text(text = "${summary.foldersCreated} folder(s) created")
         if (summary.filesMoved > 0) Text(text = "${summary.filesMoved} moved")
         if (summary.filesRenamed > 0) Text(text = "${summary.filesRenamed} renamed")
         if (summary.filesTrashed > 0) Text(text = "${summary.filesTrashed} trashed")
+        if (summary.filesWritten > 0) Text(text = "${summary.filesWritten} file(s) written")
         if (summary.failed > 0) Text(text = "${summary.failed} failed")
         if (summary.leftUntouched.isNotEmpty()) Text(text = "${summary.leftUntouched.size} left untouched")
+
+        // Spec item 2. The count alone was in the journal and nowhere on
+        // screen: "1 failed" on a 4,835-operation run named neither the file
+        // nor the reason. Same shape as "Left untouched" below it.
+        if (summary.failures.isNotEmpty() || summary.leftUntouched.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier.weight(1f).padding(top = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (summary.failures.isNotEmpty()) {
+                    item { Text(text = "Failed") }
+                    items(summary.failures) { failure ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(text = "${failure.operationType.name.lowercase().replace('_', ' ')}: ${failure.subject}")
+                                Text(text = failure.reason)
+                            }
+                        }
+                    }
+                }
+                if (summary.leftUntouched.isNotEmpty()) {
+                    item { Text(text = "Left untouched", modifier = Modifier.padding(top = 8.dp)) }
+                    items(summary.leftUntouched) { rejected ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(text = operationSummary(rejected.operation))
+                                Text(text = rejected.reason)
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         Row(modifier = Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (summary.succeededTotal > 0) {
@@ -414,10 +586,18 @@ private fun WorkingContent(state: ScanUiState.Working) {
 }
 
 @Composable
-private fun UndoingContent() {
+private fun UndoingContent(state: ScanUiState.Undoing) {
     Column(verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxSize()) {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Text(text = "Restoring files…", modifier = Modifier.padding(top = 16.dp))
+        if (state.total > 0) {
+            LinearProgressIndicator(
+                progress = { state.completed.toFloat() / state.total.toFloat() },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(text = "Restoring ${state.completed} of ${state.total}…", modifier = Modifier.padding(top = 16.dp))
+        } else {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text(text = "Reading the journal…", modifier = Modifier.padding(top = 16.dp))
+        }
     }
 }
 
@@ -443,6 +623,7 @@ private fun operationSummary(operation: PlannedOperation): String = when (operat
     is PlannedOperation.Move -> "Move ${operation.source.shortPath()} → ${operation.destination.shortPath()}"
     is PlannedOperation.Rename -> "Rename to ${operation.newName}"
     is PlannedOperation.Trash -> "Trash ${operation.source.shortPath()}"
+    is PlannedOperation.WriteTextFile -> "Write ${operation.name} into ${operation.parent.shortPath()}"
 }
 
 /**

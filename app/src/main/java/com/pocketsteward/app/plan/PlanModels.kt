@@ -44,6 +44,41 @@ sealed interface PlannedOperation {
     data class Trash(
         val source: FileRef,
         override val reason: String,
+        /**
+         * The content hash that justified trashing this copy, where one
+         * exists. Journaled into `MutationRecord.sourceFingerprint`, which
+         * is what lets a manifest built after the fact group trashed files
+         * back into the duplicate sets they came from without re-hashing
+         * anything — including after the file itself has moved to Trash.
+         */
+        val sourceFingerprint: String? = null,
+    ) : PlannedOperation
+
+    /**
+     * Writes [content] to a new file. Never overwrites: [PlanValidator]
+     * rejects it if anything already occupies the destination, and the
+     * gateway refuses as well, so this can create a file but can never
+     * destroy one.
+     *
+     * Two things need it. A folder-protection marker
+     * ([com.pocketsteward.app.cleanup.DO_NOT_SORT_MARKER]) has to become a
+     * real file on disk to survive an app reinstall or a destructive schema
+     * migration, and an exported task manifest has to outlive the journal it
+     * was built from, for the same reason.
+     *
+     * It is deliberately an operation on this list rather than a direct
+     * gateway call from the UI. The M6 spec's item 7 wants an AI's first
+     * mutation-adjacent power to be "propose a protection marker", and this
+     * is what makes that a one-line addition to a planner instead of a new
+     * pathway into the mutation layer: a proposed marker goes through
+     * [PlanValidator], the preview screen, the executor and the journal, the
+     * same as every move.
+     */
+    data class WriteTextFile(
+        val parent: FileRef,
+        val name: String,
+        val content: String,
+        override val reason: String,
     ) : PlannedOperation
 }
 
@@ -63,4 +98,7 @@ fun PlannedOperation.safetyClass(): MutationSafetyClass = when (this) {
     // it's non-destructive here — removing a file from where the user
     // expects to find it is disruptive enough to warrant that.
     is PlannedOperation.Trash -> MutationSafetyClass.RED
+    // Creates a file that did not exist and cannot overwrite one. Nothing
+    // the user already has changes, which is the definition of Green here.
+    is PlannedOperation.WriteTextFile -> MutationSafetyClass.GREEN
 }

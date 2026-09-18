@@ -7,6 +7,16 @@ import com.pocketsteward.app.storage.StorageAccessMode
 enum class TaskRunStatus {
     RUNNING,
     COMPLETED,
+
+    /**
+     * At least one operation succeeded and at least one failed. Before this
+     * existed, the 2026-09-17 Smart cleanup that created 5 folders and moved
+     * 4,829 files with a single failure was filed under [FAILED], directly
+     * above its own summary line reading "4834 succeeded ... 1 failed".
+     */
+    PARTIAL,
+
+    /** Nothing succeeded, or the executor itself threw. Not "something went wrong". */
     FAILED,
     CANCELLED,
     NEEDS_REVIEW,
