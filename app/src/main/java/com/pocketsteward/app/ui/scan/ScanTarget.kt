@@ -27,4 +27,18 @@ sealed interface ScanTarget {
 
     /** The one SAF-granted folder, when access mode is SAF rather than broad. */
     data class GrantedFolder(override val label: String) : ScanTarget
+
+    /**
+     * Spec 6c: any folder the user picked through the in-app browser.
+     * Direct mode only — SAF reaches exactly one granted tree, and narrowing
+     * within it is what [GrantedFolder] already is.
+     *
+     * The label is the folder's own name rather than its full path, because
+     * it appears in a scan summary header and in every plan goal string; the
+     * full path is always one tap away in the browser that produced it.
+     */
+    data class CustomFolder(val absolutePath: String) : ScanTarget {
+        override val label: String =
+            absolutePath.trimEnd('/').substringAfterLast('/').ifBlank { absolutePath }
+    }
 }

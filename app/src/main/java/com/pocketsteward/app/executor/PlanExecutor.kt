@@ -11,6 +11,7 @@ import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.data.db.UndoState
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
@@ -73,10 +74,16 @@ class PlanExecutor(
         plan: AgentPlan,
         scopeRootRef: String,
         storageAccessMode: StorageAccessMode,
+        // Milestone 6 spec 6c: a plan can now target a folder the scanner
+        // has never walked, and for those the scan index is empty — the
+        // re-validation below would reject every operation with "parent does
+        // not exist in the index". The caller supplies the index it validated
+        // against in that case. Left null, this behaves exactly as before.
+        index: FileIndex? = null,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ): ExecutionSummary {
-        val index = InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
-        val validated = PlanValidator.validate(plan.operations, index)
+        val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
+        val validated = PlanValidator.validate(plan.operations, effectiveIndex)
 
         val startedAt = System.currentTimeMillis()
         val taskRunId = taskRunDao.insert(

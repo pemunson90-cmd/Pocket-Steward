@@ -86,7 +86,12 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             when (val state = uiState) {
-                is ScanUiState.Idle -> TargetList(targets, onTargetSelected = { target -> viewModel.startScan(target) })
+                is ScanUiState.Idle -> TargetList(
+                    targets = targets,
+                    canBrowse = accessState?.mode == StorageAccessMode.DIRECT,
+                    onTargetSelected = { target -> viewModel.startScan(target) },
+                    onBrowse = { viewModel.browseFolders() },
+                )
                 is ScanUiState.Scanning -> ScanningState(state)
                 is ScanUiState.Summary -> ScanSummaryContent(
                     state = state,
@@ -118,9 +123,18 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
                     onBack = viewModel::reset,
                 )
                 is ScanUiState.FileListReview -> FileListReviewContent(state, onBack = viewModel::reset)
+                is ScanUiState.FolderBrowser -> FolderBrowserContent(
+                    state = state,
+                    onOpen = { folder -> viewModel.browseFolders(folder) },
+                    onUp = { viewModel.browseFolders(state.parent) },
+                    onScanHere = { viewModel.scanBrowsedFolder(state.current) },
+                    onToggleProtection = { folder -> viewModel.proposeToggleProtection(state, folder) },
+                    onToggleProtectionHere = { viewModel.proposeToggleProtectionHere(state) },
+                    onBack = viewModel::reset,
+                )
                 is ScanUiState.ProtectFolders -> ProtectFoldersContent(
                     state = state,
-                    onProtect = { folder -> viewModel.proposeProtectFolder(state, folder) },
+                    onToggleProtection = { folder -> viewModel.proposeToggleProtection(state, folder) },
                     onBack = viewModel::reset,
                 )
                 is ScanUiState.Error -> ErrorState(state.message, onRetry = viewModel::reset)
@@ -130,12 +144,30 @@ fun StorageScopeScreen(onBack: () -> Unit, autoAction: PostScanAction? = null) {
 }
 
 @Composable
-private fun TargetList(targets: List<ScanTarget>, onTargetSelected: (ScanTarget) -> Unit) {
+private fun TargetList(
+    targets: List<ScanTarget>,
+    canBrowse: Boolean,
+    onTargetSelected: (ScanTarget) -> Unit,
+    onBrowse: () -> Unit,
+) {
     if (targets.isEmpty()) {
         Text("No storage access granted yet.")
         return
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (canBrowse) {
+            item {
+                // Spec 6c. First rather than last: narrowing a run to one
+                // folder is the safest way to use this app, and burying it
+                // under four whole-category shortcuts says the opposite.
+                Card(onClick = onBrowse, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(text = "Choose a folder…")
+                        Text(text = "Scan and act on one folder instead of a whole category")
+                    }
+                }
+            }
+        }
         items(targets) { target ->
             Card(onClick = { onTargetSelected(target) }) {
                 Text(text = target.label, modifier = Modifier.padding(16.dp))
@@ -301,16 +333,80 @@ private fun ScanSummaryContent(
 }
 
 @Composable
+private fun FolderBrowserContent(
+    state: ScanUiState.FolderBrowser,
+    onOpen: (FileRef.Direct) -> Unit,
+    onUp: () -> Unit,
+    onScanHere: () -> Unit,
+    onToggleProtection: (BrowsableFolder) -> Unit,
+    onToggleProtectionHere: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = state.current.absolutePath)
+        Text(
+            text = "${state.children.size} subfolder(s)" +
+                if (state.currentIsProtected) " · this folder is protected from sorting" else "",
+        )
+
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.parent?.let { parent ->
+                item {
+                    Card(onClick = onUp, modifier = Modifier.fillMaxWidth()) {
+                        Text(text = "Up to ${parent.absolutePath}", modifier = Modifier.padding(16.dp))
+                    }
+                }
+            }
+            items(state.children) { folder ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(4.dp)) {
+                        Card(onClick = { onOpen(folder.ref) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(text = folder.displayName)
+                                if (folder.isProtected) Text(text = "Protected from sorting")
+                            }
+                        }
+                        // Protection is reachable on any folder here, not
+                        // only ones inside a scanned scope. Unprotecting
+                        // trashes the marker rather than deleting it, so an
+                        // accidental tap is recoverable from Trash.
+                        Card(onClick = { onToggleProtection(folder) }, modifier = Modifier.padding(top = 4.dp)) {
+                            Text(
+                                text = if (folder.isProtected) "Remove protection" else "Protect this folder",
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Row(modifier = Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(onClick = onScanHere) {
+                Text(text = "Scan this folder", modifier = Modifier.padding(16.dp))
+            }
+            Card(onClick = onToggleProtectionHere) {
+                Text(
+                    text = if (state.currentIsProtected) "Unprotect this folder" else "Protect this folder",
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            Card(onClick = onBack) { Text(text = "Back", modifier = Modifier.padding(16.dp)) }
+        }
+    }
+}
+
+@Composable
 private fun ProtectFoldersContent(
     state: ScanUiState.ProtectFolders,
-    onProtect: (ProtectableFolder) -> Unit,
+    onToggleProtection: (ProtectableFolder) -> Unit,
     onBack: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(text = "Folders under ${state.scopeLabel}")
         Text(
             text = "A protected folder and everything inside it is off limits to Smart cleanup, " +
-                "whatever the subfolder setting says. Remove the marker file to undo that.",
+                "whatever the subfolder setting says.",
         )
 
         if (state.folders.isEmpty()) {
@@ -323,23 +419,19 @@ private fun ProtectFoldersContent(
 
         LazyColumn(modifier = Modifier.weight(1f).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.folders) { folder ->
-                // A protected folder is not tappable: removing protection
-                // means deleting a file, and nothing in this app deletes.
-                // The marker is removed by hand, in a file manager, which is
-                // the same rule Trash follows.
-                if (folder.isProtected) {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(text = folder.displayName)
-                            Text(text = "Protected · ${folder.fileCount} file(s)")
-                        }
-                    }
-                } else {
-                    Card(onClick = { onProtect(folder) }, modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(text = folder.displayName)
-                            Text(text = "${folder.fileCount} file(s) · tap to protect")
-                        }
+                // Both directions are tappable. Unprotecting trashes the
+                // marker rather than deleting it, so it obeys the same rule
+                // as everything else here and is recoverable from Trash.
+                Card(onClick = { onToggleProtection(folder) }, modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(text = folder.displayName)
+                        Text(
+                            text = if (folder.isProtected) {
+                                "Protected · ${folder.fileCount} file(s) · tap to remove protection"
+                            } else {
+                                "${folder.fileCount} file(s) · tap to protect"
+                            },
+                        )
                     }
                 }
             }

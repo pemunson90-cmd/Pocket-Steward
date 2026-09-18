@@ -17,8 +17,9 @@ import com.pocketsteward.app.dedupe.DuplicateDetector
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.di.AppContainer
 import com.pocketsteward.app.executor.ExecutionSummary
-import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
+import com.pocketsteward.app.executor.SingleFolderIndex
+import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
@@ -45,6 +46,13 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
+
+/** One folder in the browser, with enough to decide whether to descend into it. */
+data class BrowsableFolder(
+    val ref: FileRef.Direct,
+    val displayName: String,
+    val isProtected: Boolean,
+)
 
 /** One folder and whether Smart cleanup is currently allowed to touch its contents. */
 data class ProtectableFolder(
@@ -76,6 +84,12 @@ sealed interface ScanUiState {
          * source spared nothing, which renders as no section at all.
          */
         val scopeNotes: List<String> = emptyList(),
+        /**
+         * Set when this plan targets a folder the scanner has never walked
+         * (spec 6c's browser). Execution re-validates against a live listing
+         * of it rather than the scan index, which for such a folder is empty.
+         */
+        val unindexedFolder: FileRef? = null,
     ) : ScanUiState
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
     data class Undoing(
@@ -88,6 +102,19 @@ sealed interface ScanUiState {
     data class DuplicateReview(val groups: List<DuplicateGroup>, val scopeRoot: FileRef, val scopeLabel: String) : ScanUiState
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
+
+    /**
+     * Spec 6c: the in-app folder browser. Directories only — this exists to
+     * pick a scan root, and showing files in it would invite the impression
+     * that a file can be one.
+     */
+    data class FolderBrowser(
+        val current: FileRef.Direct,
+        val currentDisplayName: String,
+        val currentIsProtected: Boolean,
+        val children: List<BrowsableFolder>,
+        val parent: FileRef.Direct?,
+    ) : ScanUiState
 
     /**
      * Spec 6b: every folder under the scan root, with whether a
@@ -324,6 +351,133 @@ class ScanViewModel(
     }
 
     /**
+     * Spec 6c. Opens the folder browser at external storage root, or at
+     * [startAt] when descending.
+     *
+     * Reads the filesystem directly rather than the index, because the whole
+     * point is picking a folder that has never been scanned — an
+     * index-backed browser could only ever offer folders already inside a
+     * scope, which is the limitation this removes.
+     *
+     * Direct mode only. In SAF mode there is exactly one reachable tree and
+     * narrowing inside it is what the granted-folder target already does, so
+     * the browser is not offered rather than offered and then refusing.
+     */
+    fun browseFolders(startAt: FileRef.Direct? = null) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Reading folders", startAt?.absolutePath ?: "Storage root")
+            try {
+                val mode = settingsRepository.storageAccessState.first().mode
+                if (mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+                @Suppress("DEPRECATION")
+                val storageRoot = FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
+                val current = startAt ?: storageRoot
+                val gateway = container.gatewayFor(mode)
+
+                val children = withContext(Dispatchers.IO) {
+                    gateway.listChildren(current)
+                        .filter { it.isDirectory }
+                        .mapNotNull { entry -> (entry.ref as? FileRef.Direct)?.let { entry.displayName to it } }
+                        .sortedBy { (name, _) -> name.lowercase() }
+                        .map { (name, ref) ->
+                            BrowsableFolder(
+                                ref = ref,
+                                displayName = name,
+                                // One stat per child rather than a full
+                                // listing of each: the only question is
+                                // whether one known filename is present.
+                                isProtected = gateway.exists(ref.markerRef()),
+                            )
+                        }
+                }
+
+                _uiState.value = ScanUiState.FolderBrowser(
+                    current = current,
+                    currentDisplayName = current.absolutePath.trimEnd('/').substringAfterLast('/')
+                        .ifBlank { current.absolutePath },
+                    // The folder you are standing in, not just the ones
+                    // below it: otherwise a folder with no subfolders could
+                    // never be protected from here at all.
+                    currentIsProtected = withContext(Dispatchers.IO) { gateway.exists(current.markerRef()) },
+                    children = children,
+                    // Never above external storage root: there is nothing
+                    // useful up there and MANAGE_EXTERNAL_STORAGE does not
+                    // reach it anyway.
+                    parent = current.parentWithin(storageRoot),
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Scans the folder currently open in the browser, as its own scope root. */
+    fun scanBrowsedFolder(folder: FileRef.Direct) {
+        startScan(ScanTarget.CustomFolder(folder.absolutePath))
+    }
+
+    /**
+     * Protects or unprotects [folder] from the browser, so spec 6b applies
+     * to any folder on the device rather than only to ones already inside a
+     * scanned scope.
+     *
+     * Both directions are plans, not direct calls, and both go through the
+     * preview. Unprotecting **trashes** the marker rather than deleting it —
+     * the same rule as everything else here, and it means an accidental
+     * unprotect is recoverable from the Trash screen like any other file.
+     */
+    fun proposeToggleProtection(state: ScanUiState.FolderBrowser, folder: BrowsableFolder) {
+        proposeToggleProtection(state.current, folder.ref, folder.displayName, folder.isProtected)
+    }
+
+    /** The same toggle for the folder currently open, rather than one listed inside it. */
+    fun proposeToggleProtectionHere(state: ScanUiState.FolderBrowser) {
+        proposeToggleProtection(state.current, state.current, state.currentDisplayName, state.currentIsProtected)
+    }
+
+    private fun proposeToggleProtection(
+        root: FileRef.Direct,
+        target: FileRef.Direct,
+        displayName: String,
+        isProtected: Boolean,
+    ) {
+        viewModelScope.launch {
+            try {
+                val operation = if (isProtected) {
+                    PlannedOperation.Trash(
+                        source = target.markerRef(),
+                        reason = "Removes protection from $displayName. The marker file goes to Trash, " +
+                            "not deleted, so this is reversible.",
+                    )
+                } else {
+                    PlannedOperation.WriteTextFile(
+                        parent = target,
+                        name = DO_NOT_SORT_MARKER,
+                        content = DO_NOT_SORT_TEMPLATE,
+                        reason = "Marks $displayName as off limits to Smart cleanup until this file is removed.",
+                    )
+                }
+                // The browser reaches folders that were never scanned, so
+                // the validator's index has to be built from the folder
+                // itself rather than from a scan scope that may not exist.
+                showUnindexedPlanPreview(
+                    goal = if (isProtected) "Unprotect $displayName" else "Protect $displayName",
+                    operations = listOf(operation),
+                    root = root,
+                    // A Trash of the marker is validated against the folder
+                    // holding it, which is the target itself, not its parent.
+                    folder = target,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
      * Spec 6b. Lists the folders under a scanned scope and whether each one
      * already holds a [DO_NOT_SORT_MARKER], entirely from the index — no
      * filesystem read, because the scan already recorded every folder and
@@ -369,17 +523,30 @@ class ScanViewModel(
      * what makes the AI version a change of planner rather than a new path
      * into the mutation layer.
      */
-    fun proposeProtectFolder(state: ScanUiState.ProtectFolders, folder: ProtectableFolder) {
+    fun proposeToggleProtection(state: ScanUiState.ProtectFolders, folder: ProtectableFolder) {
         viewModelScope.launch {
             try {
-                val operation = PlannedOperation.WriteTextFile(
-                    parent = parseFileRef(folder.stableRef),
-                    name = DO_NOT_SORT_MARKER,
-                    content = DO_NOT_SORT_TEMPLATE,
-                    reason = "Marks ${folder.displayName} as off limits to Smart cleanup, permanently, " +
-                        "until this file is removed.",
-                )
-                showPlanPreview("Protect ${folder.displayName}", listOf(operation), state.scopeRoot)
+                val folderRef = parseFileRef(folder.stableRef)
+                val operation = if (folder.isProtected) {
+                    // The marker was indexed by the scan like any other
+                    // file, so the ordinary scan-index preview validates
+                    // this — unlike the browser, which reaches folders no
+                    // scan has walked.
+                    PlannedOperation.Trash(
+                        source = parseFileRef("${folder.stableRef.trimEnd('/')}/$DO_NOT_SORT_MARKER"),
+                        reason = "Removes protection from ${folder.displayName}. The marker file goes to Trash, " +
+                            "not deleted, so this is reversible.",
+                    )
+                } else {
+                    PlannedOperation.WriteTextFile(
+                        parent = folderRef,
+                        name = DO_NOT_SORT_MARKER,
+                        content = DO_NOT_SORT_TEMPLATE,
+                        reason = "Marks ${folder.displayName} as off limits to Smart cleanup until this file is removed.",
+                    )
+                }
+                val goal = if (folder.isProtected) "Unprotect ${folder.displayName}" else "Protect ${folder.displayName}"
+                showPlanPreview(goal, listOf(operation), state.scopeRoot)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -431,6 +598,35 @@ class ScanViewModel(
             rejected = validated.rejected,
             scopeRoot = root,
             scopeNotes = scopeNotes,
+        )
+    }
+
+    /**
+     * The same validate-then-preview path [showPlanPreview] takes, for a
+     * folder the scan index has never seen (spec 6c's browser). The index is
+     * one live listing of [folder] rather than a scan scope, which is
+     * exactly as much as the operations involved need and no more.
+     */
+    private suspend fun showUnindexedPlanPreview(
+        goal: String,
+        operations: List<PlannedOperation>,
+        root: FileRef,
+        folder: FileRef,
+    ) {
+        val mode = settingsRepository.storageAccessState.first().mode
+        if (mode != StorageAccessMode.DIRECT) {
+            _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+            return
+        }
+        val gateway = container.gatewayFor(mode)
+        val children = withContext(Dispatchers.IO) { gateway.listChildren(folder) }
+        val validated = PlanValidator.validate(operations, SingleFolderIndex(folder, children))
+        _uiState.value = ScanUiState.PlanPreview(
+            goal = goal,
+            accepted = validated.accepted,
+            rejected = validated.rejected,
+            scopeRoot = root,
+            unindexedFolder = folder,
         )
     }
 
@@ -558,8 +754,14 @@ class ScanViewModel(
                 // Decision 5, rather than being re-submitted for the
                 // executor's own validation pass to reject again.
                 val plan = AgentPlan(preview.goal, preview.accepted)
+                val unindexed = preview.unindexedFolder
+                val index = if (unindexed == null) {
+                    null
+                } else {
+                    SingleFolderIndex(unindexed, withContext(Dispatchers.IO) { container.gatewayFor(mode).listChildren(unindexed) })
+                }
                 val summary = withContext(Dispatchers.IO) {
-                    executor.execute(plan, preview.scopeRoot.rawValue(), mode) { completed, total ->
+                    executor.execute(plan, preview.scopeRoot.rawValue(), mode, index) { completed, total ->
                         _uiState.value = ScanUiState.Working(
                             label = "Organizing files",
                             detail = "Moving and trashing — safe to interrupt, every step is journaled",
@@ -639,6 +841,7 @@ class ScanViewModel(
                 FileRef.Direct(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).absolutePath)
             ScanTarget.Everything ->
                 FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
+            is ScanTarget.CustomFolder -> FileRef.Direct(target.absolutePath)
             is ScanTarget.GrantedFolder ->
                 error("GrantedFolder target is only valid in SAF mode")
         }
@@ -651,3 +854,19 @@ private fun FileRecord.toSortCandidate(): SortCandidate = SortCandidate(
     displayName = displayName,
     isDirectory = isDirectory,
 )
+
+/**
+ * The parent of this folder, or null when it is [storageRoot] or somehow
+ * outside it. Keeps "up" from walking off the top of what the app can read.
+ */
+private fun FileRef.Direct.parentWithin(storageRoot: FileRef.Direct): FileRef.Direct? {
+    val rootPath = storageRoot.absolutePath.trimEnd('/')
+    val here = absolutePath.trimEnd('/')
+    if (here == rootPath || !here.startsWith("$rootPath/")) return null
+    val parentPath = here.substringBeforeLast('/', missingDelimiterValue = "")
+    return if (parentPath.isBlank()) null else FileRef.Direct(parentPath)
+}
+
+/** The protection marker's path inside this folder. */
+private fun FileRef.Direct.markerRef(): FileRef.Direct =
+    FileRef.Direct("${absolutePath.trimEnd('/')}/$DO_NOT_SORT_MARKER")
