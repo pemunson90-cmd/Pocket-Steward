@@ -2,16 +2,15 @@ package com.pocketsteward.app.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import com.pocketsteward.app.ui.history.HistoryScreen
 import com.pocketsteward.app.ui.home.HomeScreen
 import com.pocketsteward.app.ui.onboarding.OnboardingScreen
 import com.pocketsteward.app.ui.scan.PostScanAction
-import com.pocketsteward.app.ui.scan.StorageScopeScreen
+import com.pocketsteward.app.ui.scan.ScanFlow
+import com.pocketsteward.app.ui.scan.scanFlowGraph
 import com.pocketsteward.app.ui.settings.SettingsScreen
 import com.pocketsteward.app.ui.trash.TrashScreen
 
@@ -22,13 +21,14 @@ object Routes {
     const val HISTORY = "history"
     const val TRASH = "trash"
 
-    /** Optional `action` picks a [PostScanAction] to run once the scan produces a summary. */
-    const val STORAGE_SCOPE = "storage_scope"
-    const val STORAGE_SCOPE_ARG_ACTION = "action"
-    const val STORAGE_SCOPE_ROUTE = "$STORAGE_SCOPE?$STORAGE_SCOPE_ARG_ACTION={$STORAGE_SCOPE_ARG_ACTION}"
+    /**
+     * The scan flow is a nested graph now, not a destination
+     * ([com.pocketsteward.app.ui.scan.ScanFlow]). Home enters it at its start
+     * destination; everything inside it has its own route and its own back.
+     */
+    const val SCAN_FLOW = ScanFlow.GRAPH
 
-    fun storageScopeWith(action: PostScanAction): String =
-        "$STORAGE_SCOPE?$STORAGE_SCOPE_ARG_ACTION=${action.name}"
+    fun scanFlowWith(action: PostScanAction): String = ScanFlow.entryWith(action)
 }
 
 @Composable
@@ -46,9 +46,9 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
         composable(Routes.HOME) {
             HomeScreen(
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onScanStorage = { navController.navigate(Routes.STORAGE_SCOPE) },
+                onScanStorage = { navController.navigate(Routes.SCAN_FLOW) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
-                onQuickAction = { action -> navController.navigate(Routes.storageScopeWith(action)) },
+                onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -57,23 +57,13 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
             )
         }
-        composable(
-            route = Routes.STORAGE_SCOPE_ROUTE,
-            arguments = listOf(
-                navArgument(Routes.STORAGE_SCOPE_ARG_ACTION) {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-        ) { backStackEntry ->
-            StorageScopeScreen(
-                onBack = { navController.popBackStack() },
-                autoAction = PostScanAction.fromRoute(
-                    backStackEntry.arguments?.getString(Routes.STORAGE_SCOPE_ARG_ACTION),
-                ),
-            )
-        }
+        scanFlowGraph(
+            navController = navController,
+            // Back out of the flow's first destination leaves the flow
+            // entirely, which is when the graph's ViewModel — and with it the
+            // scan index — is genuinely no longer wanted.
+            onExitFlow = { navController.popBackStack() },
+        )
         composable(Routes.HISTORY) {
             HistoryScreen(onBack = { navController.popBackStack() })
         }

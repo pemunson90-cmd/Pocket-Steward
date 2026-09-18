@@ -211,6 +211,47 @@ It is an operation on the plan list rather than a direct call from the UI on pur
 
 **Correctness already confirmed on hardware (M5 round, 2026-09-17):** undo at scale — 4,834 restored, 0 blocked, 1 skipped, performed after a force-close and reopen of the app. The `1 skipped` is correct: it is the one operation that failed during the forward run, so there was nothing to reverse.
 
+## Milestone 7 — Navigation, picker, visual pass: written, not yet on hardware
+
+Against `M7_BUILD_REQUEST.md`. No new file operations, no AI, no Room schema change.
+
+### 1. The scan flow is a real back stack
+
+`[device]` The bug that forced this: opening "Files older than 6 months" and pressing back dropped Pat to an empty scan screen and cost a full rescan of 22,000 files. `[code]` The cause was not specific to old files — every review screen's back was wired to `viewModel::reset`, which set the single `ScanUiState` to `Idle`. Duplicate review, plan preview, protect folders and uncategorized all discarded the scan on back.
+
+`StorageScopeScreen.kt` (748 lines, one `when` over every screen in the app) is gone. In its place: a nested navigation graph, `ScanFlow`, with six destinations — `ScanScreen`, `FolderPickerScreen`, `ResultsScreen`, `ReviewScreen`, `PlanPreviewScreen`, `CompletionScreen` — sharing one `ScanViewModel` scoped to the **graph's** back stack entry rather than to each screen. That scoping is the entire mechanism; a `viewModel()` call without it would give every destination its own empty scan and reintroduce the bug through a defaulted parameter.
+
+`ScanUiState` survives as an internal event bus rather than as the screen. A router, `routeToDestination`, fans each value into the per-destination flow that owns it and emits a navigation event. The rule that makes back cheap is one line long: nothing clears `_summary` except `reset()` and a genuinely new scan. `reset()` is kept for what it was written for and has exactly one caller left in the UI — the "Scan again" button.
+
+Errors no longer replace the screen. They render as a dismissible banner above whatever destination is open, so a failed duplicate pass costs a tap rather than the index.
+
+### 2. Folder picker: search, sort, filters, recents
+
+- **`picker/FolderPicker.kt`** — new, pure Kotlin, 18 tests. Filter, then search, then sort, in that order: sorting first is work thrown away, and searching before filtering would let a hidden folder match a query and then vanish, which reads as a bug.
+- **Search** is a case-insensitive substring match on the folder name, live as you type. Blank matches everything.
+- **Sort** by name, file count, size or date modified, as one chip row rather than four toggles. Name ascends; everything else descends, because "sort by size" means "show me the big ones". Every comparator falls back to name so the order is total and rows do not swap between compositions. A folder with no timestamp sorts last: unknown is not the same as new.
+- **Filters** — hide empty, protected only, hide system (`Android/` and anything starting with a dot). All three default to off: a picker that silently hides folders visible in every other file manager is worse than a long list.
+- **Recents** — five most recent, most recent first, in **DataStore not Room**, following `PROJECT_KEYWORDS`' existing serialised-list pattern exactly. Recorded only for folders the user picked and only after the scan succeeded. The Room schema stays frozen.
+- Counts and sizes in the picker are **direct contents only**, one extra listing per child folder, and the screen says so. A recursive size would mean walking the whole device to draw a list.
+
+### 3. Visual pass
+
+- **No more `Card(onClick)` as a button.** Approve, Cancel, Done, Undo and Scan again are `Button` / `OutlinedButton` / `TextButton` with the roles they carry. `Card(onClick)` is kept only where it is genuinely a list row that opens something.
+- **`ui/theme/Spacing.kt`** — one five-step scale, used everywhere. Deliberately five: a sixth would be used to avoid choosing between the existing ones.
+- **Type hierarchy.** `ScreenHeadline` gives every destination one subject at `headlineSmall` with its counts as supporting text, instead of "Task complete", "4 folder(s) created" and "2657 moved" all rendering at the same weight.
+- **Action rows are pinned** below the scrolling content rather than inside it, which is what stops a long list running underneath Approve.
+- `[device]` **The size column no longer wraps one character per line.** The name takes `weight(1f)` with one line and an ellipsis; the size gets its own share and `softWrap = false`.
+- `[device]` **"Failed" as a section header under the status "Partly done"** now reads "Didn't work (1)". The status describes the run; the section describes the operations in it.
+- **Empty states** on every destination, so a screen with nothing on it says why.
+
+### 4. Created folders are named
+
+`[device]` A run reported "4 folder(s) created" and nothing anywhere named them. `ExecutionSummary` now carries `createdFolders`, populated from the same `MutationResult.Success.resultRef` the journal already records, and only for folders genuinely created — an idempotent create over an existing directory is a no-op owned by nobody, the same distinction undo draws. The completion screen lists them with their paths. No schema change: the data was already journaled and the manifest already read it back.
+
+**What's verified vs. reviewed-only:** 91 pure-Kotlin tests passing against a real compiler, including all 18 covering the picker's search, sort, filter and recents behaviour. The navigation restructure and every Compose destination are reviewed by hand and cross-checked for call-site and import consistency, but not compiled here. This is the largest structural change since M2 and the one most likely to produce a first-build failure.
+
+**Known limitation:** the ViewModel is scoped to the nav graph, which survives configuration change but not process death. After the system kills and restores the app, a restored `results` destination shows its empty state rather than a stale summary. That is honest and one back press from recoverable; persisting the summary would mean persisting the index, which is Room's job and would need a schema change.
+
 ## Not started
 
-Milestone 7 (on-device AI, polish) per the plan's own sequencing, plus item 7's foreground execution service. All of Milestone 6, including 6c, is written.
+Milestone 8 (on-device AI) per the plan's own sequencing, plus the plan's item 7 foreground execution service.

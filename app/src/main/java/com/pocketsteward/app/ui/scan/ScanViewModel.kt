@@ -24,6 +24,7 @@ import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.report.duplicateTrashReason
+import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
@@ -38,21 +39,32 @@ import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
 
-/** One folder in the browser, with enough to decide whether to descend into it. */
+/**
+ * One folder in the picker. Wraps [PickerFolder], which holds everything the
+ * search / sort / filter logic needs and is pure Kotlin so that logic is
+ * tested; this adds only the typed ref the rest of the app works in.
+ */
 data class BrowsableFolder(
     val ref: FileRef.Direct,
-    val displayName: String,
-    val isProtected: Boolean,
-)
+    val folder: PickerFolder,
+) {
+    val displayName: String get() = folder.displayName
+    val isProtected: Boolean get() = folder.isProtected
+}
 
 /** One folder and whether Smart cleanup is currently allowed to touch its contents. */
 data class ProtectableFolder(
@@ -150,6 +162,23 @@ sealed interface ScanUiState {
 }
 
 /**
+ * The scan flow's destinations, as a real back stack rather than one `when`
+ * over a single state value.
+ *
+ * `[device]` M6 shipped all of this as one destination. Opening a review and
+ * pressing back called `reset()`, which discarded the scan — on a 22,000 file
+ * scope that cost a full re-walk of the filesystem for a back press.
+ */
+enum class ScanRoute(val route: String) {
+    SCAN("scan_flow/scan"),
+    PICKER("scan_flow/picker"),
+    RESULTS("scan_flow/results"),
+    REVIEW("scan_flow/review"),
+    PREVIEW("scan_flow/preview"),
+    COMPLETION("scan_flow/completion"),
+}
+
+/**
  * What a Home quick-action tile wants done once a scan has produced a
  * summary. Home can't run these itself — every one of them needs an indexed
  * scope first — so the tile navigates here, the scan runs with its existing
@@ -174,11 +203,181 @@ class ScanViewModel(
     private val container: AppContainer,
 ) : ViewModel() {
 
+    /**
+     * The latest outcome of whatever the user last asked for.
+     *
+     * Through M6 this *was* the screen: one `when` over it rendered
+     * everything, and every review's back button called [reset], which set it
+     * to [ScanUiState.Idle]. On hardware that meant opening "Files older than
+     * 6 months" and pressing back discarded a scan of 22,000 files and forced
+     * a full re-walk of the filesystem.
+     *
+     * It is now an internal event bus. [routeToDestination] fans each value
+     * out into the per-destination flow that owns it and emits a navigation
+     * event, so back pops a real stack and the expensive thing — [summary] and
+     * the Room index behind it — is untouched by anything except a genuinely
+     * new scan.
+     */
     private val _uiState = MutableStateFlow<ScanUiState>(ScanUiState.Idle)
-    val uiState: StateFlow<ScanUiState> = _uiState
+
+    /**
+     * The scan result, and the only state here that is expensive to rebuild.
+     * Survives every review, preview and completion screen. Cleared only by
+     * [reset] or by starting another scan.
+     */
+    private val _summary = MutableStateFlow<ScanUiState.Summary?>(null)
+    val summary: StateFlow<ScanUiState.Summary?> = _summary
+
+    private val _scanning = MutableStateFlow<ScanProgress?>(null)
+    val scanning: StateFlow<ScanProgress?> = _scanning
+
+    /** Long operations that are not a scan: hashing, planning, executing. */
+    private val _busy = MutableStateFlow<ScanUiState.Working?>(null)
+    val busy: StateFlow<ScanUiState.Working?> = _busy
+
+    private val _review = MutableStateFlow<ScanUiState?>(null)
+    val review: StateFlow<ScanUiState?> = _review
+
+    private val _preview = MutableStateFlow<ScanUiState.PlanPreview?>(null)
+    val preview: StateFlow<ScanUiState.PlanPreview?> = _preview
+
+    private val _completion = MutableStateFlow<ScanUiState?>(null)
+    val completion: StateFlow<ScanUiState?> = _completion
+
+    private val _undoProgress = MutableStateFlow<ScanUiState.Undoing?>(null)
+    val undoProgress: StateFlow<ScanUiState.Undoing?> = _undoProgress
+
+    private val _picker = MutableStateFlow<ScanUiState.FolderBrowser?>(null)
+    val picker: StateFlow<ScanUiState.FolderBrowser?> = _picker
+
+    /**
+     * Shown as a dismissible banner on whichever destination is open rather
+     * than as a screen of its own. An error that replaced the results was how
+     * a failed duplicate pass used to cost a rescan.
+     */
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
+
+    /**
+     * Where the flow should go next. A [Channel] rather than a [StateFlow]:
+     * these are one-shot instructions, and a replayed one would re-navigate on
+     * every recomposition and on configuration change.
+     */
+    private val navChannel = Channel<ScanRoute>(Channel.BUFFERED)
+    val navEvents: Flow<ScanRoute> = navChannel.receiveAsFlow()
+
+    /** Exposed so a destination can decide which scopes to offer without reaching past the ViewModel. */
+    val storageAccessState = settingsRepository.storageAccessState
+
+    val recentFolders: StateFlow<List<String>> = settingsRepository.recentFolders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
     private var autoStarted = false
+
+    init {
+        viewModelScope.launch {
+            _uiState.collect { routeToDestination(it) }
+        }
+    }
+
+    /**
+     * The fan-out. Every existing call site still assigns [_uiState]; this is
+     * the one place that decides which destination owns the result and whether
+     * the flow moves.
+     *
+     * Deliberately does not clear [_summary] for anything but [reset] and a
+     * new scan. That single rule is what makes back cheap.
+     */
+    private suspend fun routeToDestination(state: ScanUiState) {
+        when (state) {
+            is ScanUiState.Idle -> Unit
+
+            is ScanUiState.Scanning -> {
+                _scanning.value = state.progress
+                _busy.value = null
+            }
+
+            is ScanUiState.Summary -> {
+                _summary.value = state
+                _scanning.value = null
+                _busy.value = null
+                _error.value = null
+                navChannel.send(ScanRoute.RESULTS)
+            }
+
+            is ScanUiState.Working -> _busy.value = state
+
+            is ScanUiState.Undoing -> {
+                _undoProgress.value = state
+                _busy.value = null
+            }
+
+            is ScanUiState.FolderBrowser -> {
+                _picker.value = state
+                _busy.value = null
+                navChannel.send(ScanRoute.PICKER)
+            }
+
+            is ScanUiState.DuplicateReview,
+            is ScanUiState.FileListReview,
+            is ScanUiState.ProtectFolders,
+            -> {
+                _review.value = state
+                _busy.value = null
+                navChannel.send(ScanRoute.REVIEW)
+            }
+
+            is ScanUiState.PlanPreview -> {
+                _preview.value = state
+                _busy.value = null
+                navChannel.send(ScanRoute.PREVIEW)
+            }
+
+            is ScanUiState.ExecutionDone,
+            is ScanUiState.UndoDone,
+            -> {
+                _completion.value = state
+                _busy.value = null
+                _undoProgress.value = null
+                navChannel.send(ScanRoute.COMPLETION)
+            }
+
+            // Never navigates. The destination the user is on stays on
+            // screen, with the message above it, so a failure costs a tap
+            // rather than the scan.
+            is ScanUiState.Error -> {
+                _error.value = state.message
+                _busy.value = null
+                _scanning.value = null
+                _undoProgress.value = null
+            }
+        }
+    }
+
+    fun dismissError() {
+        _error.value = null
+        // The bus holds the error too, and a StateFlow drops a repeat of the
+        // value it already has. Without this, the same failure twice in a row
+        // would show the banner once.
+        if (_uiState.value is ScanUiState.Error) _uiState.value = ScanUiState.Idle
+    }
+
+    /**
+     * Leaving a review, preview or completion screen. Drops only that
+     * screen's state — never [_summary], which is the whole point of the M7
+     * restructure.
+     */
+    fun onLeftDestination(route: ScanRoute) {
+        when (route) {
+            ScanRoute.REVIEW -> _review.value = null
+            ScanRoute.PREVIEW -> _preview.value = null
+            ScanRoute.COMPLETION -> _completion.value = null
+            ScanRoute.PICKER -> _picker.value = null
+            ScanRoute.SCAN, ScanRoute.RESULTS -> Unit
+        }
+        if (_uiState.value !is ScanUiState.Idle) _uiState.value = ScanUiState.Idle
+    }
 
     /**
      * Entry point for a Home tile: scan [target], then immediately run
@@ -194,6 +393,15 @@ class ScanViewModel(
 
     fun startScan(target: ScanTarget, thenRun: PostScanAction? = null) {
         viewModelScope.launch {
+            // A new scan invalidates everything derived from the old one.
+            // Doing it here rather than in reset() is what lets back keep the
+            // results while "Scan again" still clears them.
+            _summary.value = null
+            _review.value = null
+            _preview.value = null
+            _completion.value = null
+            _picker.value = null
+            _error.value = null
             _uiState.value = ScanUiState.Scanning(ScanProgress(0, null, ScanPhase.SCANNING))
             try {
                 val accessState = settingsRepository.storageAccessState.first()
@@ -235,6 +443,12 @@ class ScanViewModel(
                     byCategory = byCategory,
                 )
                 _uiState.value = summary
+                // Spec 2d. Only folders the user actually picked, and only
+                // after the scan succeeded — a folder that failed to scan is
+                // not somewhere they will want to return to.
+                if (target is ScanTarget.CustomFolder) {
+                    settingsRepository.rememberRecentFolder(target.absolutePath)
+                }
 
                 when (thenRun) {
                     null -> Unit
@@ -381,17 +595,7 @@ class ScanViewModel(
                     gateway.listChildren(current)
                         .filter { it.isDirectory }
                         .mapNotNull { entry -> (entry.ref as? FileRef.Direct)?.let { entry.displayName to it } }
-                        .sortedBy { (name, _) -> name.lowercase() }
-                        .map { (name, ref) ->
-                            BrowsableFolder(
-                                ref = ref,
-                                displayName = name,
-                                // One stat per child rather than a full
-                                // listing of each: the only question is
-                                // whether one known filename is present.
-                                isProtected = gateway.exists(ref.markerRef()),
-                            )
-                        }
+                        .map { (name, ref) -> describeFolder(gateway, ref, name) }
                 }
 
                 _uiState.value = ScanUiState.FolderBrowser(
@@ -412,6 +616,39 @@ class ScanViewModel(
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
+    }
+
+    /**
+     * Counts and measures one folder's **direct** contents, not its whole
+     * subtree. One extra listing per child folder, which is bounded and fast
+     * enough for a picker; a recursive size would mean walking the entire
+     * device to draw a list.
+     *
+     * The picker says "direct contents" on screen for the same reason: a
+     * number labelled "size" that silently means something narrower is worse
+     * than no number.
+     */
+    private suspend fun describeFolder(
+        gateway: StorageGateway,
+        ref: FileRef.Direct,
+        displayName: String,
+    ): BrowsableFolder {
+        val contents = runCatching { gateway.listChildren(ref) }.getOrDefault(emptyList())
+        val files = contents.filter { !it.isDirectory }
+        val stats = files.mapNotNull { runCatching { gateway.stat(it.ref) }.getOrNull() }
+        return BrowsableFolder(
+            ref = ref,
+            folder = PickerFolder(
+                path = ref.absolutePath,
+                displayName = displayName,
+                fileCount = files.size,
+                totalBytes = stats.sumOf { it.sizeBytes },
+                modifiedAt = stats.maxOfOrNull { it.modifiedAtEpochMs } ?: runCatching { gateway.stat(ref).modifiedAtEpochMs }.getOrNull(),
+                // The marker is a known filename, so the listing already read
+                // above answers this — no extra stat needed.
+                isProtected = contents.any { !it.isDirectory && it.displayName == DO_NOT_SORT_MARKER },
+            ),
+        )
     }
 
     /** Scans the folder currently open in the browser, as its own scope root. */
@@ -793,8 +1030,24 @@ class ScanViewModel(
         }
     }
 
+    /**
+     * Starting over: a genuinely new scan, not a back press.
+     *
+     * This is what `reset()` was always written for. Until M7 it was also
+     * wired to every review screen's back button, which is why leaving a
+     * review threw the scan away.
+     */
     fun reset() {
         autoStarted = false
+        _summary.value = null
+        _scanning.value = null
+        _busy.value = null
+        _review.value = null
+        _preview.value = null
+        _completion.value = null
+        _undoProgress.value = null
+        _picker.value = null
+        _error.value = null
         _uiState.value = ScanUiState.Idle
     }
 

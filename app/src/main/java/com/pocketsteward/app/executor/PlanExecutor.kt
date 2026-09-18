@@ -39,6 +39,21 @@ data class ExecutionSummary(
      * a 4,835-operation run named neither the file nor the reason.
      */
     val failures: List<OperationFailure> = emptyList(),
+    /**
+     * M7 item 4. The paths of folders this run actually created, in the order
+     * it created them.
+     *
+     * `[device]` A run reported "4 folder(s) created" and nothing anywhere
+     * named them. The data was already in the journal on every
+     * `CreateDirectory` record's `destinationAfter`, and the manifest already
+     * read it back — the count was simply the only thing that left the
+     * executor.
+     *
+     * Only folders that were genuinely created: an idempotent create over an
+     * existing directory is a no-op owned by nobody, which is the same
+     * distinction `MutationResult.Success.changed` draws for undo.
+     */
+    val createdFolders: List<String> = emptyList(),
 ) {
     val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed + filesWritten
 }
@@ -108,6 +123,7 @@ class PlanExecutor(
         var filesWritten = 0
         var failed = 0
         val failures = mutableListOf<OperationFailure>()
+        val createdFolders = mutableListOf<String>()
 
         validated.accepted.forEachIndexed { sequence, operation ->
             val expectedDestination = try {
@@ -179,7 +195,10 @@ class PlanExecutor(
                     if (result.changed) {
                         reindexAfterMutation(operation, result.resultRef, scopeRootRef)
                         when (operation) {
-                            is PlannedOperation.CreateDirectory -> foldersCreated++
+                            is PlannedOperation.CreateDirectory -> {
+                                foldersCreated++
+                                createdFolders += result.resultRef.rawValue()
+                            }
                             is PlannedOperation.Move -> filesMoved++
                             is PlannedOperation.Rename -> filesRenamed++
                             is PlannedOperation.Trash -> filesTrashed++
@@ -229,6 +248,7 @@ class PlanExecutor(
             failed = failed,
             leftUntouched = validated.rejected,
             failures = failures,
+            createdFolders = createdFolders,
         )
 
         val finished = taskRunDao.getById(taskRunId) ?: error("Task run disappeared during execution")

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.pocketsteward.app.picker.RecentFolders
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -41,6 +42,14 @@ class SettingsRepository(private val context: Context) {
         val IMAGE_ANALYSIS = booleanPreferencesKey("image_analysis_enabled")
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
         val PROJECT_KEYWORDS = stringPreferencesKey("project_keywords")
+
+        /**
+         * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
+         * is on `fallbackToDestructiveMigration` and holds undo journals for
+         * runs of several thousand operations, so a new entity would destroy
+         * them. Same serialised-list shape as [PROJECT_KEYWORDS].
+         */
+        val RECENT_FOLDERS = stringPreferencesKey("recent_folders")
     }
 
     /**
@@ -66,6 +75,19 @@ class SettingsRepository(private val context: Context) {
     suspend fun setProjectKeywords(keywords: List<ProjectKeyword>) {
         context.dataStore.edit {
             it[Keys.PROJECT_KEYWORDS] = keywords.joinToString("\n") { keyword -> "${keyword.term}=${keyword.projectFolder}" }
+        }
+    }
+
+    /** Most recent first, capped by [RecentFolders.MAX]. */
+    val recentFolders: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        RecentFolders.decode(prefs[Keys.RECENT_FOLDERS])
+    }
+
+    /** Records [path] as the most recently scanned folder, moving it if it was already there. */
+    suspend fun rememberRecentFolder(path: String) {
+        context.dataStore.edit { prefs ->
+            val updated = RecentFolders.add(RecentFolders.decode(prefs[Keys.RECENT_FOLDERS]), path)
+            prefs[Keys.RECENT_FOLDERS] = RecentFolders.encode(updated)
         }
     }
 

@@ -39,3 +39,4 @@ four questions a changelog does not:
 | --- | --- | --- | --- |
 | M0–M5 | 0.1.0–0.6.0 | `M0-M5-RETROSPECTIVE.md` | partially, see report |
 | M6 | 0.7.0-milestone6 | `M6.md` | 2026-09-18 |
+| M7 | 0.8.0-milestone7 | pending | not yet — report is written when it lands, not when it is pushed |
