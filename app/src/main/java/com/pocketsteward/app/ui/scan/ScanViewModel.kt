@@ -32,6 +32,7 @@ import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
+import com.pocketsteward.app.scan.ScanRootSet
 import com.pocketsteward.app.scan.classifyByExtension
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -53,6 +54,11 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 data class CategoryStat(val fileCount: Int, val totalBytes: Long)
+
+data class ScanScope(
+    val label: String,
+    val root: FileRef,
+)
 
 /**
  * One folder in the picker. Wraps [PickerFolder], which holds everything the
@@ -79,18 +85,27 @@ sealed interface ScanUiState {
     data object Idle : ScanUiState
     data class Scanning(val progress: ScanProgress) : ScanUiState
     data class Summary(
-        val scopeLabel: String,
-        val scopeRoot: FileRef,
+        val scopes: List<ScanScope>,
         val mode: StorageAccessMode,
         val totalFiles: Int,
         val totalBytes: Long,
         val byCategory: Map<FileCategory, CategoryStat>,
-    ) : ScanUiState
+    ) : ScanUiState {
+        init {
+            require(scopes.isNotEmpty()) { "A scan summary needs at least one scope." }
+        }
+
+        val scopeLabel: String
+            get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
+
+        /** Primary scope retained for legacy single-root surfaces such as manifest export. */
+        val scopeRoot: FileRef get() = scopes.first().root
+    }
     data class PlanPreview(
         val goal: String,
         val accepted: List<PlannedOperation>,
         val rejected: List<RejectedOperation>,
-        val scopeRoot: FileRef,
+        val scopes: List<ScanScope>,
         /** Accepted operations the user still intends to run. Rejected
          * operations never enter this selection set. */
         val selectedIndices: Set<Int> = PlanSelection.allSelected(accepted),
@@ -106,7 +121,15 @@ sealed interface ScanUiState {
          * of it rather than the scan index, which for such a folder is empty.
          */
         val unindexedFolder: FileRef? = null,
-    ) : ScanUiState
+    ) : ScanUiState {
+        init {
+            require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
+        }
+
+        val scopeRoot: FileRef get() = scopes.first().root
+        val scopeLabel: String
+            get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
+    }
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
     data class Undoing(
         val taskRunId: Long,
@@ -115,7 +138,14 @@ sealed interface ScanUiState {
     ) : ScanUiState
     data class UndoDone(val summary: UndoSummary) : ScanUiState
     /** Plan Section 8: duplicate candidates found by the size/fingerprint/hash cascade, not yet acted on. */
-    data class DuplicateReview(val groups: List<DuplicateGroup>, val scopeRoot: FileRef, val scopeLabel: String) : ScanUiState
+    data class DuplicateReview(
+        val groups: List<DuplicateGroup>,
+        val scopes: List<ScanScope>,
+    ) : ScanUiState {
+        val scopeRoot: FileRef get() = scopes.first().root
+        val scopeLabel: String
+            get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
+    }
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
 
@@ -139,10 +169,12 @@ sealed interface ScanUiState {
      * history and can be undone like anything else.
      */
     data class ProtectFolders(
-        val scopeRoot: FileRef,
-        val scopeLabel: String,
+        val scopes: List<ScanScope>,
         val folders: List<ProtectableFolder>,
-    ) : ScanUiState
+    ) : ScanUiState {
+        val scopeLabel: String
+            get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
+    }
 
     /**
      * Any long-running operation that isn't a scan or an undo — hashing for
@@ -275,6 +307,9 @@ class ScanViewModel(
 
     val recentFolders: StateFlow<List<String>> = settingsRepository.recentFolders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _selectedTargets = MutableStateFlow<List<ScanTarget>>(emptyList())
+    val selectedTargets: StateFlow<List<ScanTarget>> = _selectedTargets
 
     /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
     private var autoStarted = false
