@@ -79,6 +79,7 @@ data class ProtectableFolder(
     val displayName: String,
     val fileCount: Int,
     val isProtected: Boolean,
+    val scope: ScanScope,
 )
 
 sealed interface ScanUiState {
@@ -106,6 +107,8 @@ sealed interface ScanUiState {
         val accepted: List<PlannedOperation>,
         val rejected: List<RejectedOperation>,
         val scopes: List<ScanScope>,
+        /** Root label for each accepted operation, aligned by index. */
+        val acceptedScopeLabels: List<String>,
         /** Accepted operations the user still intends to run. Rejected
          * operations never enter this selection set. */
         val selectedIndices: Set<Int> = PlanSelection.allSelected(accepted),
@@ -911,16 +914,33 @@ class ScanViewModel(
     private suspend fun showPlanPreview(
         goal: String,
         operations: List<PlannedOperation>,
-        root: FileRef,
+        scopes: List<ScanScope>,
         scopeNotes: List<String> = emptyList(),
     ) {
-        val index = InMemoryFileIndex(container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue()))
+        val index = InMemoryFileIndex(allRecordsForScopes(scopes))
         val validated = PlanValidator.validate(operations, index)
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
             rejected = validated.rejected,
-            scopeRoot = root,
+            scopes = scopes,
+            acceptedScopeLabels = validated.accepted.map { operation ->
+                scopeForOperation(operation, scopes)?.label ?: scopes.first().label
+            },
+            scopeNotes = scopeNotes,
+        )
+    }
+
+    private suspend fun showPlanPreview(
+        goal: String,
+        operations: List<PlannedOperation>,
+        root: FileRef,
+        scopeNotes: List<String> = emptyList(),
+    ) {
+        showPlanPreview(
+            goal = goal,
+            operations = operations,
+            scopes = listOf(ScanScope(root.displayScopeLabel(), root)),
             scopeNotes = scopeNotes,
         )
     }
@@ -945,11 +965,13 @@ class ScanViewModel(
         val gateway = container.gatewayFor(mode)
         val children = withContext(Dispatchers.IO) { gateway.listChildren(folder) }
         val validated = PlanValidator.validate(operations, SingleFolderIndex(folder, children))
+        val scope = ScanScope(root.displayScopeLabel(), root)
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
             rejected = validated.rejected,
-            scopeRoot = root,
+            scopes = listOf(scope),
+            acceptedScopeLabels = List(validated.accepted.size) { scope.label },
             unindexedFolder = folder,
         )
     }
@@ -1100,9 +1122,12 @@ class ScanViewModel(
                 val plan = AgentPlan(preview.goal, selectedOperations)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
-                    null
+                    InMemoryFileIndex(allRecordsForScopes(preview.scopes))
                 } else {
-                    SingleFolderIndex(unindexed, withContext(Dispatchers.IO) { container.gatewayFor(mode).listChildren(unindexed) })
+                    SingleFolderIndex(
+                        unindexed,
+                        withContext(Dispatchers.IO) { container.gatewayFor(mode).listChildren(unindexed) },
+                    )
                 }
                 val summary = withContext(Dispatchers.IO) {
                     executor.execute(plan, preview.scopeRoot.rawValue(), mode, index) { completed, total ->
@@ -1236,6 +1261,26 @@ class ScanViewModel(
                 error("GrantedFolder target is only valid in SAF mode")
         }
     }
+}
+
+private fun scopeForOperation(operation: PlannedOperation, scopes: List<ScanScope>): ScanScope? {
+    val anchor = when (operation) {
+        is PlannedOperation.CreateDirectory -> operation.parent
+        is PlannedOperation.Move -> operation.source
+        is PlannedOperation.Rename -> operation.source
+        is PlannedOperation.Trash -> operation.source
+        is PlannedOperation.WriteTextFile -> operation.parent
+    }
+    val raw = anchor.rawValue().trimEnd('/')
+    return scopes.firstOrNull { scope ->
+        val root = scope.root.rawValue().trimEnd('/')
+        raw == root || raw.startsWith("$root/")
+    }
+}
+
+private fun FileRef.displayScopeLabel(): String = when (this) {
+    is FileRef.Direct -> absolutePath.trimEnd('/').substringAfterLast('/').ifBlank { absolutePath }
+    is FileRef.Saf -> "Granted folder"
 }
 
 private fun ScanTarget.selectionKey(): String = when (this) {
