@@ -4,6 +4,9 @@ on:
     branches:
       - build/m8-diagnostic
   workflow_dispatch:
+concurrency:
+  group: m8-diagnostic
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
