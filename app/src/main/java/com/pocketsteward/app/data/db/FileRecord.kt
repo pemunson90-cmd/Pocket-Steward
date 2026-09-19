@@ -6,27 +6,16 @@ import androidx.room.PrimaryKey
 
 /**
  * Local index row for one scanned file or directory (plan Section 7).
- * Level 1/2 fields (dimensions, apk metadata, hashes, text preview,
- * classification) are nullable and populated lazily — never eagerly during
- * the cheap Level 0 inventory pass.
- *
- * [stableRef] is unique so re-scanning a file replaces its existing row
- * (via OnConflictStrategy.REPLACE against this index) instead of inserting
- * a duplicate every time a scan resumes or re-runs.
- *
- * [scopeRootRef] tags which scan root (e.g. the resolved Downloads folder,
- * or a SAF tree URI) this record was found under, so a Scan Summary query
- * can select "everything under this scope" without relying on path-prefix
- * matching, which isn't reliable for SAF content URIs.
+ * Scope membership lives in [FileScope], allowing one file to belong to
+ * multiple independently scanned roots without rewriting the file row.
  */
 @Entity(
     tableName = "file_records",
-    indices = [Index(value = ["stableRef"], unique = true), Index(value = ["scopeRootRef"])],
+    indices = [Index(value = ["stableRef"], unique = true)],
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val stableRef: String,
-    val scopeRootRef: String,
     val displayName: String,
     val extension: String,
     val mimeType: String?,
