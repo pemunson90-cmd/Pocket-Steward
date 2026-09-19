@@ -18,13 +18,16 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - name: Restore canonical signing key
-        if: ${{ secrets.POCKET_STEWARD_KEYSTORE_B64 != '' }}
+      - name: Restore canonical signing key when configured
         env:
           KEYSTORE_B64: ${{ secrets.POCKET_STEWARD_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.POCKET_STEWARD_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.POCKET_STEWARD_KEY_ALIAS }}
         run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "Canonical signing secrets not configured; building a disposable debug APK."
+            exit 0
+          fi
           echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/pocket-steward.jks"
           echo "POCKET_STEWARD_KEYSTORE_PATH=$RUNNER_TEMP/pocket-steward.jks" >> "$GITHUB_ENV"
           ACTUAL="$(keytool -list -v -keystore "$RUNNER_TEMP/pocket-steward.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" | sed -n 's/.*SHA256: //p' | head -1)"
