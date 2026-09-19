@@ -1,3 +1,12 @@
+val pocketStewardKeystorePath =
+    providers.environmentVariable("POCKET_STEWARD_KEYSTORE_PATH").orNull
+val pocketStewardKeystorePassword =
+    providers.environmentVariable("POCKET_STEWARD_KEYSTORE_PASSWORD").orNull
+val pocketStewardKeyAlias =
+    providers.environmentVariable("POCKET_STEWARD_KEY_ALIAS").orNull
+val pocketStewardKeyPassword =
+    providers.environmentVariable("POCKET_STEWARD_KEY_PASSWORD").orNull
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -19,6 +28,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val canonicalDevelopmentSigning = if (
+        pocketStewardKeystorePath != null &&
+        pocketStewardKeystorePassword != null &&
+        pocketStewardKeyAlias != null &&
+        pocketStewardKeyPassword != null
+    ) {
+        signingConfigs.create("pocketStewardDevelopment") {
+            storeFile = file(pocketStewardKeystorePath)
+            storePassword = pocketStewardKeystorePassword
+            keyAlias = pocketStewardKeyAlias
+            keyPassword = pocketStewardKeyPassword
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -29,6 +54,7 @@ android {
         }
         debug {
             isDebuggable = true
+            canonicalDevelopmentSigning?.let { signingConfig = it }
         }
     }
 
