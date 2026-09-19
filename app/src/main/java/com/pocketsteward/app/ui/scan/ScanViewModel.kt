@@ -840,28 +840,32 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Reading folders", "Checking which are already protected")
             try {
-                val root = summary.scopeRoot
-                if (root !is FileRef.Direct) {
+                if (summary.scopes.any { it.root !is FileRef.Direct }) {
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
-                val records = container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue())
-                val folders = withContext(Dispatchers.Default) {
-                    val protectedFolders = SortScope.protectedFolders(records.map { it.toSortCandidate() })
-                    val fileCounts = records.filter { !it.isDirectory }.groupingBy { it.parentRef }.eachCount()
-                    records
-                        .filter { it.isDirectory && it.stableRef != root.rawValue() }
-                        .sortedBy { it.stableRef }
-                        .map { folder ->
-                            ProtectableFolder(
-                                stableRef = folder.stableRef,
-                                displayName = folder.stableRef.removePrefix(root.absolutePath.trimEnd('/')).trimStart('/'),
-                                fileCount = fileCounts[folder.stableRef] ?: 0,
-                                isProtected = folder.stableRef in protectedFolders,
-                            )
-                        }
+
+                val folders = summary.scopes.flatMap { scope ->
+                    val root = scope.root as FileRef.Direct
+                    val records = container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue())
+                    withContext(Dispatchers.Default) {
+                        val protectedFolders = SortScope.protectedFolders(records.map { it.toSortCandidate() })
+                        val fileCounts = records.filter { !it.isDirectory }.groupingBy { it.parentRef }.eachCount()
+                        records
+                            .filter { it.isDirectory && it.stableRef != root.rawValue() }
+                            .sortedBy { it.stableRef }
+                            .map { folder ->
+                                ProtectableFolder(
+                                    stableRef = folder.stableRef,
+                                    displayName = folder.stableRef.removePrefix(root.absolutePath.trimEnd('/')).trimStart('/'),
+                                    fileCount = fileCounts[folder.stableRef] ?: 0,
+                                    isProtected = folder.stableRef in protectedFolders,
+                                    scope = scope,
+                                )
+                            }
+                    }
                 }
-                _uiState.value = ScanUiState.ProtectFolders(root, summary.scopeLabel, folders)
+                _uiState.value = ScanUiState.ProtectFolders(summary.scopes, folders.distinctBy { it.stableRef })
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -899,7 +903,7 @@ class ScanViewModel(
                     )
                 }
                 val goal = if (folder.isProtected) "Unprotect ${folder.displayName}" else "Protect ${folder.displayName}"
-                showPlanPreview(goal, listOf(operation), state.scopeRoot)
+                showPlanPreview(goal, listOf(operation), listOf(folder.scope))
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -916,7 +920,7 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Reviewing", "Checking what the rules can't place")
             try {
-                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(summary.scopeRoot.rawValue())
+                val records = filesForScopes(summary.scopes)
                 val projectKeywords = settingsRepository.projectKeywords.first()
                 val uncategorized = withContext(Dispatchers.Default) {
                     records.filter { RuleEngine.classify(it.displayName, it.extension, projectKeywords).isUncategorized() }
@@ -1011,7 +1015,6 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Finding duplicates", "Grouping by size")
             try {
-                val root = summary.scopeRoot
                 val mode = summary.mode
                 // SAF's openRead is still TODO(), so hashing would throw a raw
                 // NotImplementedError rather than fail honestly. Guard here,
@@ -1021,7 +1024,7 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
-                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                val records = filesForScopes(summary.scopes)
                 val detector = DuplicateDetector(container.gatewayFor(mode))
                 val groups = withContext(Dispatchers.IO) {
                     detector.findDuplicates(records) { progress ->
@@ -1033,7 +1036,7 @@ class ScanViewModel(
                         )
                     }
                 }
-                _uiState.value = ScanUiState.DuplicateReview(groups, root, summary.scopeLabel)
+                _uiState.value = ScanUiState.DuplicateReview(groups, summary.scopes)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -1072,7 +1075,7 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("No duplicates to trash.")
                     return@launch
                 }
-                showPlanPreview("Trash duplicate files under ${review.scopeLabel}", operations, review.scopeRoot)
+                showPlanPreview("Trash duplicate files under ${review.scopeLabel}", operations, review.scopes)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -1084,7 +1087,9 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Finding largest files", "Querying the index")
             try {
-                val records = container.database.fileRecordDao().getLargestFiles(summary.scopeRoot.rawValue(), limit)
+                val records = filesForScopes(summary.scopes)
+                    .sortedByDescending { it.sizeBytes }
+                    .take(limit)
                 _uiState.value = ScanUiState.FileListReview("$limit largest files under ${summary.scopeLabel}", records)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -1098,7 +1103,9 @@ class ScanViewModel(
             _uiState.value = ScanUiState.Working("Finding old files", "Querying the index")
             try {
                 val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30L * olderThanMonths)
-                val records = container.database.fileRecordDao().getFilesOlderThan(summary.scopeRoot.rawValue(), cutoff)
+                val records = filesForScopes(summary.scopes)
+                    .filter { it.modifiedAt != null && it.modifiedAt < cutoff }
+                    .sortedBy { it.modifiedAt }
                 _uiState.value = ScanUiState.FileListReview("Files older than $olderThanMonths months under ${summary.scopeLabel}", records)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
