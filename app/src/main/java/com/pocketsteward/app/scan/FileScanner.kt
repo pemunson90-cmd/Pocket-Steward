@@ -2,6 +2,7 @@ package com.pocketsteward.app.scan
 
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.db.FileRecordDao
+import com.pocketsteward.app.data.db.FileScope
 import com.pocketsteward.app.data.db.ScanCheckpoint
 import com.pocketsteward.app.data.db.ScanCheckpointDao
 import com.pocketsteward.app.data.db.ScanStatus
@@ -70,7 +71,9 @@ class FileScanner(
             // as its own record (parentRef null — it has no parent within
             // this scope) closes that for every future check against it,
             // not just this one plan.
-            fileRecordDao.upsert(gateway.stat(root).toFileRecord(scopeKey, parent = null))
+            val rootRecord = gateway.stat(root).toFileRecord(parent = null)
+            fileRecordDao.upsert(rootRecord)
+            fileRecordDao.insertScopeTag(FileScope(rootRecord.stableRef, scopeKey))
             queue.add(root)
             processedCount = 0
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
@@ -84,10 +87,11 @@ class FileScanner(
                 val batch = children.map { entry ->
                     val meta = gateway.stat(entry.ref)
                     if (meta.isDirectory) queue.addLast(entry.ref)
-                    meta.toFileRecord(scopeKey, parent = directory)
+                    meta.toFileRecord(parent = directory)
                 }
                 if (batch.isNotEmpty()) {
                     fileRecordDao.upsertAll(batch)
+                    fileRecordDao.insertScopeTags(batch.map { FileScope(it.stableRef, scopeKey) })
                 }
                 processedCount += batch.size
 
@@ -124,11 +128,10 @@ class FileScanner(
     }
 }
 
-private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef?): FileRecord {
+private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord {
     val rawRef = ref.rawValue()
     return FileRecord(
         stableRef = rawRef,
-        scopeRootRef = scopeRootRef,
         displayName = displayName,
         extension = extension,
         mimeType = mimeType,
