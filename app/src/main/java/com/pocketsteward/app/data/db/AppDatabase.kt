@@ -76,34 +76,52 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
 
-                // 2. Backfill the join table from the existing single-scope column
+                // 2. Backfill the join table
                 db.execSQL("""
                     INSERT INTO `file_scopes` (`fileRef`, `scopeRoot`)
-                    SELECT `stableRef`, `scopeRootRef` FROM `file_records`
+                    SELECT `stableRef`, `scopeRootRef` FROM `file_records` WHERE `scopeRootRef` IS NOT NULL
                 """.trimIndent())
 
-                // 3. Recreate file_records without scopeRootRef to drop the column
+                // 3. Recreate file_records matching the exact schema
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `file_records_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         `stableRef` TEXT NOT NULL,
-                        `name` TEXT NOT NULL,
-                        `mimeType` TEXT NOT NULL,
+                        `displayName` TEXT NOT NULL,
+                        `extension` TEXT NOT NULL,
+                        `mimeType` TEXT,
+                        `absolutePathOrUri` TEXT NOT NULL,
+                        `parentRef` TEXT,
                         `sizeBytes` INTEGER NOT NULL,
-                        `modifiedMs` INTEGER NOT NULL,
-                        `hash` TEXT,
-                        PRIMARY KEY(`stableRef`)
+                        `createdAt` INTEGER,
+                        `modifiedAt` INTEGER,
+                        `lastScannedAt` INTEGER NOT NULL,
+                        `isDirectory` INTEGER NOT NULL,
+                        `isHidden` INTEGER NOT NULL,
+                        `mediaType` TEXT,
+                        `width` INTEGER,
+                        `height` INTEGER,
+                        `durationMs` INTEGER,
+                        `apkPackageName` TEXT,
+                        `apkVersionName` TEXT,
+                        `sha256` TEXT,
+                        `quickFingerprint` TEXT,
+                        `textPreview` TEXT,
+                        `classification` TEXT,
+                        `classificationConfidence` REAL
                     )
                 """.trimIndent())
 
                 // 4. Migrate data to the new schema
                 db.execSQL("""
-                    INSERT INTO `file_records_new` (`stableRef`, `name`, `mimeType`, `sizeBytes`, `modifiedMs`, `hash`)
-                    SELECT `stableRef`, `name`, `mimeType`, `sizeBytes`, `modifiedMs`, `hash` FROM `file_records`
+                    INSERT INTO `file_records_new` (`id`, `stableRef`, `displayName`, `extension`, `mimeType`, `absolutePathOrUri`, `parentRef`, `sizeBytes`, `createdAt`, `modifiedAt`, `lastScannedAt`, `isDirectory`, `isHidden`, `mediaType`, `width`, `height`, `durationMs`, `apkPackageName`, `apkVersionName`, `sha256`, `quickFingerprint`, `textPreview`, `classification`, `classificationConfidence`)
+                    SELECT `id`, `stableRef`, `displayName`, `extension`, `mimeType`, `absolutePathOrUri`, `parentRef`, `sizeBytes`, `createdAt`, `modifiedAt`, `lastScannedAt`, `isDirectory`, `isHidden`, `mediaType`, `width`, `height`, `durationMs`, `apkPackageName`, `apkVersionName`, `sha256`, `quickFingerprint`, `textPreview`, `classification`, `classificationConfidence` FROM `file_records`
                 """.trimIndent())
 
-                // 5. Swap tables
+                // 5. Swap tables and restore indices
                 db.execSQL("DROP TABLE `file_records`")
                 db.execSQL("ALTER TABLE `file_records_new` RENAME TO `file_records`")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_file_records_stableRef` ON `file_records` (`stableRef`)")
             }
         }
 
