@@ -558,32 +558,37 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning", "Collecting APKs under ${summary.scopeLabel}")
             try {
-                val root = summary.scopeRoot
-                if (root !is FileRef.Direct) {
+                if (summary.scopes.any { it.root !is FileRef.Direct }) {
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
-                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
-                val apkRecords = records.filter { classifyByExtension(it.extension) == FileCategory.APK }
-                if (apkRecords.isEmpty()) {
+
+                val operations = buildList {
+                    for (scope in summary.scopes) {
+                        val root = scope.root as FileRef.Direct
+                        val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                        val apkRecords = records.filter { classifyByExtension(it.extension) == FileCategory.APK }
+                        if (apkRecords.isEmpty()) continue
+
+                        val apksFolder = FileRef.Direct("${root.absolutePath.trimEnd('/')}/APKs")
+                        add(PlannedOperation.CreateDirectory(root, "APKs", "Destination for Android package installers"))
+                        for (record in apkRecords) {
+                            add(
+                                PlannedOperation.Move(
+                                    source = FileRef.Direct(record.stableRef),
+                                    destination = FileRef.Direct("${apksFolder.absolutePath}/${record.displayName}"),
+                                    reason = "APK file",
+                                ),
+                            )
+                        }
+                    }
+                }
+                if (operations.isEmpty()) {
                     _uiState.value = ScanUiState.Error("No APKs found under ${summary.scopeLabel}.")
                     return@launch
                 }
 
-                val apksFolder = FileRef.Direct("${root.absolutePath.trimEnd('/')}/APKs")
-                val operations = buildList {
-                    add(PlannedOperation.CreateDirectory(root, "APKs", "Destination for Android package installers"))
-                    for (record in apkRecords) {
-                        add(
-                            PlannedOperation.Move(
-                                source = FileRef.Direct(record.stableRef),
-                                destination = FileRef.Direct("${apksFolder.absolutePath}/${record.displayName}"),
-                                reason = "APK file",
-                            ),
-                        )
-                    }
-                }
-                showPlanPreview("Organize APKs under ${summary.scopeLabel}", operations, root)
+                showPlanPreview("Organize APKs under ${summary.scopeLabel}", operations, summary.scopes)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -602,31 +607,52 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
             try {
-                val root = summary.scopeRoot
-                if (root !is FileRef.Direct) {
+                if (summary.scopes.any { it.root !is FileRef.Direct }) {
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
-                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+
                 val projectKeywords = settingsRepository.projectKeywords.first()
-                val generated = withContext(Dispatchers.Default) {
-                    RuleBasedPlanSource.proposePlan(
-                        PlanRequest(
-                            scopeRoot = root,
-                            records = records,
-                            projectKeywords = projectKeywords,
-                            includeSubfolders = includeSubfolders,
-                        ),
-                    )
+                val generatedByScope = summary.scopes.map { scope ->
+                    val root = scope.root as FileRef.Direct
+                    val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                    val generated = withContext(Dispatchers.Default) {
+                        RuleBasedPlanSource.proposePlan(
+                            PlanRequest(
+                                scopeRoot = root,
+                                records = records,
+                                projectKeywords = projectKeywords,
+                                includeSubfolders = includeSubfolders,
+                            ),
+                        )
+                    }
+                    scope to generated
                 }
-                val plan = generated.plan
-                val scopeNotes = generated.scopeReport.previewLines()
-                if (plan.operations.isEmpty()) {
-                    _uiState.value = ScanUiState.Error(nothingToProposeMessage(summary.scopeLabel, generated.scopeReport))
+
+                val operations = generatedByScope.flatMap { it.second.plan.operations }
+                val scopeNotes = generatedByScope.flatMap { (scope, generated) ->
+                    generated.scopeReport.previewLines().map { line ->
+                        if (summary.scopes.size == 1) line else "${scope.label}: $line"
+                    }
+                }
+                if (operations.isEmpty()) {
+                    val message = if (generatedByScope.size == 1) {
+                        val (scope, generated) = generatedByScope.single()
+                        nothingToProposeMessage(scope.label, generated.scopeReport)
+                    } else {
+                        "Nothing across the selected folders could be proposed safely. " +
+                            "Protected and already-organized files were left where they are."
+                    }
+                    _uiState.value = ScanUiState.Error(message)
                     return@launch
                 }
 
-                showPlanPreview(plan.goal, plan.operations, root, scopeNotes)
+                val goal = if (summary.scopes.size == 1) {
+                    generatedByScope.single().second.plan.goal
+                } else {
+                    "Smart cleanup across ${summary.scopes.size} selected folders"
+                }
+                showPlanPreview(goal, operations, summary.scopes, scopeNotes)
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
