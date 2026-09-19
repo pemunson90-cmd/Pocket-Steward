@@ -48,6 +48,7 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val recents by viewModel.recentFolders.collectAsState()
+    val selectedTargets by viewModel.selectedTargets.collectAsState()
 
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(FolderSort.NAME) }
@@ -224,9 +225,17 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
             }
 
+            val currentTarget = ScanTarget.CustomFolder(browser.current.absolutePath)
+            val currentSelected = selectedTargets.any {
+                it is ScanTarget.CustomFolder &&
+                    it.absolutePath.trimEnd('/') == browser.current.absolutePath.trimEnd('/')
+            }
             ActionRow {
-                Button(onClick = { viewModel.scanBrowsedFolder(browser.current) }) {
-                    Text("Scan this folder")
+                Button(onClick = { viewModel.toggleScanTarget(currentTarget) }) {
+                    Text(if (currentSelected) "Remove from selection" else "Add this folder")
+                }
+                OutlinedButton(onClick = onBack) {
+                    Text("Done")
                 }
                 OutlinedButton(onClick = { viewModel.proposeToggleProtectionHere(browser) }) {
                     Text(if (browser.currentIsProtected) "Unprotect" else "Protect")
