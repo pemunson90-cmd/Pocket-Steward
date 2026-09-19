@@ -5,15 +5,31 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface FileRecordDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(records: List<FileRecord>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(record: FileRecord): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(record: FileRecord): Long
+    @Update
+    suspend fun update(record: FileRecord): Int
+
+    @Transaction
+    suspend fun upsert(record: FileRecord): Long {
+        val existing = getByStableRef(record.stableRef)
+        return if (existing == null) {
+            insert(record)
+        } else {
+            update(record.copy(id = existing.id))
+            existing.id
+        }
+    }
+
+    @Transaction
+    suspend fun upsertAll(records: List<FileRecord>): List<Long> =
+        records.map { upsert(it) }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertScopeTag(scope: FileScope)
