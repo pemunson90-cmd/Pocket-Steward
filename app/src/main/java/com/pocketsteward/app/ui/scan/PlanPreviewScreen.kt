@@ -89,28 +89,34 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 itemsIndexed(preview.accepted) { index, operation ->
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
                     val selected = index in preview.selectedIndices
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = if (destructive) {
-                            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                        } else {
-                            CardDefaults.cardColors()
-                        },
-                    ) {
-                        Row(modifier = Modifier.padding(Spacing.base)) {
-                            Checkbox(
-                                checked = selected,
-                                onCheckedChange = { checked ->
-                                    viewModel.setPlanOperationSelected(index, checked)
-                                },
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    text = operation.reason,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    val scopeLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
+                    Column {
+                        if (index == 0 || preview.acceptedScopeLabels.getOrNull(index - 1) != scopeLabel) {
+                            SectionHeader(scopeLabel)
+                        }
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = if (destructive) {
+                                CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                            } else {
+                                CardDefaults.cardColors()
+                            },
+                        ) {
+                            Row(modifier = Modifier.padding(Spacing.base)) {
+                                Checkbox(
+                                    checked = selected,
+                                    onCheckedChange = { checked ->
+                                        viewModel.setPlanOperationSelected(index, checked)
+                                    },
                                 )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        text = operation.reason,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
