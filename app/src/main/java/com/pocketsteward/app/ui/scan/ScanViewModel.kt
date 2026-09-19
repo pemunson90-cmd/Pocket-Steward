@@ -21,6 +21,7 @@ import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.report.duplicateTrashReason
@@ -90,6 +91,9 @@ sealed interface ScanUiState {
         val accepted: List<PlannedOperation>,
         val rejected: List<RejectedOperation>,
         val scopeRoot: FileRef,
+        /** Accepted operations the user still intends to run. Rejected
+         * operations never enter this selection set. */
+        val selectedIndices: Set<Int> = PlanSelection.allSelected(accepted),
         /**
          * What the generator declined to touch and why, in the user's words
          * rather than counts the screen has to interpret. Empty when a plan
@@ -977,13 +981,33 @@ class ScanViewModel(
         }
     }
 
+    fun setPlanOperationSelected(index: Int, selected: Boolean) {
+        val current = _preview.value ?: return
+        _preview.value = current.copy(
+            selectedIndices = PlanSelection.setSelected(
+                operations = current.accepted,
+                current = current.selectedIndices,
+                index = index,
+                selected = selected,
+            ),
+        )
+    }
+
     fun approvePlan(preview: ScanUiState.PlanPreview) {
         viewModelScope.launch {
+            val selectedOperations = PlanSelection.selectedOperations(
+                preview.accepted,
+                preview.selectedIndices,
+            )
+            if (selectedOperations.isEmpty()) {
+                _uiState.value = ScanUiState.Error("Select at least one action to run.")
+                return@launch
+            }
             _uiState.value = ScanUiState.Working(
                 label = "Organizing files",
                 detail = "Starting",
                 processed = 0,
-                total = preview.accepted.size,
+                total = selectedOperations.size,
             )
             try {
                 val accessState = settingsRepository.storageAccessState.first()
@@ -996,7 +1020,7 @@ class ScanViewModel(
                 // sent for execution — rejected ones stay untouched, per
                 // Decision 5, rather than being re-submitted for the
                 // executor's own validation pass to reject again.
-                val plan = AgentPlan(preview.goal, preview.accepted)
+                val plan = AgentPlan(preview.goal, selectedOperations)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
                     null
