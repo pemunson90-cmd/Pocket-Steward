@@ -18,7 +18,24 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
+      - name: Restore canonical signing key
+        if: ${{ secrets.POCKET_STEWARD_KEYSTORE_B64 != '' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.POCKET_STEWARD_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.POCKET_STEWARD_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.POCKET_STEWARD_KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/pocket-steward.jks"
+          echo "POCKET_STEWARD_KEYSTORE_PATH=$RUNNER_TEMP/pocket-steward.jks" >> "$GITHUB_ENV"
+          ACTUAL="$(keytool -list -v -keystore "$RUNNER_TEMP/pocket-steward.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" | sed -n 's/.*SHA256: //p' | head -1)"
+          EXPECTED="B9:05:7D:D6:49:DA:EA:23:39:03:37:F2:C3:58:92:D0:EF:85:91:E5:7E:9E:9A:27:35:5E:7C:D1:1A:84:19:35"
+          test "$ACTUAL" = "$EXPECTED" || { echo "Wrong signing key: $ACTUAL"; exit 1; }
+      - name: Build and test
+        env:
+          POCKET_STEWARD_KEYSTORE_PASSWORD: ${{ secrets.POCKET_STEWARD_KEYSTORE_PASSWORD }}
+          POCKET_STEWARD_KEY_ALIAS: ${{ secrets.POCKET_STEWARD_KEY_ALIAS }}
+          POCKET_STEWARD_KEY_PASSWORD: ${{ secrets.POCKET_STEWARD_KEY_PASSWORD }}
+        run: ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-steward-m8-implementation-debug
