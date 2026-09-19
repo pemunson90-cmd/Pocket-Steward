@@ -223,7 +223,11 @@ private fun ProtectFolders(
                 Card(onClick = { onToggleProtection(folder) }, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
                         Text(
-                            text = folder.displayName,
+                            text = if (state.scopes.size == 1) {
+                                folder.displayName
+                            } else {
+                                "${folder.scope.label} / ${folder.displayName}"
+                            },
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
