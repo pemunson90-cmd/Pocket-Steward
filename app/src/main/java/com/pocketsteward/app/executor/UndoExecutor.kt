@@ -1,6 +1,7 @@
 package com.pocketsteward.app.executor
 
 import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.data.db.FileScope
 import com.pocketsteward.app.data.db.FileRecordDao
 import com.pocketsteward.app.data.db.MutationOperationType
 import com.pocketsteward.app.data.db.MutationRecord
@@ -239,7 +240,9 @@ class UndoExecutor(
                 val restored = FileRefJournalCodec.decode(record.sourceBefore)
                 fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
                 val meta = gateway.stat(restored)
-                fileRecordDao.upsert(meta.toFileRecord(scopeRootRef, restored.parentRefOrNull()))
+                val restoredRecord = meta.toFileRecord(restored.parentRefOrNull())
+                fileRecordDao.upsert(restoredRecord)
+                fileRecordDao.insertScopeTag(FileScope(restoredRecord.stableRef, scopeRootRef))
             }
             MutationOperationType.COPY -> Unit
         }
@@ -253,9 +256,8 @@ private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
     is FileRef.Saf -> null
 }
 
-private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef?): FileRecord = FileRecord(
+private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord = FileRecord(
     stableRef = ref.rawValue(),
-    scopeRootRef = scopeRootRef,
     displayName = displayName,
     extension = extension,
     mimeType = mimeType,
