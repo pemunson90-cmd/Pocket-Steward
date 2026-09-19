@@ -64,6 +64,9 @@ interface FileRecordDao {
     @Query("DELETE FROM file_records WHERE stableRef = :stableRef")
     suspend fun deleteByStableRef(stableRef: String)
 
+    @Query("SELECT DISTINCT scopeRoot FROM file_scopes")
+    suspend fun getKnownScopeRoots(): List<String>
+
     @Query("DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef")
     suspend fun removeScopeTags(scopeRootRef: String)
 
