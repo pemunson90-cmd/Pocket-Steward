@@ -33,6 +33,9 @@ four questions a changelog does not:
 5. **No retroactive editing to look better.** A superseded report gets a note
    pointing at the one that supersedes it, and keeps its original text.
 
+A cold start begins with `POCKET_STEWARD_HANDOFF.md` in the repository root,
+not here. These reports are what it points at for per-milestone detail.
+
 ## Index
 
 | Milestone | Version | Report | Landed on hardware |
