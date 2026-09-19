@@ -341,13 +341,17 @@ class PlanExecutor(
     }
 
     private suspend fun reindexAfterMutation(operation: PlannedOperation, newRef: FileRef, scopeRootRef: String) {
+        val knownScopes = (fileRecordDao.getKnownScopeRoots() + scopeRootRef).distinct()
+
         // Both of these create a new entry and leave their source (the
         // parent directory) exactly where it was. Falling through to the
         // move/rename path below would delete the parent's index row.
         if (operation is PlannedOperation.CreateDirectory || operation is PlannedOperation.WriteTextFile) {
             val record = gateway.stat(newRef).toFileRecord(newRef.parentRefOrNull())
             fileRecordDao.upsert(record)
-            fileRecordDao.insertScopeTag(FileScope(record.stableRef, scopeRootRef))
+            fileRecordDao.insertScopeTags(
+                matchingScopeRoots(newRef, knownScopes).map { FileScope(record.stableRef, it) },
+            )
             return
         }
 
@@ -373,7 +377,9 @@ class PlanExecutor(
                 isHidden = meta.isHidden,
             ),
         )
-        fileRecordDao.insertScopeTag(FileScope(newRef.rawValue(), scopeRootRef))
+        fileRecordDao.insertScopeTags(
+            matchingScopeRoots(newRef, knownScopes).map { FileScope(newRef.rawValue(), it) },
+        )
     }
 
     /**
@@ -451,6 +457,17 @@ private fun renameDestination(source: FileRef, newName: String): FileRef = when 
         FileRef.Direct("${parent.trimEnd('/')}/$newName")
     }
     is FileRef.Saf -> error("SAF mutations are not implemented yet")
+}
+
+private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<String> {
+    val raw = ref.rawValue().trimEnd('/')
+    return knownScopes.distinct().filter { scope ->
+        val normalized = scope.trimEnd('/')
+        when (ref) {
+            is FileRef.Direct -> raw == normalized || raw.startsWith("$normalized/")
+            is FileRef.Saf -> raw == normalized || raw.startsWith("$normalized/")
+        }
+    }
 }
 
 private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
