@@ -643,7 +643,13 @@ class ScanViewModel(
                 displayName = displayName,
                 fileCount = files.size,
                 totalBytes = stats.sumOf { it.sizeBytes },
-                modifiedAt = stats.maxOfOrNull { it.modifiedAtEpochMs } ?: runCatching { gateway.stat(ref).modifiedAtEpochMs }.getOrNull(),
+                // mapNotNull-then-maxOrNull, not maxOfOrNull: modifiedAtEpochMs
+                // is Long?, and maxOfOrNull requires R : Comparable<R>, which
+                // a nullable type is not. Dropping the unknowns first is also
+                // the behaviour wanted — a file with no timestamp should not
+                // decide the folder's.
+                modifiedAt = stats.mapNotNull { it.modifiedAtEpochMs }.maxOrNull()
+                    ?: runCatching { gateway.stat(ref).modifiedAtEpochMs }.getOrNull(),
                 // The marker is a known filename, so the listing already read
                 // above answers this — no extra stat needed.
                 isProtected = contents.any { !it.isDirectory && it.displayName == DO_NOT_SORT_MARKER },
