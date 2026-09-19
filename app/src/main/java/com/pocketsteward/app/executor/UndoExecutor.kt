@@ -242,9 +242,23 @@ class UndoExecutor(
                 val meta = gateway.stat(restored)
                 val restoredRecord = meta.toFileRecord(restored.parentRefOrNull())
                 fileRecordDao.upsert(restoredRecord)
-                fileRecordDao.insertScopeTag(FileScope(restoredRecord.stableRef, scopeRootRef))
+                val knownScopes = (fileRecordDao.getKnownScopeRoots() + scopeRootRef).distinct()
+                fileRecordDao.insertScopeTags(
+                    matchingScopeRoots(restored, knownScopes).map { FileScope(restoredRecord.stableRef, it) },
+                )
             }
             MutationOperationType.COPY -> Unit
+        }
+    }
+}
+
+private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<String> {
+    val raw = ref.rawValue().trimEnd('/')
+    return knownScopes.distinct().filter { scope ->
+        val normalized = scope.trimEnd('/')
+        when (ref) {
+            is FileRef.Direct -> raw == normalized || raw.startsWith("$normalized/")
+            is FileRef.Saf -> raw == normalized || raw.startsWith("$normalized/")
         }
     }
 }
