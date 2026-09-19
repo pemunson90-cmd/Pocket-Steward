@@ -26,6 +26,14 @@ sealed interface ScanTarget {
     }
 
     /** The one SAF-granted folder, when access mode is SAF rather than broad. */
+    // In SafStorageGateway.kt and ScanTarget.GrantedFolder
+
+/**
+ * 2026-09-19 (M8 Spec): SAF mode and storage gateway are retained intact as a browser 
+ * fallback only. It is not supported for file mutations. Do not route operations here 
+ * and do not remove SAF_UNSUPPORTED UI fencing.
+ */
+
     data class GrantedFolder(override val label: String) : ScanTarget
 
     /**
