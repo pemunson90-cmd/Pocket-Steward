@@ -430,7 +430,37 @@ class ScanViewModel(
         startScan(target, action)
     }
 
+    fun toggleScanTarget(target: ScanTarget) {
+        val key = target.selectionKey()
+        val current = _selectedTargets.value
+        _selectedTargets.value = if (current.any { it.selectionKey() == key }) {
+            current.filterNot { it.selectionKey() == key }
+        } else {
+            current + target
+        }
+    }
+
+    fun addBrowsedFolderToSelection(folder: FileRef.Direct) {
+        val target = ScanTarget.CustomFolder(folder.absolutePath)
+        if (_selectedTargets.value.none { it.selectionKey() == target.selectionKey() }) {
+            _selectedTargets.value = _selectedTargets.value + target
+        }
+    }
+
+    fun startSelectedScan() {
+        val targets = _selectedTargets.value
+        if (targets.isEmpty()) {
+            _uiState.value = ScanUiState.Error("Select at least one folder to scan.")
+            return
+        }
+        startScan(targets)
+    }
+
     fun startScan(target: ScanTarget, thenRun: PostScanAction? = null) {
+        startScan(listOf(target), thenRun)
+    }
+
+    fun startScan(targets: Collection<ScanTarget>, thenRun: PostScanAction? = null) {
         viewModelScope.launch {
             // A new scan invalidates everything derived from the old one.
             // Doing it here rather than in reset() is what lets back keep the
@@ -451,22 +481,35 @@ class ScanViewModel(
                 }
 
                 val gateway = container.gatewayFor(mode)
-                val root = resolveRoot(target, mode, accessState.safTreeUri, gateway)
+                val scopes = resolveScopes(targets.toList(), mode, accessState.safTreeUri, gateway)
+                if (scopes.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("Select at least one folder to scan.")
+                    return@launch
+                }
                 val scanner = container.fileScanner(mode)
+                var completedBeforeThisRoot = 0
 
-                // DirectStorageGateway's listChildren/stat are suspend
-                // functions doing blocking java.io.File work with no
-                // dispatcher of their own — without this, that I/O runs on
-                // Dispatchers.Main.immediate (viewModelScope's default) and
-                // a scan of "Everything" would freeze the UI thread long
-                // enough to ANR.
-                withContext(Dispatchers.IO) {
-                    scanner.scan(root) { progress ->
-                        _uiState.value = ScanUiState.Scanning(progress)
+                // Each root remains an independent scanner scope in Room.
+                // The UI aggregates them only after every root succeeds.
+                for (scope in scopes) {
+                    var thisRootProcessed = 0
+                    withContext(Dispatchers.IO) {
+                        scanner.scan(scope.root) { progress ->
+                            thisRootProcessed = progress.processedCount
+                            _uiState.value = ScanUiState.Scanning(
+                                progress.copy(
+                                    processedCount = completedBeforeThisRoot + progress.processedCount,
+                                    currentDirectoryName = progress.currentDirectoryName?.let {
+                                        "${scope.label}: $it"
+                                    },
+                                ),
+                            )
+                        }
                     }
+                    completedBeforeThisRoot += thisRootProcessed
                 }
 
-                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                val records = filesForScopes(scopes)
                 val byCategory = records
                     .groupBy { classifyByExtension(it.extension) }
                     .mapValues { (_, files) ->
@@ -474,19 +517,18 @@ class ScanViewModel(
                     }
 
                 val summary = ScanUiState.Summary(
-                    scopeLabel = target.label,
-                    scopeRoot = root,
+                    scopes = scopes,
                     mode = mode,
                     totalFiles = records.size,
                     totalBytes = records.sumOf { it.sizeBytes },
                     byCategory = byCategory,
                 )
                 _uiState.value = summary
+
                 // Spec 2d. Only folders the user actually picked, and only
-                // after the scan succeeded — a folder that failed to scan is
-                // not somewhere they will want to return to.
-                if (target is ScanTarget.CustomFolder) {
-                    settingsRepository.rememberRecentFolder(target.absolutePath)
+                // after the whole selected scan succeeds.
+                targets.filterIsInstance<ScanTarget.CustomFolder>().forEach {
+                    settingsRepository.rememberRecentFolder(it.absolutePath)
                 }
 
                 when (thenRun) {
@@ -1130,6 +1172,36 @@ class ScanViewModel(
                 "browse, but it can't move, trash, or read file contents. Change storage access in Settings."
     }
 
+    private suspend fun resolveScopes(
+        targets: List<ScanTarget>,
+        mode: StorageAccessMode,
+        safTreeUri: String?,
+        gateway: StorageGateway,
+    ): List<ScanScope> {
+        val candidates = targets
+            .distinctBy { it.selectionKey() }
+            .map { target -> ScanScope(target.label, resolveRoot(target, mode, safTreeUri, gateway)) }
+
+        if (mode == StorageAccessMode.SAF) {
+            return candidates.take(1)
+        }
+
+        val normalizedPaths = ScanRootSet.normalize(candidates.map { it.root.rawValue() })
+        return normalizedPaths.map { normalized ->
+            candidates.first { it.root.rawValue().trimEnd('/') == normalized.trimEnd('/') }
+        }
+    }
+
+    private suspend fun filesForScopes(scopes: List<ScanScope>): List<FileRecord> =
+        scopes.flatMap { scope ->
+            container.database.fileRecordDao().getFilesUnderScopeRoot(scope.root.rawValue())
+        }.distinctBy { it.stableRef }
+
+    private suspend fun allRecordsForScopes(scopes: List<ScanScope>): List<FileRecord> =
+        scopes.flatMap { scope ->
+            container.database.fileRecordDao().getAllUnderScopeRoot(scope.root.rawValue())
+        }.distinctBy { it.stableRef }
+
     private suspend fun resolveRoot(
         target: ScanTarget,
         mode: StorageAccessMode,
@@ -1164,6 +1236,15 @@ class ScanViewModel(
                 error("GrantedFolder target is only valid in SAF mode")
         }
     }
+}
+
+private fun ScanTarget.selectionKey(): String = when (this) {
+    ScanTarget.Downloads -> "preset:downloads"
+    ScanTarget.Documents -> "preset:documents"
+    ScanTarget.Pictures -> "preset:pictures"
+    ScanTarget.Everything -> "preset:everything"
+    is ScanTarget.GrantedFolder -> "saf:$label"
+    is ScanTarget.CustomFolder -> "path:${absolutePath.trimEnd('/')}"
 }
 
 private fun FileRecord.toSortCandidate(): SortCandidate = SortCandidate(
