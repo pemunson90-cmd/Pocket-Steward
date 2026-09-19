@@ -2,13 +2,16 @@ package com.pocketsteward.app.ui.scan
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -48,7 +51,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             ScreenHeadline(
                 text = preview.goal,
                 supporting = buildString {
-                    append("${preview.accepted.size} action(s) ready")
+                    append("${preview.selectedIndices.size} of ${preview.accepted.size} action(s) selected")
                     if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} left untouched")
                 },
             )
@@ -83,8 +86,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item { EmptyState("Nothing here can be acted on.") }
                 }
 
-                items(preview.accepted) { operation ->
+                itemsIndexed(preview.accepted) { index, operation ->
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
+                    val selected = index in preview.selectedIndices
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = if (destructive) {
@@ -93,13 +97,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             CardDefaults.cardColors()
                         },
                     ) {
-                        Column(modifier = Modifier.padding(Spacing.base)) {
-                            Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = operation.reason,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Row(modifier = Modifier.padding(Spacing.base)) {
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = { checked ->
+                                    viewModel.setPlanOperationSelected(index, checked)
+                                },
                             )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = operation.reason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -127,9 +139,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             ActionRow {
                 Button(
                     onClick = { viewModel.approvePlan(preview) },
-                    enabled = preview.accepted.isNotEmpty(),
+                    enabled = preview.selectedIndices.isNotEmpty(),
                 ) {
-                    Text("Approve ${preview.accepted.size}")
+                    Text("Approve ${preview.selectedIndices.size}")
                 }
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
