@@ -29,6 +29,14 @@ import java.io.InputStream
  * copy-then-verify-then-delete-source, with its own journal semantics so a
  * crash mid-copy can't leave both a source and a partial destination behind.
  */
+// In SafStorageGateway.kt and ScanTarget.GrantedFolder
+
+/**
+ * 2026-09-19 (M8 Spec): SAF mode and storage gateway are retained intact as a browser 
+ * fallback only. It is not supported for file mutations. Do not route operations here 
+ * and do not remove SAF_UNSUPPORTED UI fencing.
+ */
+
 class SafStorageGateway(
     private val context: Context,
 ) : StorageGateway {
