@@ -1,6 +1,7 @@
 package com.pocketsteward.app.executor
 
 import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.data.db.FileScope
 import com.pocketsteward.app.data.db.FileRecordDao
 import com.pocketsteward.app.data.db.MutationOperationType
 import com.pocketsteward.app.data.db.MutationRecord
@@ -344,7 +345,9 @@ class PlanExecutor(
         // parent directory) exactly where it was. Falling through to the
         // move/rename path below would delete the parent's index row.
         if (operation is PlannedOperation.CreateDirectory || operation is PlannedOperation.WriteTextFile) {
-            fileRecordDao.upsert(gateway.stat(newRef).toFileRecord(scopeRootRef, newRef.parentRefOrNull()))
+            val record = gateway.stat(newRef).toFileRecord(newRef.parentRefOrNull())
+            fileRecordDao.upsert(record)
+            fileRecordDao.insertScopeTag(FileScope(record.stableRef, scopeRootRef))
             return
         }
 
@@ -356,9 +359,8 @@ class PlanExecutor(
 
         val meta = gateway.stat(newRef)
         fileRecordDao.upsert(
-            (existing ?: meta.toFileRecord(scopeRootRef, newRef.parentRefOrNull())).copy(
+            (existing ?: meta.toFileRecord(newRef.parentRefOrNull())).copy(
                 stableRef = newRef.rawValue(),
-                scopeRootRef = scopeRootRef,
                 displayName = meta.displayName,
                 extension = meta.extension,
                 mimeType = meta.mimeType,
@@ -371,6 +373,7 @@ class PlanExecutor(
                 isHidden = meta.isHidden,
             ),
         )
+        fileRecordDao.insertScopeTag(FileScope(newRef.rawValue(), scopeRootRef))
     }
 
     /**
@@ -457,9 +460,8 @@ private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
     is FileRef.Saf -> null
 }
 
-private fun FileMetadata.toFileRecord(scopeRootRef: String, parent: FileRef?): FileRecord = FileRecord(
+private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord = FileRecord(
     stableRef = ref.rawValue(),
-    scopeRootRef = scopeRootRef,
     displayName = displayName,
     extension = extension,
     mimeType = mimeType,
