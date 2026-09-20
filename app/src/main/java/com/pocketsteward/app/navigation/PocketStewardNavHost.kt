@@ -30,6 +30,7 @@ object Routes {
 
     fun scanFlowWith(action: PostScanAction): String = ScanFlow.entryWith(action)
     fun scanFlowWithRequest(request: String): String = ScanFlow.entryWithRequest(request)
+    fun scanFlowWithWorkflow(workflowId: String): String = ScanFlow.entryWithWorkflow(workflowId)
 }
 
 @Composable
@@ -54,6 +55,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
                 onExplore = { navController.navigate(Routes.SCAN_FLOW) },
                 onOpenTasks = { navController.navigate(Routes.HISTORY) },
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
+                onSavedWorkflow = { workflowId -> navController.navigate(Routes.scanFlowWithWorkflow(workflowId)) },
             )
         }
         composable(Routes.SETTINGS) {
