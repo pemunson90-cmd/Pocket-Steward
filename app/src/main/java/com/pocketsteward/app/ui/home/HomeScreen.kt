@@ -22,6 +22,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -60,6 +62,7 @@ fun HomeScreen(
     onScanStorage: () -> Unit,
     onOpenHistory: () -> Unit,
     onQuickAction: (PostScanAction) -> Unit,
+    onNaturalLanguageRequest: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
@@ -69,6 +72,7 @@ fun HomeScreen(
         },
     )
     val recentTasks by viewModel.recentTasks.collectAsState()
+    var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -83,17 +87,20 @@ fun HomeScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            // Disabled on purpose, not broken. Natural-language requests are
-            // Milestone 6; an enabled field that silently discarded what the
-            // user typed would be the same dishonesty as the dead tiles.
             OutlinedTextField(
-                value = "",
-                onValueChange = {},
-                enabled = false,
+                value = prompt,
+                onValueChange = { prompt = it },
                 label = { Text(stringResource(R.string.home_prompt_placeholder)) },
-                supportingText = { Text(stringResource(R.string.home_prompt_disabled)) },
+                supportingText = { Text(stringResource(R.string.home_prompt_supporting)) },
                 modifier = Modifier.fillMaxWidth(),
             )
+            Button(
+                onClick = { onNaturalLanguageRequest(prompt) },
+                enabled = prompt.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text("Scan Downloads and build preview")
+            }
 
             Button(onClick = onScanStorage, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
                 Text(text = "Scan storage")
