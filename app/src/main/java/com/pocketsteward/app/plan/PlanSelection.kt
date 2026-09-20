@@ -6,10 +6,9 @@ import com.pocketsteward.app.storage.rawValue
 /**
  * Selection rules for an already-validated plan preview.
  *
- * Rejected operations never enter this list. The only dependency M8 needs to
- * preserve is generated destination folders and the moves that require them:
- * a move cannot stay selected if its required CreateDirectory is deselected,
- * and selecting that move selects the directory again.
+ * M9 extends M8's dependency rule to nested destination trees. Selecting a
+ * file operation selects every planned directory it needs. Deselecting a
+ * directory removes every selected child operation that depends on it.
  */
 object PlanSelection {
     fun allSelected(operations: List<PlannedOperation>): Set<Int> = operations.indices.toSet()
@@ -29,52 +28,90 @@ object PlanSelection {
         if (index !in operations.indices) return current
 
         val next = current.toMutableSet()
-        val operation = operations[index]
-
         if (selected) {
-            next += index
-            if (operation is PlannedOperation.Move) {
-                val parent = operation.destination.parentRaw()
-                operations.forEachIndexed { candidateIndex, candidate ->
-                    if (candidate is PlannedOperation.CreateDirectory &&
-                        candidate.createdDirectoryRaw() == parent
-                    ) {
-                        next += candidateIndex
-                    }
-                }
-            }
+            selectWithDependencies(operations, next, index)
         } else {
-            next -= index
-            if (operation is PlannedOperation.CreateDirectory) {
-                val directory = operation.createdDirectoryRaw()
-                operations.forEachIndexed { candidateIndex, candidate ->
-                    if (candidate is PlannedOperation.Move &&
-                        candidate.destination.parentRaw() == directory
-                    ) {
-                        next -= candidateIndex
-                    }
-                }
-            }
+            deselectWithDependents(operations, next, index)
         }
 
-        // A generated folder with dependent moves should not remain selected
-        // after the final selected move into it is turned off. Standalone
-        // CreateDirectory operations are left alone.
-        operations.forEachIndexed { createIndex, candidate ->
-            if (candidate !is PlannedOperation.CreateDirectory) return@forEachIndexed
-            val directory = candidate.createdDirectoryRaw()
-            val dependentMoves = operations.withIndex().filter {
-                it.value is PlannedOperation.Move &&
-                    (it.value as PlannedOperation.Move).destination.parentRaw() == directory
+        // Prune generated directories whose plan-time dependents have all
+        // been turned off. Repeat because removing a child directory can make
+        // its parent unused too.
+        var changed: Boolean
+        do {
+            changed = false
+            operations.forEachIndexed { createIndex, candidate ->
+                if (candidate !is PlannedOperation.CreateDirectory || createIndex !in next) return@forEachIndexed
+                val dependents = dependentIndices(operations, createIndex)
+                if (dependents.isNotEmpty() && dependents.none { it in next }) {
+                    next -= createIndex
+                    changed = true
+                }
             }
-            if (dependentMoves.isNotEmpty() &&
-                dependentMoves.none { it.index in next }
-            ) {
-                next -= createIndex
-            }
-        }
+        } while (changed)
 
         return next
+    }
+
+    private fun selectWithDependencies(
+        operations: List<PlannedOperation>,
+        selected: MutableSet<Int>,
+        index: Int,
+    ) {
+        if (!selected.add(index)) return
+        requiredCreateIndex(operations, operations[index])?.let { dependency ->
+            selectWithDependencies(operations, selected, dependency)
+        }
+    }
+
+    private fun deselectWithDependents(
+        operations: List<PlannedOperation>,
+        selected: MutableSet<Int>,
+        index: Int,
+    ) {
+        if (!selected.remove(index)) return
+        if (operations[index] !is PlannedOperation.CreateDirectory) return
+        dependentIndices(operations, index).forEach { dependent ->
+            deselectWithDependents(operations, selected, dependent)
+        }
+    }
+
+    private fun requiredCreateIndex(
+        operations: List<PlannedOperation>,
+        operation: PlannedOperation,
+    ): Int? {
+        val requiredParent = when (operation) {
+            is PlannedOperation.CreateDirectory -> operation.parent.rawValue()
+            is PlannedOperation.Move -> operation.destination.parentRaw()
+            is PlannedOperation.WriteTextFile -> operation.parent.rawValue()
+            is PlannedOperation.Rename,
+            is PlannedOperation.Trash,
+            -> null
+        } ?: return null
+
+        return operations.indexOfFirst { candidate ->
+            candidate is PlannedOperation.CreateDirectory &&
+                candidate.createdDirectoryRaw() == requiredParent
+        }.takeIf { it >= 0 }
+    }
+
+    private fun dependentIndices(
+        operations: List<PlannedOperation>,
+        createIndex: Int,
+    ): List<Int> {
+        val create = operations.getOrNull(createIndex) as? PlannedOperation.CreateDirectory ?: return emptyList()
+        val directory = create.createdDirectoryRaw()
+        return operations.indices.filter { candidateIndex ->
+            if (candidateIndex == createIndex) return@filter false
+            when (val candidate = operations[candidateIndex]) {
+                is PlannedOperation.CreateDirectory -> candidate.parent.rawValue() == directory
+                is PlannedOperation.Move -> candidate.destination.parentRaw() == directory
+                is PlannedOperation.WriteTextFile -> candidate.parent.rawValue() == directory
+                is PlannedOperation.Rename,
+                is PlannedOperation.Trash,
+                -> false
+            }
+        }
     }
 }
 
