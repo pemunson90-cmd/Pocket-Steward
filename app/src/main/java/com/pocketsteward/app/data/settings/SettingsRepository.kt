@@ -9,9 +9,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.pocketsteward.app.picker.RecentFolders
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
+import com.pocketsteward.app.saved.SavedWorkflow
+import com.pocketsteward.app.saved.SavedWorkflowCodec
 import com.pocketsteward.app.storage.StorageAccessMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "pocket_steward_settings")
 
@@ -47,6 +50,7 @@ class SettingsRepository(private val context: Context) {
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
         val PROJECT_KEYWORDS = stringPreferencesKey("project_keywords")
         val ADVANCED_MODE = booleanPreferencesKey("advanced_mode_enabled")
+        val SAVED_WORKFLOWS = stringPreferencesKey("saved_workflows")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -86,6 +90,48 @@ class SettingsRepository(private val context: Context) {
     /** Most recent first, capped by [RecentFolders.MAX]. */
     val recentFolders: Flow<List<String>> = context.dataStore.data.map { prefs ->
         RecentFolders.decode(prefs[Keys.RECENT_FOLDERS])
+    }
+
+
+    val savedWorkflows: Flow<List<SavedWorkflow>> = context.dataStore.data.map { prefs ->
+        SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
+    }
+
+    suspend fun saveWorkflow(
+        name: String,
+        request: String,
+        roots: List<String>,
+    ): SavedWorkflow {
+        val cleanedName = name.trim().take(60)
+        require(cleanedName.isNotBlank()) { "Saved workflow name cannot be blank." }
+        val cleanedRoots = roots
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() }
+            .distinct()
+        require(cleanedRoots.isNotEmpty()) { "Saved workflow needs at least one folder." }
+
+        val workflow = SavedWorkflow(
+            id = UUID.randomUUID().toString(),
+            name = cleanedName,
+            request = request.trim().take(2_000),
+            roots = cleanedRoots,
+        )
+        context.dataStore.edit { prefs ->
+            val current = SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
+            val updated = (listOf(workflow) + current)
+                .distinctBy { it.id }
+                .take(MAX_SAVED_WORKFLOWS)
+            prefs[Keys.SAVED_WORKFLOWS] = SavedWorkflowCodec.encode(updated)
+        }
+        return workflow
+    }
+
+    suspend fun deleteSavedWorkflow(id: String) {
+        context.dataStore.edit { prefs ->
+            val updated = SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
+                .filterNot { it.id == id }
+            prefs[Keys.SAVED_WORKFLOWS] = SavedWorkflowCodec.encode(updated)
+        }
     }
 
     /** Records [path] as the most recently scanned folder, moving it if it was already there. */
