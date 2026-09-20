@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,7 +63,7 @@ fun ScanScreen(
     val canBrowse = accessState?.mode == StorageAccessMode.DIRECT
 
     ScanFlowScaffold(
-        title = "Scan storage",
+        title = "Explore",
         onBack = onBack,
         error = error,
         onDismissError = viewModel::dismissError,
@@ -92,6 +94,31 @@ fun ScanScreen(
         }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
+            ScreenHeadline(
+                text = "Choose where to look",
+                supporting = "Pick one or more folders. Pocket Steward keeps each root local unless you explicitly ask otherwise.",
+            )
+
+            if (selectedTargets.isNotEmpty()) {
+                Text(
+                    text = "Selected",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(bottom = Spacing.hairline),
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.base),
+                ) {
+                    items(selectedTargets) { target ->
+                        FilterChip(
+                            selected = true,
+                            onClick = { viewModel.toggleScanTarget(target) },
+                            label = { Text(target.label) },
+                        )
+                    }
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
@@ -99,8 +126,8 @@ fun ScanScreen(
                 if (canBrowse) {
                     item {
                         ScopeCard(
-                            title = "Choose folders…",
-                            supporting = "Browse storage and add several folders to one scan",
+                            title = "Browse folders",
+                            supporting = "Add any folder on your device",
                             selected = false,
                             showCheckbox = false,
                             onClick = onOpenPicker,
@@ -119,7 +146,7 @@ fun ScanScreen(
                             onClick = { viewModel.toggleScanTarget(target) },
                         )
                     }
-                    item { SectionHeader("Everywhere else") }
+                    item { SectionHeader("Quick locations") }
                 }
 
                 items(targets) { target ->
@@ -139,9 +166,9 @@ fun ScanScreen(
                 ) {
                     Text(
                         if (selectedTargets.size == 1) {
-                            "Scan selected folder"
+                            "Explore selected folder"
                         } else {
-                            "Scan ${selectedTargets.size} selected"
+                            "Explore ${selectedTargets.size} selected folders"
                         },
                     )
                 }
