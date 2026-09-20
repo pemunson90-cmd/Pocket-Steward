@@ -11,6 +11,7 @@ object ContentIndexPolicy {
         if (existing.sizeBytes != record.sizeBytes) return false
         if (existing.modifiedAt != record.modifiedAt) return false
         if (!existing.extension.equals(record.extension, ignoreCase = true)) return false
+        if (existing.extractionStatus == IndexedExtractionStatus.FAILED.name) return false
         return true
     }
 }
@@ -34,8 +35,8 @@ object ContentFtsQuery {
         require(tokens.isNotEmpty()) { "Search query cannot be blank." }
 
         return tokens.joinToString(" AND ") { token ->
-            val escaped = token.replace(""", """")
-            ""$escaped""
+            val escaped = token.replace("\"", "\"\"")
+            "\"$escaped\""
         }
     }
 }
