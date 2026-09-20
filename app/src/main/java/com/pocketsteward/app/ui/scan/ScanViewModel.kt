@@ -47,6 +47,7 @@ import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
+import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -206,6 +207,7 @@ sealed interface ScanUiState {
         val indexStates: List<ContentIndexState>,
         val sort: ContentSearchSort = ContentSearchSort.RELEVANCE,
         val filters: ContentSearchFilters = ContentSearchFilters(),
+        val savedSearchId: String? = null,
     ) : ScanUiState {
         val visibleResults: List<IndexedFileSearchResult>
             get() = ContentSearchView.apply(allResults, sort, filters)
@@ -559,6 +561,57 @@ class ScanViewModel(
         }
     }
 
+    /** Reopens a saved indexed search after a fresh metadata scan of its roots. */
+    fun startSavedSearch(searchId: String) {
+        if (autoStarted) return
+        autoStarted = true
+        viewModelScope.launch {
+            try {
+                val access = settingsRepository.storageAccessState.first()
+                if (access.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(
+                        "Saved content searches currently require full storage access.",
+                    )
+                    return@launch
+                }
+                val saved = settingsRepository.savedSearches.first()
+                    .firstOrNull { it.id == searchId }
+                if (saved == null) {
+                    _uiState.value = ScanUiState.Error("That saved search no longer exists.")
+                    return@launch
+                }
+                val targets = saved.roots.map { ScanTarget.CustomFolder(it) }
+                _selectedTargets.value = targets
+                startScan(
+                    targets = targets,
+                    thenSavedSearch = saved,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun saveIndexedSearch(
+        review: ScanUiState.IndexedContentSearchReview,
+        name: String,
+    ) {
+        viewModelScope.launch {
+            try {
+                settingsRepository.saveSearch(
+                    name = name,
+                    query = review.query,
+                    roots = review.scopes.map { it.root.rawValue() },
+                    sort = review.sort,
+                    filters = review.filters,
+                    lastResultCount = review.visibleResults.size,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     /** Save a fresh-scan recipe, never a previously validated/executed plan. */
     fun saveWorkflow(
         summary: ScanUiState.Summary,
@@ -616,14 +669,16 @@ class ScanViewModel(
         target: ScanTarget,
         thenRun: PostScanAction? = null,
         thenRequest: String? = null,
+        thenSavedSearch: SavedSearch? = null,
     ) {
-        startScan(listOf(target), thenRun, thenRequest)
+        startScan(listOf(target), thenRun, thenRequest, thenSavedSearch)
     }
 
     fun startScan(
         targets: Collection<ScanTarget>,
         thenRun: PostScanAction? = null,
         thenRequest: String? = null,
+        thenSavedSearch: SavedSearch? = null,
     ) {
         scanJob?.cancel()
         userScanCancellationRequested = false
@@ -710,6 +765,20 @@ class ScanViewModel(
 
                 thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
                     handleNaturalLanguage(summary, request)
+                }
+
+                thenSavedSearch?.let { saved ->
+                    val categories = saved.filters.categories.mapNotNullTo(linkedSetOf()) { name ->
+                        FileCategory.entries.firstOrNull { it.name == name }
+                    }
+                    runIndexedContentSearch(
+                        summary = summary,
+                        query = saved.query,
+                        requestedCategories = categories,
+                        sort = saved.sort,
+                        filters = saved.filters,
+                        savedSearchId = saved.id,
+                    )
                 }
             } catch (cancel: CancellationException) {
                 if (userScanCancellationRequested) {
@@ -1511,6 +1580,7 @@ class ScanViewModel(
         requestedCategories: Set<FileCategory> = emptySet(),
         sort: ContentSearchSort = ContentSearchSort.RELEVANCE,
         filters: ContentSearchFilters? = null,
+        savedSearchId: String? = null,
     ) {
         if (summary.mode != StorageAccessMode.DIRECT) {
             _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
@@ -1578,7 +1648,11 @@ class ScanViewModel(
             indexStates = states,
             sort = sort,
             filters = initialFilters,
+            savedSearchId = savedSearchId,
         )
+        if (savedSearchId != null) {
+            settingsRepository.touchSavedSearch(savedSearchId, grouped.size)
+        }
     }
 
     fun setIndexedSearchSort(sort: ContentSearchSort) {
@@ -1614,6 +1688,7 @@ class ScanViewModel(
                     requestedCategories = review.requestedCategories,
                     sort = review.sort,
                     filters = review.filters,
+                    savedSearchId = review.savedSearchId,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
