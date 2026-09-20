@@ -106,7 +106,8 @@ class UndoExecutor(
         require(
             task.status == TaskRunStatus.COMPLETED ||
                 task.status == TaskRunStatus.PARTIAL ||
-                task.status == TaskRunStatus.FAILED,
+                task.status == TaskRunStatus.FAILED ||
+                task.status == TaskRunStatus.CANCELLED,
         ) {
             "Task is not in an undoable state: ${task.status}"
         }
