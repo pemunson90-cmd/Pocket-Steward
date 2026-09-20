@@ -7,6 +7,7 @@ import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.data.db.UndoState
+import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.storage.FileRefJournalCodec
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
@@ -179,6 +180,11 @@ class MutationRecovery(
     private suspend fun refreshTaskStatuses() {
         for (task in taskRunDao.getRunsNeedingRecovery()) {
             val records = mutationRecordDao.getForTaskRun(task.id)
+            val durable = if (task.status == TaskRunStatus.RUNNING) {
+                DurablePlanCodec.decodeOrNull(task.planJson)
+            } else {
+                null
+            }
             val status = when {
                 records.any { it.status == MutationStatus.NEEDS_REVIEW || it.undoState == UndoState.BLOCKED } ->
                     if (task.status == TaskRunStatus.UNDOING || task.status == TaskRunStatus.UNDO_PARTIAL) {
@@ -186,22 +192,48 @@ class MutationRecovery(
                     } else {
                         TaskRunStatus.NEEDS_REVIEW
                     }
-                task.status == TaskRunStatus.UNDOING && records.filter { it.undoState != UndoState.NOT_AVAILABLE }.all { it.undoState == UndoState.UNDONE } ->
+
+                task.status == TaskRunStatus.UNDOING &&
+                    records.filter { it.undoState != UndoState.NOT_AVAILABLE }.all { it.undoState == UndoState.UNDONE } ->
                     TaskRunStatus.UNDONE
+
+                // New durable tasks know how many approved operations were
+                // still waiting when the process died. Missing journal rows
+                // therefore mean "resume here", not "guess the run is over".
+                task.status == TaskRunStatus.RUNNING && durable != null -> {
+                    val resolved = records
+                        .filter { it.status == MutationStatus.COMMITTED || it.status == MutationStatus.FAILED }
+                        .associateBy { it.sequence }
+                    val complete = durable.operations.indices.all { it in resolved }
+                    if (!complete) {
+                        TaskRunStatus.RUNNING
+                    } else {
+                        val committed = records.count { it.status == MutationStatus.COMMITTED && it.undoState == UndoState.AVAILABLE }
+                        val failures = records.count { it.status == MutationStatus.FAILED }
+                        when {
+                            failures == 0 -> TaskRunStatus.COMPLETED
+                            committed > 0 -> TaskRunStatus.PARTIAL
+                            else -> TaskRunStatus.FAILED
+                        }
+                    }
+                }
+
+                // Legacy tasks do not contain enough information to prove
+                // that unjournaled operations remain, so preserve the old
+                // conservative recovery behavior for them.
                 task.status == TaskRunStatus.RUNNING && records.isEmpty() ->
                     TaskRunStatus.FAILED
-                // Same distinction PlanExecutor makes at the end of a clean
-                // run, applied to a run that died partway: a failure beside
-                // committed work is PARTIAL, and only a run where nothing
-                // landed is FAILED.
+
                 task.status == TaskRunStatus.RUNNING && records.any { it.status == MutationStatus.FAILED } ->
                     if (records.any { it.status == MutationStatus.COMMITTED }) {
                         TaskRunStatus.PARTIAL
                     } else {
                         TaskRunStatus.FAILED
                     }
+
                 task.status == TaskRunStatus.RUNNING && records.none { it.status == MutationStatus.PENDING } ->
                     TaskRunStatus.COMPLETED
+
                 else -> task.status
             }
             if (status != task.status) {
