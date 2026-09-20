@@ -34,6 +34,7 @@ fun HomeScreen(
     onOpenTasks: () -> Unit,
     onNaturalLanguageRequest: (String) -> Unit,
     onSavedWorkflow: (String) -> Unit,
+    onSavedSearch: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
@@ -49,6 +50,7 @@ fun HomeScreen(
     )
     val recentTasks by viewModel.recentTasks.collectAsState()
     val savedWorkflows by viewModel.savedWorkflows.collectAsState()
+    val savedSearches by viewModel.savedSearches.collectAsState()
     var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
 
     Column(
@@ -131,6 +133,51 @@ fun HomeScreen(
                                 Text("Run")
                             }
                             TextButton(onClick = { viewModel.deleteSavedWorkflow(workflow.id) }) {
+                                Text("Remove")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (savedSearches.isNotEmpty()) {
+            Text("Saved searches", style = MaterialTheme.typography.titleLarge)
+            savedSearches.forEach { saved ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            saved.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = buildString {
+                                append("“")
+                                append(saved.query)
+                                append("” · ")
+                                append(saved.roots.size)
+                                append(if (saved.roots.size == 1) " folder" else " folders")
+                                append(" · ")
+                                append(saved.lastResultCount)
+                                append(" last result")
+                                if (saved.lastResultCount != 1) append("s")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Button(onClick = { onSavedSearch(saved.id) }) {
+                                Text("Open")
+                            }
+                            TextButton(onClick = { viewModel.deleteSavedSearch(saved.id) }) {
                                 Text("Remove")
                             }
                         }
