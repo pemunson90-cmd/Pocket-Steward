@@ -169,8 +169,19 @@ class ContentIndexRepository(
         )
     }
 
-    suspend fun search(query: String, limit: Int = 2_000): List<IndexedSearchHit> =
-        dao.searchSegments(ContentFtsQuery.build(query), limit.coerceIn(1, 10_000))
+    suspend fun search(
+        query: String,
+        sourceRoots: List<String>,
+        limit: Int = 10_000,
+    ): List<IndexedSearchRow> {
+        val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
+        require(roots.isNotEmpty()) { "Indexed content search needs at least one source root." }
+        return dao.searchRows(
+            matchQuery = ContentFtsQuery.build(query),
+            sourceRoots = roots,
+            limit = limit.coerceIn(1, 20_000),
+        )
+    }
 
     suspend fun state(sourceRoot: String): ContentIndexState? =
         dao.getState(sourceRoot.trimEnd('/'))
