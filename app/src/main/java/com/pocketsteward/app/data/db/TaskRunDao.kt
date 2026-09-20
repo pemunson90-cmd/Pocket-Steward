@@ -20,6 +20,9 @@ interface TaskRunDao {
     @Query("SELECT * FROM task_runs ORDER BY startedAt DESC")
     fun observeAll(): Flow<List<TaskRun>>
 
+    @Query("SELECT * FROM task_runs WHERE status = 'RUNNING' ORDER BY startedAt ASC")
+    suspend fun getRunning(): List<TaskRun>
+
     @Query("SELECT * FROM task_runs WHERE status IN ('RUNNING', 'NEEDS_REVIEW', 'UNDOING', 'UNDO_PARTIAL') ORDER BY startedAt ASC")
     suspend fun getRunsNeedingRecovery(): List<TaskRun>
 }
