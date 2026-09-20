@@ -18,6 +18,13 @@ import com.pocketsteward.app.content.ContentExtraction
 import com.pocketsteward.app.content.ContentExtractor
 import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentMatch
+import com.pocketsteward.app.content.index.ContentIndexCandidate
+import com.pocketsteward.app.content.index.ContentIndexRefreshSummary
+import com.pocketsteward.app.content.index.ContentIndexState
+import com.pocketsteward.app.content.index.ContentSearchFilters
+import com.pocketsteward.app.content.index.ContentSearchSort
+import com.pocketsteward.app.content.index.ContentSearchView
+import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
@@ -188,6 +195,33 @@ sealed interface ScanUiState {
         val failedFiles: Int,
         val truncatedResults: Boolean,
     ) : ScanUiState
+
+    data class IndexedContentSearchReview(
+        val title: String,
+        val query: String,
+        val scopes: List<ScanScope>,
+        val requestedCategories: Set<FileCategory>,
+        val allResults: List<IndexedFileSearchResult>,
+        val refreshSummary: ContentIndexRefreshSummary,
+        val indexStates: List<ContentIndexState>,
+        val sort: ContentSearchSort = ContentSearchSort.RELEVANCE,
+        val filters: ContentSearchFilters = ContentSearchFilters(),
+    ) : ScanUiState {
+        val visibleResults: List<IndexedFileSearchResult>
+            get() = ContentSearchView.apply(allResults, sort, filters)
+
+        val indexComplete: Boolean
+            get() = indexStates.isNotEmpty() && indexStates.all { it.completed }
+
+        val availableRoots: List<String>
+            get() = allResults.map { it.sourceRoot }.distinct().sorted()
+
+        val availableCategories: List<String>
+            get() = allResults.map { it.category }.distinct().sorted()
+
+        val availableExtensions: List<String>
+            get() = allResults.map { it.extension.lowercase() }.filter { it.isNotBlank() }.distinct().sorted()
+    }
 
     data class CoherenceAuditReview(
         val scopes: List<ScanScope>,
@@ -413,6 +447,7 @@ class ScanViewModel(
             is ScanUiState.DuplicateReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
+            is ScanUiState.IndexedContentSearchReview,
             is ScanUiState.CoherenceAuditReview,
             is ScanUiState.ProtectFolders,
             -> {
@@ -1470,6 +1505,122 @@ class ScanViewModel(
      * M9 natural-language entry. Parsing is deterministic and offline; the
      * result can only invoke read-only review or build ordinary typed plans.
      */
+    private suspend fun runIndexedContentSearch(
+        summary: ScanUiState.Summary,
+        query: String,
+        requestedCategories: Set<FileCategory> = emptySet(),
+        sort: ContentSearchSort = ContentSearchSort.RELEVANCE,
+        filters: ContentSearchFilters? = null,
+    ) {
+        if (summary.mode != StorageAccessMode.DIRECT) {
+            _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+            return
+        }
+        val privacy = settingsRepository.privacySettings.first()
+        if (!privacy.contentInspectionEnabled) {
+            _uiState.value = ScanUiState.Error(
+                "Document content inspection is off. Enable it in Settings to search inside files.",
+            )
+            return
+        }
+
+        val roots = summary.scopes.map { it.root.rawValue().trimEnd('/') }.distinct()
+        val records = filesForScopes(summary.scopes)
+        val candidates = records.mapNotNull { record ->
+            val root = sourceRootFor(record.stableRef, summary.scopes) ?: return@mapNotNull null
+            ContentIndexCandidate(record = record, sourceRoot = root)
+        }
+        val repository = container.contentIndexRepository(summary.mode)
+
+        _uiState.value = ScanUiState.Working(
+            label = "Refreshing search index",
+            detail = "Checking what changed; unchanged documents are reused",
+            processed = 0,
+            total = candidates.size,
+        )
+
+        val refresh = withContext(Dispatchers.IO) {
+            repository.refresh(candidates, roots) { processed, total ->
+                _uiState.value = ScanUiState.Working(
+                    label = "Refreshing search index",
+                    detail = "Checking what changed; unchanged documents are reused",
+                    processed = processed,
+                    total = total,
+                )
+            }
+        }
+
+        _uiState.value = ScanUiState.Working(
+            label = "Searching indexed contents",
+            detail = "Local full-text search",
+        )
+
+        val rows = withContext(Dispatchers.IO) {
+            repository.search(query = query, sourceRoots = roots)
+        }
+        val grouped = withContext(Dispatchers.Default) {
+            ContentSearchView.group(rows, query)
+        }
+        val states = withContext(Dispatchers.IO) {
+            roots.mapNotNull { repository.state(it) }
+        }
+        val initialFilters = filters ?: ContentSearchFilters(
+            categories = requestedCategories.mapTo(linkedSetOf()) { it.name },
+        )
+
+        _uiState.value = ScanUiState.IndexedContentSearchReview(
+            title = "Content matches for “$query”",
+            query = query,
+            scopes = summary.scopes,
+            requestedCategories = requestedCategories,
+            allResults = grouped,
+            refreshSummary = refresh,
+            indexStates = states,
+            sort = sort,
+            filters = initialFilters,
+        )
+    }
+
+    fun setIndexedSearchSort(sort: ContentSearchSort) {
+        val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: return
+        _review.value = current.copy(sort = sort)
+    }
+
+    fun setIndexedSearchFilters(filters: ContentSearchFilters) {
+        val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: return
+        _review.value = current.copy(filters = filters)
+    }
+
+    fun resetIndexedSearchFilters() {
+        val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: return
+        _review.value = current.copy(
+            filters = ContentSearchFilters(
+                categories = current.requestedCategories.mapTo(linkedSetOf()) { it.name },
+            ),
+        )
+    }
+
+    fun refreshIndexedSearch(review: ScanUiState.IndexedContentSearchReview) {
+        viewModelScope.launch {
+            try {
+                val summary = _summary.value
+                if (summary == null) {
+                    _uiState.value = ScanUiState.Error("The scan this search came from is no longer available.")
+                    return@launch
+                }
+                runIndexedContentSearch(
+                    summary = summary,
+                    query = review.query,
+                    requestedCategories = review.requestedCategories,
+                    sort = review.sort,
+                    filters = review.filters,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     fun handleNaturalLanguage(summary: ScanUiState.Summary, request: String) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Understanding request", "Offline deterministic parser")
@@ -1495,36 +1646,10 @@ class ScanViewModel(
                                     }
                                 val contentTerm = intent.contentTerm
                                 if (contentTerm != null) {
-                                    if (summary.mode != StorageAccessMode.DIRECT) {
-                                        _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                                        return@launch
-                                    }
-                                    val privacy = settingsRepository.privacySettings.first()
-                                    if (!privacy.contentInspectionEnabled) {
-                                        _uiState.value = ScanUiState.Error(
-                                            "Document content inspection is off. Enable it in Settings to search inside files.",
-                                        )
-                                        return@launch
-                                    }
-                                    val inspector = container.contentInspector(summary.mode)
-                                    val result = withContext(Dispatchers.IO) {
-                                        inspector.search(records, contentTerm) { processed, total ->
-                                            _uiState.value = ScanUiState.Working(
-                                                label = "Searching file contents",
-                                                detail = "Local read-only inspection",
-                                                processed = processed,
-                                                total = total,
-                                            )
-                                        }
-                                    }
-                                    _uiState.value = ScanUiState.ContentSearchReview(
-                                        title = "Content matches for “$contentTerm”",
+                                    runIndexedContentSearch(
+                                        summary = summary,
                                         query = contentTerm,
-                                        matches = result.matches,
-                                        inspectedFiles = result.inspectedFiles,
-                                        unsupportedFiles = result.unsupportedFiles,
-                                        failedFiles = result.failedFiles,
-                                        truncatedResults = result.truncatedResults,
+                                        requestedCategories = intent.categories,
                                     )
                                 } else {
                                     val matches = records.filter { record ->
@@ -1820,6 +1945,12 @@ class ScanViewModel(
         }
     }
 }
+
+private fun sourceRootFor(stableRef: String, scopes: List<ScanScope>): String? =
+    scopes
+        .map { it.root.rawValue().trimEnd('/') }
+        .filter { root -> stableRef == root || stableRef.startsWith("$root/") }
+        .maxByOrNull { it.length }
 
 private fun scopeForOperation(operation: PlannedOperation, scopes: List<ScanScope>): ScanScope? {
     val anchor = when (operation) {
