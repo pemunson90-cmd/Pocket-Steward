@@ -14,6 +14,10 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".PocketStewardApplication"
         android:allowBackup="false"
@@ -23,6 +27,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PocketSteward"
         android:enableOnBackInvokedCallback="true">
+
+        <service
+            android:name=".service.FileTaskForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <activity
             android:name=".MainActivity"
