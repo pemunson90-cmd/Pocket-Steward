@@ -36,7 +36,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
     val preview = state
     ScanFlowScaffold(
-        title = "Review plan",
+        title = "Review changes",
         onBack = onBack,
         error = error,
         onDismissError = viewModel::dismissError,
@@ -51,8 +51,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             ScreenHeadline(
                 text = preview.goal,
                 supporting = buildString {
-                    append("${preview.selectedIndices.size} of ${preview.accepted.size} action(s) selected")
-                    if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} left untouched")
+                    append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
+                    if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
                 },
             )
 
@@ -68,7 +68,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(Spacing.base)) {
-                                Text("Left out of this plan", style = MaterialTheme.typography.titleSmall)
+                                Text("Not included", style = MaterialTheme.typography.titleSmall)
                                 preview.scopeNotes.forEach { note ->
                                     Text(
                                         text = note,
@@ -123,7 +123,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
 
                 if (preview.rejected.isNotEmpty()) {
-                    item { SectionHeader("Left untouched") }
+                    item { SectionHeader("Not included") }
                     items(preview.rejected) { rejected ->
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(Spacing.base)) {
@@ -147,7 +147,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     onClick = { viewModel.approvePlan(preview) },
                     enabled = preview.selectedIndices.isNotEmpty(),
                 ) {
-                    Text("Approve ${preview.selectedIndices.size}")
+                    Text("Run ${preview.selectedIndices.size} selected")
                 }
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
