@@ -54,8 +54,8 @@ fun HistoryScreen(onBack: () -> Unit) {
                     manifestService = container.taskManifestService,
                     mutationRecordDao = container.database.mutationRecordDao(),
                     gatewayFor = container::gatewayFor,
-                    mutationRecovery = container.mutationRecovery,
-                    planExecutorFor = container::planExecutor,
+                    startForegroundTask = container::startForegroundTask,
+                    pauseForegroundTask = container::pauseForegroundTask,
                 )
             }
         },
@@ -98,19 +98,9 @@ fun HistoryScreen(onBack: () -> Unit) {
                     }
                 }
 
-                is HistoryActionState.Resuming -> {
-                    if (action.total > 0) {
-                        LinearProgressIndicator(
-                            progress = { action.completed.toFloat() / action.total.toFloat() },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "Continuing ${action.completed} of ${action.total}…",
-                            modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
-                        )
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        Text("Recovering task state…", modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+                is HistoryActionState.BackgroundStarted -> {
+                    Card(onClick = viewModel::dismissAction, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        Text("${action.message} Tap to dismiss.", modifier = Modifier.padding(12.dp))
                     }
                 }
 
@@ -134,15 +124,6 @@ fun HistoryScreen(onBack: () -> Unit) {
                                 )
                             }
                         }
-                    }
-                }
-
-                is HistoryActionState.ResumeDone -> {
-                    Card(onClick = viewModel::dismissAction, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                        Text(
-                            "Task continued: ${action.summary.succeededTotal} succeeded, ${action.summary.failed} failed. Tap to dismiss.",
-                            modifier = Modifier.padding(12.dp),
-                        )
                     }
                 }
 
@@ -176,6 +157,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                         TaskCard(
                             task = task,
                             onResume = { viewModel.resumeTask(task) },
+                            onPause = viewModel::pauseTask,
                             onUndo = { viewModel.requestUndo(task) },
                             onManifest = { viewModel.showManifest(task.id) },
                         )
@@ -266,6 +248,7 @@ private fun ManifestCard(
 private fun TaskCard(
     task: TaskRun,
     onResume: () -> Unit,
+    onPause: () -> Unit,
     onUndo: () -> Unit,
     onManifest: () -> Unit,
 ) {
@@ -293,7 +276,15 @@ private fun TaskCard(
             Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (task.isResumable()) {
                     Card(onClick = onResume) {
-                        Text("Resume", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        Text(
+                            if (task.status == TaskRunStatus.RUNNING) "Continue" else "Resume",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                if (task.status == TaskRunStatus.RUNNING && DurablePlanCodec.isDurable(task.planJson)) {
+                    Card(onClick = onPause) {
+                        Text("Pause", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                     }
                 }
                 if (task.status.isUndoable()) {
