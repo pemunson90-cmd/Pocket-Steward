@@ -31,6 +31,7 @@ import com.pocketsteward.app.ui.theme.Spacing
 fun ScanScreen(
     viewModel: ScanViewModel,
     autoAction: PostScanAction?,
+    autoRequest: String?,
     onOpenPicker: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -41,9 +42,12 @@ fun ScanScreen(
     val recents by viewModel.recentFolders.collectAsState()
     val selectedTargets by viewModel.selectedTargets.collectAsState()
 
-    LaunchedEffect(autoAction, accessState) {
-        if (autoAction != null && accessState?.mode != null) {
-            viewModel.startScanThen(ScanTarget.Downloads, autoAction)
+    LaunchedEffect(autoAction, autoRequest, accessState) {
+        if (accessState?.mode != null) {
+            when {
+                !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
+                autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
+            }
         }
     }
 
