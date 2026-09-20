@@ -7,9 +7,6 @@ import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.UndoState
-import com.pocketsteward.app.executor.ExecutionSummary
-import com.pocketsteward.app.executor.MutationRecovery
-import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.report.ExportResult
@@ -45,14 +42,9 @@ sealed interface HistoryActionState {
         val total: Int = 0,
     ) : HistoryActionState
 
-    data class Resuming(
-        val taskRunId: Long,
-        val completed: Int = 0,
-        val total: Int = 0,
-    ) : HistoryActionState
+    data class BackgroundStarted(val message: String) : HistoryActionState
 
     data class Done(val summary: UndoSummary) : HistoryActionState
-    data class ResumeDone(val summary: ExecutionSummary) : HistoryActionState
     data class Manifest(val document: TaskManifestDocument, val exportedTo: String? = null) : HistoryActionState
     data class Error(val message: String) : HistoryActionState
 }
@@ -63,8 +55,8 @@ class HistoryViewModel(
     private val manifestService: TaskManifestService,
     private val mutationRecordDao: MutationRecordDao,
     private val gatewayFor: (StorageAccessMode) -> StorageGateway,
-    private val mutationRecovery: MutationRecovery,
-    private val planExecutorFor: (StorageAccessMode) -> PlanExecutor,
+    private val startForegroundTask: (Long) -> Unit,
+    private val pauseForegroundTask: () -> Unit,
 ) : ViewModel() {
     val tasks: StateFlow<List<TaskRun>> = taskRunDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -73,21 +65,24 @@ class HistoryViewModel(
     val actionState: StateFlow<HistoryActionState> = _actionState
 
     fun resumeTask(task: TaskRun) {
-        viewModelScope.launch {
-            _actionState.value = HistoryActionState.Resuming(task.id)
-            try {
-                val summary = withContext(Dispatchers.IO) {
-                    mutationRecovery.recoverAll()
-                    val refreshed = taskRunDao.getById(task.id)
-                        ?: error("That task is no longer in the journal.")
-                    planExecutorFor(refreshed.storageAccessMode).resume(refreshed.id) { completed, total ->
-                        _actionState.value = HistoryActionState.Resuming(refreshed.id, completed, total)
-                    }
-                }
-                _actionState.value = HistoryActionState.ResumeDone(summary)
-            } catch (t: Throwable) {
-                _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
-            }
+        try {
+            startForegroundTask(task.id)
+            _actionState.value = HistoryActionState.BackgroundStarted(
+                "Task #${task.id} is continuing in the foreground service. Progress is shown in the notification.",
+            )
+        } catch (t: Throwable) {
+            _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
+        }
+    }
+
+    fun pauseTask() {
+        try {
+            pauseForegroundTask()
+            _actionState.value = HistoryActionState.BackgroundStarted(
+                "Pause requested. Pocket Steward will finish the current file operation, save progress, then stop.",
+            )
+        } catch (t: Throwable) {
+            _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
         }
     }
 
