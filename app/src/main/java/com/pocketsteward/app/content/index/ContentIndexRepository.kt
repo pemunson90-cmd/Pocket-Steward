@@ -186,6 +186,12 @@ class ContentIndexRepository(
     suspend fun state(sourceRoot: String): ContentIndexState? =
         dao.getState(sourceRoot.trimEnd('/'))
 
+    suspend fun overview(): ContentIndexOverview = ContentIndexOverview(
+        documentCount = dao.countDocuments(),
+        segmentCount = dao.countSegments(),
+        rootCount = dao.countRoots(),
+    )
+
     suspend fun clear() = dao.clearAll()
 }
 
