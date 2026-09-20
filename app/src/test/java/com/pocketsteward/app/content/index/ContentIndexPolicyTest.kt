@@ -86,7 +86,7 @@ class ContentIndexPolicyTest {
 
     @Test
     fun ftsQueryEscapesEmbeddedQuotes() {
-        val result = ContentFtsQuery.build("the \\"quoted\\" thing")
+        val result = ContentFtsQuery.build("""the "quoted" thing""")
         assertThat(result).contains("\"\"quoted\"\"")
     }
 
