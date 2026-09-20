@@ -113,6 +113,16 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
+
+    // M10B: bundled Latin OCR keeps scanned-PDF support available without a
+    // second user-visible model download ceremony.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
+    // M10B: Gemini Nano remains behind AgentModel; this dependency is the
+    // Android implementation, not part of the planner/executor safety spine.
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
+    ksp("com.google.mlkit:genai-schema-compiler:1.0.0-alpha1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
