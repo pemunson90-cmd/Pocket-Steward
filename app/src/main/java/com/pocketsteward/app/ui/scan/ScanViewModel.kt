@@ -45,6 +45,8 @@ import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
 import com.pocketsteward.app.scan.ScanRootSet
 import com.pocketsteward.app.scan.classifyByExtension
+import com.pocketsteward.app.semantic.SemanticPlanAdapter
+import com.pocketsteward.app.semantic.SemanticSuggestion
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
@@ -182,6 +184,7 @@ sealed interface ScanUiState {
     ) : ScanUiState
 
     data class CoherenceAuditReview(
+        val scopes: List<ScanScope>,
         val scopeLabel: String,
         val rows: List<CoherenceAuditRow>,
         val modelName: String?,
@@ -773,11 +776,86 @@ class ScanViewModel(
                 }
 
                 _uiState.value = ScanUiState.CoherenceAuditReview(
+                    scopes = summary.scopes,
                     scopeLabel = summary.scopeLabel,
                     rows = rows,
                     modelName = audit.modelName,
                     skippedUnreadable = skippedUnreadable,
                     limited = audit.limited || records.size > documents.size,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * M11B: convert advisory coherence findings into an ordinary validated
+     * plan. The model never supplies paths and never reaches the executor.
+     */
+    fun proposeSemanticOrganization(
+        review: ScanUiState.CoherenceAuditReview,
+        includeSubfolders: Boolean = false,
+    ) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working(
+                "Building organization proposal",
+                "Validating semantic suggestions against the current scan",
+            )
+            try {
+                if (review.scopes.any { it.root !is FileRef.Direct }) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+
+                val records = allRecordsForScopes(review.scopes)
+                val result = withContext(Dispatchers.Default) {
+                    SemanticPlanAdapter.build(
+                        scopeRoots = review.scopes.map { it.root as FileRef.Direct },
+                        records = records,
+                        suggestions = review.rows.map { row ->
+                            SemanticSuggestion(
+                                stableRef = row.record.stableRef,
+                                classification = row.classification,
+                                suggestedGroup = row.suggestedGroup,
+                            )
+                        },
+                        includeSubfolders = includeSubfolders,
+                    )
+                }
+
+                if (result.operations.isEmpty()) {
+                    val topReason = result.skipped
+                        .groupingBy { it.reason }
+                        .eachCount()
+                        .maxByOrNull { it.value }
+                        ?.key
+                    _uiState.value = ScanUiState.Error(
+                        buildString {
+                            append("The audit produced no safe file moves to propose.")
+                            topReason?.let { append(" Most skipped items: $it") }
+                        },
+                    )
+                    return@launch
+                }
+
+                val notes = buildList {
+                    add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
+                    add("Destinations stay inside each file's originating scan root.")
+                    if (!includeSubfolders) {
+                        add("Files already inside folders were left alone unless nested moves were explicitly enabled.")
+                    }
+                    val protected = result.skipped.count { it.reason.contains("protected", ignoreCase = true) }
+                    if (protected > 0) add("$protected file(s) stayed untouched inside protected folders.")
+                    val unsafe = result.skipped.count { it.reason.contains("unsafe", ignoreCase = true) }
+                    if (unsafe > 0) add("$unsafe unsafe or unusable suggested group name(s) were ignored.")
+                }
+
+                showPlanPreview(
+                    goal = "Organize ${result.plannedFileCount} file(s) from coherence suggestions",
+                    operations = result.operations,
+                    scopes = review.scopes,
+                    scopeNotes = notes,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
