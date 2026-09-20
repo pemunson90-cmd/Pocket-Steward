@@ -482,6 +482,65 @@ class ScanViewModel(
         startScan(target, thenRequest = request)
     }
 
+
+    /** Recreates a saved scope/request from fresh storage state before doing anything else. */
+    fun startSavedWorkflow(workflowId: String) {
+        if (autoStarted) return
+        autoStarted = true
+        viewModelScope.launch {
+            try {
+                val access = settingsRepository.storageAccessState.first()
+                if (access.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(
+                        "Saved workflows currently require full storage access.",
+                    )
+                    return@launch
+                }
+                val workflow = settingsRepository.savedWorkflows.first()
+                    .firstOrNull { it.id == workflowId }
+                if (workflow == null) {
+                    _uiState.value = ScanUiState.Error("That saved workflow no longer exists.")
+                    return@launch
+                }
+                val targets = workflow.roots.map { ScanTarget.CustomFolder(it) }
+                _selectedTargets.value = targets
+                startScan(
+                    targets = targets,
+                    thenRequest = workflow.request.takeIf { it.isNotBlank() },
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Save a fresh-scan recipe, never a previously validated/executed plan. */
+    fun saveWorkflow(
+        summary: ScanUiState.Summary,
+        name: String,
+        request: String,
+    ) {
+        viewModelScope.launch {
+            try {
+                if (summary.mode != StorageAccessMode.DIRECT ||
+                    summary.scopes.any { it.root !is FileRef.Direct }
+                ) {
+                    _uiState.value = ScanUiState.Error(
+                        "Saved workflows currently require full storage access.",
+                    )
+                    return@launch
+                }
+                settingsRepository.saveWorkflow(
+                    name = name,
+                    request = request,
+                    roots = summary.scopes.map { (it.root as FileRef.Direct).absolutePath },
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     fun toggleScanTarget(target: ScanTarget) {
         val key = target.selectionKey()
         val current = _selectedTargets.value
