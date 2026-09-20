@@ -14,6 +14,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -85,6 +86,18 @@ fun ScanScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = Spacing.tight),
                     )
+                }
+                Text(
+                    text = "Pause keeps the current scan checkpoint so the same folders can resume later.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+                OutlinedButton(
+                    onClick = viewModel::cancelScan,
+                    modifier = Modifier.padding(top = Spacing.base),
+                ) {
+                    Text("Pause scan")
                 }
             }
             return@ScanFlowScaffold
