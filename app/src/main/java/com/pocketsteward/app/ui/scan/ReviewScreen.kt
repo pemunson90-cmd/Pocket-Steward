@@ -158,6 +158,17 @@ private fun ContentMatchCard(match: ContentMatch) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (match.pageNumber != null) {
+                Text(
+                    text = buildString {
+                        append("Page ${match.pageNumber}")
+                        if (match.ocr) append(" · OCR")
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
             Text(
                 text = match.snippet,
                 style = MaterialTheme.typography.bodySmall,
