@@ -6,13 +6,33 @@ import com.pocketsteward.app.storage.parseFileRef
 
 /**
  * On-demand local content search. No extracted text is persisted to Room.
- *
- * The per-search budget is deliberate. Even a read-only feature should not
- * turn a broad storage scan into gigabytes of surprise I/O.
  */
 class ContentInspector(
     private val gateway: StorageGateway,
+    private val pdfExtractor: PdfContentExtractor? = null,
 ) {
+    suspend fun extract(record: FileRecord): ContentExtraction {
+        if (record.isDirectory) return ContentExtraction.Unsupported("Directories do not have inspectable content.")
+        if (!ContentExtractor.supports(record.extension)) {
+            return ContentExtraction.Unsupported("This file type is not text-readable.")
+        }
+        if (record.sizeBytes > MAX_SOURCE_FILE_BYTES) {
+            return ContentExtraction.Unsupported("File exceeds the 20 MiB inspection limit.")
+        }
+        return try {
+            gateway.openRead(parseFileRef(record.stableRef)).use { input ->
+                if (record.extension.equals("pdf", ignoreCase = true)) {
+                    pdfExtractor?.extract(input)
+                        ?: ContentExtraction.Unsupported("PDF extraction is unavailable on this device.")
+                } else {
+                    ContentExtractor.extract(record.extension, input)
+                }
+            }
+        } catch (t: Throwable) {
+            ContentExtraction.Failed(t.message ?: t.javaClass.simpleName)
+        }
+    }
+
     suspend fun search(
         records: List<FileRecord>,
         query: String,
@@ -29,20 +49,18 @@ class ContentInspector(
         var failed = 0
         var estimatedReadBytes = 0L
         var limited = false
+        var processed = 0
 
-        for ((index, record) in candidates.withIndex()) {
-            onProgress(index, candidates.size)
+        for (record in candidates) {
+            onProgress(processed, candidates.size)
 
             if (matches.size >= maxResults || inspected >= MAX_READABLE_FILES) {
                 limited = true
                 break
             }
-            if (!ContentExtractor.supports(record.extension)) {
+            if (!ContentExtractor.supports(record.extension) || record.sizeBytes > MAX_SOURCE_FILE_BYTES) {
                 unsupported++
-                continue
-            }
-            if (record.sizeBytes > MAX_SOURCE_FILE_BYTES) {
-                unsupported++
+                processed++
                 continue
             }
 
@@ -53,30 +71,37 @@ class ContentInspector(
             }
             estimatedReadBytes += estimatedCost
 
-            val extraction = try {
-                gateway.openRead(parseFileRef(record.stableRef)).use { input ->
-                    ContentExtractor.extract(record.extension, input)
-                }
-            } catch (t: Throwable) {
-                ContentExtraction.Failed(t.message ?: t.javaClass.simpleName)
-            }
-
-            when (extraction) {
+            when (val extraction = extract(record)) {
                 is ContentExtraction.Text -> {
                     inspected++
-                    val matchIndex = extraction.content.indexOf(needle, ignoreCase = true)
-                    if (matchIndex >= 0) {
+                    val pageMatch = extraction.pages.firstNotNullOfOrNull { page ->
+                        val index = page.text.indexOf(needle, ignoreCase = true)
+                        if (index >= 0) Triple(page, index, needle.length) else null
+                    }
+                    if (pageMatch != null) {
+                        val (page, index, length) = pageMatch
                         matches += ContentMatch(
                             record = record,
-                            snippet = snippetAround(extraction.content, matchIndex, needle.length),
+                            snippet = snippetAround(page.text, index, length),
+                            pageNumber = page.pageNumber,
+                            ocr = page.ocr,
                         )
+                    } else {
+                        val matchIndex = extraction.content.indexOf(needle, ignoreCase = true)
+                        if (matchIndex >= 0) {
+                            matches += ContentMatch(
+                                record = record,
+                                snippet = snippetAround(extraction.content, matchIndex, needle.length),
+                            )
+                        }
                     }
                 }
                 is ContentExtraction.Unsupported -> unsupported++
                 is ContentExtraction.Failed -> failed++
             }
+            processed++
         }
-        onProgress(minOf(candidates.size, inspected + unsupported + failed), candidates.size)
+        onProgress(processed, candidates.size)
 
         return ContentSearchSummary(
             matches = matches,
