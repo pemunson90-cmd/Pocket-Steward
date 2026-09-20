@@ -2,6 +2,8 @@ package com.pocketsteward.app.di
 
 import android.content.Context
 import com.pocketsteward.app.data.db.AppDatabase
+import com.pocketsteward.app.content.AndroidPdfContentExtractor
+import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
@@ -36,6 +38,12 @@ class AppContainer(context: Context) {
 
     fun fileScanner(mode: StorageAccessMode): FileScanner =
         FileScanner(gatewayFor(mode), database.fileRecordDao(), database.scanCheckpointDao())
+
+    fun contentInspector(mode: StorageAccessMode): ContentInspector =
+        ContentInspector(
+            gateway = gatewayFor(mode),
+            pdfExtractor = if (mode == StorageAccessMode.DIRECT) AndroidPdfContentExtractor(appContext) else null,
+        )
 
     fun planExecutor(mode: StorageAccessMode): PlanExecutor =
         PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
