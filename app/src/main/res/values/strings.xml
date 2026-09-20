@@ -16,7 +16,7 @@
     <string name="home_quick_action_find_old_files">Find old files</string>
     <string name="home_quick_action_review_uncategorized">Review uncategorized</string>
     <string name="home_quick_action_recent_tasks">Recent tasks</string>
-    <string name="home_prompt_disabled">Typing requests arrives with on-device AI. Use the actions below for now.</string>
+    <string name="home_prompt_supporting">Offline deterministic requests. Nothing moves until you approve the preview.</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_storage_access_section">Storage access</string>
