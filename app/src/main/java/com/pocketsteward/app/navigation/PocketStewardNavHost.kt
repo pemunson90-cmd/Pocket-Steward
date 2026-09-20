@@ -34,7 +34,12 @@ object Routes {
 
 @Composable
 fun PocketStewardNavHost(startDestination: String, navController: NavHostController = rememberNavController()) {
-    NavHost(navController = navController, startDestination = startDestination) {
+    PocketStewardShell(navController) { shellModifier ->
+        NavHost(
+            navController = navController,
+            startDestination = startDestination,
+            modifier = shellModifier,
+        ) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
                 onAccessGranted = {
@@ -46,10 +51,8 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
         }
         composable(Routes.HOME) {
             HomeScreen(
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onScanStorage = { navController.navigate(Routes.SCAN_FLOW) },
-                onOpenHistory = { navController.navigate(Routes.HISTORY) },
-                onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
+                onExplore = { navController.navigate(Routes.SCAN_FLOW) },
+                onOpenTasks = { navController.navigate(Routes.HISTORY) },
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
             )
         }
@@ -71,6 +74,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
         }
         composable(Routes.TRASH) {
             TrashScreen(onBack = { navController.popBackStack() })
+        }
         }
     }
 }
