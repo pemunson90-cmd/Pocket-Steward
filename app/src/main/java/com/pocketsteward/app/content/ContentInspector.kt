@@ -6,6 +6,9 @@ import com.pocketsteward.app.storage.parseFileRef
 
 /**
  * On-demand local content search. No extracted text is persisted to Room.
+ *
+ * The per-search budget is deliberate. Even a read-only feature should not
+ * turn a broad storage scan into gigabytes of surprise I/O.
  */
 class ContentInspector(
     private val gateway: StorageGateway,
@@ -13,7 +16,7 @@ class ContentInspector(
     suspend fun search(
         records: List<FileRecord>,
         query: String,
-        maxResults: Int = 500,
+        maxResults: Int = MAX_RESULTS,
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> },
     ): ContentSearchSummary {
         val needle = query.trim()
@@ -24,14 +27,31 @@ class ContentInspector(
         var inspected = 0
         var unsupported = 0
         var failed = 0
-        var truncatedResults = false
+        var estimatedReadBytes = 0L
+        var limited = false
 
-        candidates.forEachIndexed { index, record ->
+        for ((index, record) in candidates.withIndex()) {
             onProgress(index, candidates.size)
+
+            if (matches.size >= maxResults || inspected >= MAX_READABLE_FILES) {
+                limited = true
+                break
+            }
             if (!ContentExtractor.supports(record.extension)) {
                 unsupported++
-                return@forEachIndexed
+                continue
             }
+            if (record.sizeBytes > MAX_SOURCE_FILE_BYTES) {
+                unsupported++
+                continue
+            }
+
+            val estimatedCost = minOf(record.sizeBytes.coerceAtLeast(0L), ContentExtractor.MAX_TEXT_BYTES.toLong())
+            if (estimatedReadBytes + estimatedCost > MAX_ESTIMATED_READ_BYTES) {
+                limited = true
+                break
+            }
+            estimatedReadBytes += estimatedCost
 
             val extraction = try {
                 gateway.openRead(parseFileRef(record.stableRef)).use { input ->
@@ -46,10 +66,6 @@ class ContentInspector(
                     inspected++
                     val matchIndex = extraction.content.indexOf(needle, ignoreCase = true)
                     if (matchIndex >= 0) {
-                        if (matches.size >= maxResults) {
-                            truncatedResults = true
-                            return@forEachIndexed
-                        }
                         matches += ContentMatch(
                             record = record,
                             snippet = snippetAround(extraction.content, matchIndex, needle.length),
@@ -60,14 +76,14 @@ class ContentInspector(
                 is ContentExtraction.Failed -> failed++
             }
         }
-        onProgress(candidates.size, candidates.size)
+        onProgress(minOf(candidates.size, inspected + unsupported + failed), candidates.size)
 
         return ContentSearchSummary(
             matches = matches,
             inspectedFiles = inspected,
             unsupportedFiles = unsupported,
             failedFiles = failed,
-            truncatedResults = truncatedResults,
+            truncatedResults = limited,
         )
     }
 
@@ -81,5 +97,12 @@ class ContentInspector(
             append(body)
             if (end < text.length) append("…")
         }
+    }
+
+    private companion object {
+        const val MAX_RESULTS = 500
+        const val MAX_READABLE_FILES = 2_000
+        const val MAX_SOURCE_FILE_BYTES = 20L * 1024 * 1024
+        const val MAX_ESTIMATED_READ_BYTES = 128L * 1024 * 1024
     }
 }
