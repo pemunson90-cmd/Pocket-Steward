@@ -39,6 +39,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val title = when (val current = state) {
         is ScanUiState.FileListReview -> current.title
         is ScanUiState.ContentSearchReview -> current.title
+        is ScanUiState.CoherenceAuditReview -> "Coherence audit"
         is ScanUiState.DuplicateReview -> "Duplicates"
         is ScanUiState.ProtectFolders -> "Protect folders"
         else -> "Review"
@@ -54,6 +55,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         when (val current = state) {
             is ScanUiState.FileListReview -> FileListReview(current, contentModifier)
             is ScanUiState.ContentSearchReview -> ContentSearchReview(current, contentModifier)
+            is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(current, contentModifier)
             is ScanUiState.DuplicateReview -> DuplicateReview(
                 state = current,
                 onTrashDuplicates = { viewModel.proposeTrashDuplicates(current) },
@@ -182,6 +184,58 @@ private fun ContentMatchCard(match: ContentMatch) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
+        }
+    }
+}
+
+@Composable
+private fun CoherenceAuditReview(state: ScanUiState.CoherenceAuditReview, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        val model = state.modelName?.let { " · $it" } ?: ""
+        val limitNote = if (state.limited) " · bounded sample, not every readable file was analyzed" else ""
+        ScreenHeadline(
+            text = "Coherence audit · ${state.scopeLabel}",
+            supporting = "${state.rows.size} classified · ${state.skippedUnreadable} unreadable/skipped$model$limitNote · read-only",
+        )
+        if (state.rows.isEmpty()) {
+            EmptyState("The model returned no usable classifications.")
+            return@Column
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+        ) {
+            items(state.rows, key = { it.record.stableRef }) { row ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(Spacing.base)) {
+                        Text(
+                            text = row.record.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = row.classification.name.replace('_', ' '),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                        Text(
+                            text = row.reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                        row.suggestedGroup?.let { suggestion ->
+                            Text(
+                                text = "Suggested group: $suggestion",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = Spacing.hairline),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
