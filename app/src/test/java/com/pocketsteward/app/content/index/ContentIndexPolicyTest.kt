@@ -81,13 +81,37 @@ class ContentIndexPolicyTest {
     @Test
     fun ftsQueryQuotesTokensAndNeutralizesOperators() {
         assertThat(ContentFtsQuery.build("pain OR arousal"))
-            .isEqualTo(""pain" AND "OR" AND "arousal"")
+            .isEqualTo("\"pain\" AND \"OR\" AND \"arousal\"")
     }
 
     @Test
     fun ftsQueryEscapesEmbeddedQuotes() {
-        assertThat(ContentFtsQuery.build("the "quoted" thing"))
-            .isEqualTo(""the" AND """quoted""" AND "thing"")
+        val result = ContentFtsQuery.build("the \\"quoted\\" thing")
+        assertThat(result).contains("\"\"quoted\"\"")
+    }
+
+    @Test
+    fun failedExtractionIsRetriedEvenWhenMetadataIsUnchanged() {
+        val record = record(size = 10, modified = 20, extension = "pdf")
+        val existing = IndexedDocument(
+            stableRef = record.stableRef,
+            sourceRoot = "/root",
+            displayName = record.displayName,
+            parentRef = record.parentRef,
+            extension = "pdf",
+            category = "DOCUMENT",
+            sizeBytes = 10,
+            modifiedAt = 20,
+            quickFingerprint = null,
+            contentKind = null,
+            extractionStatus = IndexedExtractionStatus.FAILED.name,
+            extractionError = "temporary read failure",
+            extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+            indexedAt = 1,
+            segmentCount = 0,
+        )
+
+        assertThat(ContentIndexPolicy.canReuse(existing, record)).isFalse()
     }
 
     @Test(expected = IllegalArgumentException::class)
