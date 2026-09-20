@@ -41,6 +41,28 @@ class DeterministicIntentParserTest {
     }
 
     @Test
+    fun explicitContainingPhraseBecomesContentSearch() {
+        val result = DeterministicIntentParser.parse(
+            "find documents containing Lilith",
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.action).isEqualTo(IntentAction.FIND)
+        assertThat(result.intent.categories).containsExactly(FileCategory.DOCUMENT)
+        assertThat(result.intent.contentTerm).isEqualTo("Lilith")
+        assertThat(result.intent.findTerm).isNull()
+    }
+
+    @Test
+    fun filenameSearchStaysMetadataOnly() {
+        val result = DeterministicIntentParser.parse(
+            "find files named invoice",
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.contentTerm).isNull()
+        assertThat(result.intent.findTerm).isEqualTo("invoice")
+    }
+
+    @Test
     fun renameRequiresExplicitFromAndTo() {
         val result = DeterministicIntentParser.parse("rename old.txt to new.txt") as IntentParseResult.Parsed
 
