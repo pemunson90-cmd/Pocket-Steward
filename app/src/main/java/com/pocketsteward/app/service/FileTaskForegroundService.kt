@@ -49,6 +49,10 @@ class FileTaskForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PAUSE -> {
+                if (runningJob?.isActive != true) {
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
                 pauseRequested.set(true)
                 updateNotification(
                     title = "Pausing Pocket Steward",
