@@ -76,4 +76,8 @@ class AppContainer(context: Context) {
             FileTaskForegroundService.runIntent(appContext, taskRunId),
         )
     }
+
+    fun pauseForegroundTask() {
+        appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
+    }
 }
