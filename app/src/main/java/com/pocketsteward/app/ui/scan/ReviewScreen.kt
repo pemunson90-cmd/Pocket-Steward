@@ -79,6 +79,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 onFiltersChange = viewModel::setIndexedSearchFilters,
                 onResetFilters = viewModel::resetIndexedSearchFilters,
                 onRefresh = { viewModel.refreshIndexedSearch(current) },
+                onSaveSearch = { name -> viewModel.saveIndexedSearch(current, name) },
                 modifier = contentModifier,
             )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
@@ -227,6 +228,7 @@ private fun IndexedContentSearchReview(
     onFiltersChange: (ContentSearchFilters) -> Unit,
     onResetFilters: () -> Unit,
     onRefresh: () -> Unit,
+    onSaveSearch: (String) -> Unit,
     modifier: Modifier,
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -234,6 +236,8 @@ private fun IndexedContentSearchReview(
     var dateMenuOpen by remember { mutableStateOf(false) }
     var sizeMenuOpen by remember { mutableStateOf(false) }
     var expandedRefs by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var saveName by remember { mutableStateOf("") }
+    var savedConfirmation by remember { mutableStateOf(false) }
 
     val visible = state.visibleResults
     val refresh = state.refreshSummary
@@ -472,6 +476,45 @@ private fun IndexedContentSearchReview(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
                 )
+
+                Text(
+                    "Save this search",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = Spacing.base),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                ) {
+                    OutlinedTextField(
+                        value = saveName,
+                        onValueChange = {
+                            saveName = it
+                            savedConfirmation = false
+                        },
+                        placeholder = { Text("Pain documents") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = {
+                            onSaveSearch(saveName)
+                            savedConfirmation = true
+                            saveName = ""
+                        },
+                        enabled = saveName.isNotBlank(),
+                    ) {
+                        Text("Save")
+                    }
+                }
+                if (savedConfirmation) {
+                    Text(
+                        "Saved on Home. Reopening it rescans metadata and reuses unchanged indexed content.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                }
             }
         }
 
