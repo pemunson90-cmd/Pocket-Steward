@@ -6,11 +6,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,9 +29,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.pocketsteward.app.content.ContentMatch
+import com.pocketsteward.app.content.index.ContentSearchFilters
+import com.pocketsteward.app.content.index.ContentSearchProvenance
+import com.pocketsteward.app.content.index.ContentSearchSort
+import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.ui.theme.Spacing
+import java.text.DateFormat
+import java.util.Date
+import java.util.concurrent.TimeUnit
 
 /**
  * Every browse-or-decide surface, as one destination.
@@ -43,6 +56,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val title = when (val current = state) {
         is ScanUiState.FileListReview -> current.title
         is ScanUiState.ContentSearchReview -> current.title
+        is ScanUiState.IndexedContentSearchReview -> current.title
         is ScanUiState.CoherenceAuditReview -> "Coherence audit"
         is ScanUiState.DuplicateReview -> "Duplicates"
         is ScanUiState.ProtectFolders -> "Protect folders"
@@ -59,6 +73,14 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         when (val current = state) {
             is ScanUiState.FileListReview -> FileListReview(current, contentModifier)
             is ScanUiState.ContentSearchReview -> ContentSearchReview(current, contentModifier)
+            is ScanUiState.IndexedContentSearchReview -> IndexedContentSearchReview(
+                state = current,
+                onSortChange = viewModel::setIndexedSearchSort,
+                onFiltersChange = viewModel::setIndexedSearchFilters,
+                onResetFilters = viewModel::resetIndexedSearchFilters,
+                onRefresh = { viewModel.refreshIndexedSearch(current) },
+                modifier = contentModifier,
+            )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
                 state = current,
                 onBuildProposal = { includeSubfolders ->
@@ -196,6 +218,386 @@ private fun ContentMatchCard(match: ContentMatch) {
             )
         }
     }
+}
+
+@Composable
+private fun IndexedContentSearchReview(
+    state: ScanUiState.IndexedContentSearchReview,
+    onSortChange: (ContentSearchSort) -> Unit,
+    onFiltersChange: (ContentSearchFilters) -> Unit,
+    onResetFilters: () -> Unit,
+    onRefresh: () -> Unit,
+    modifier: Modifier,
+) {
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    var extensionMenuOpen by remember { mutableStateOf(false) }
+    var dateMenuOpen by remember { mutableStateOf(false) }
+    var sizeMenuOpen by remember { mutableStateOf(false) }
+    var expandedRefs by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    val visible = state.visibleResults
+    val refresh = state.refreshSummary
+    val indexDetails = buildString {
+        append("${visible.size} shown · ${state.allResults.size} matching file(s)")
+        append(" · ${refresh.reused} unchanged reused")
+        if (refresh.extracted > 0) append(" · ${refresh.extracted} refreshed")
+        if (refresh.unsupported > 0) append(" · ${refresh.unsupported} unsupported")
+        if (refresh.failed > 0) append(" · ${refresh.failed} failed")
+        if (!state.indexComplete) append(" · index incomplete")
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        ScreenHeadline(
+            text = state.title,
+            supporting = "$indexDetails · local persistent index",
+        )
+
+        Card(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+            Column(modifier = Modifier.padding(Spacing.base)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                ) {
+                    Column {
+                        OutlinedButton(onClick = { sortMenuOpen = true }) {
+                            Text("Sort: ${state.sort.label()}")
+                        }
+                        DropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false },
+                        ) {
+                            ContentSearchSort.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.label()) },
+                                    onClick = {
+                                        onSortChange(option)
+                                        sortMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = onRefresh) { Text("Refresh index") }
+                    if (state.filters.activeCount > 0) {
+                        TextButton(onClick = onResetFilters) {
+                            Text("Reset (${state.filters.activeCount})")
+                        }
+                    }
+                }
+
+                Text(
+                    "Source",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
+                    if (state.availableRoots.size > 1) {
+                        item {
+                            FilterChip(
+                                selected = state.filters.sourceRoots.isEmpty(),
+                                onClick = { onFiltersChange(state.filters.copy(sourceRoots = emptySet())) },
+                                label = { Text("All folders") },
+                            )
+                        }
+                    }
+                    items(state.availableRoots) { root ->
+                        val selected = root in state.filters.sourceRoots
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                val next = state.filters.sourceRoots.toMutableSet().apply {
+                                    if (selected) remove(root) else add(root)
+                                }
+                                onFiltersChange(state.filters.copy(sourceRoots = next))
+                            },
+                            label = { Text(root.substringAfterLast('/').ifBlank { root }) },
+                        )
+                    }
+                }
+
+                Text(
+                    "Type",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
+                    item {
+                        FilterChip(
+                            selected = state.filters.categories.isEmpty(),
+                            onClick = { onFiltersChange(state.filters.copy(categories = emptySet())) },
+                            label = { Text("All types") },
+                        )
+                    }
+                    items(state.availableCategories) { category ->
+                        val selected = category in state.filters.categories
+                        FilterChip(
+                            selected = selected,
+                            onClick = {
+                                val next = state.filters.categories.toMutableSet().apply {
+                                    if (selected) remove(category) else add(category)
+                                }
+                                onFiltersChange(state.filters.copy(categories = next))
+                            },
+                            label = { Text(category.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }) },
+                        )
+                    }
+                }
+
+                Text(
+                    "Content source",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
+                    items(ContentSearchProvenance.entries) { provenance ->
+                        FilterChip(
+                            selected = state.filters.provenance == provenance,
+                            onClick = { onFiltersChange(state.filters.copy(provenance = provenance)) },
+                            label = { Text(provenance.label()) },
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                ) {
+                    Column {
+                        OutlinedButton(onClick = { extensionMenuOpen = true }) {
+                            Text(
+                                if (state.filters.extensions.isEmpty()) {
+                                    "Extensions"
+                                } else {
+                                    "Extensions (${state.filters.extensions.size})"
+                                },
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = extensionMenuOpen,
+                            onDismissRequest = { extensionMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Any extension") },
+                                onClick = {
+                                    onFiltersChange(state.filters.copy(extensions = emptySet()))
+                                    extensionMenuOpen = false
+                                },
+                            )
+                            state.availableExtensions.forEach { ext ->
+                                val selected = ext in state.filters.extensions
+                                DropdownMenuItem(
+                                    text = { Text("${if (selected) "✓ " else ""}.$ext") },
+                                    onClick = {
+                                        val next = state.filters.extensions.toMutableSet().apply {
+                                            if (selected) remove(ext) else add(ext)
+                                        }
+                                        onFiltersChange(state.filters.copy(extensions = next))
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    Column {
+                        OutlinedButton(onClick = { dateMenuOpen = true }) {
+                            Text(if (state.filters.modifiedAfter == null && state.filters.modifiedBefore == null) "Date" else "Date ✓")
+                        }
+                        DropdownMenu(
+                            expanded = dateMenuOpen,
+                            onDismissRequest = { dateMenuOpen = false },
+                        ) {
+                            val now = System.currentTimeMillis()
+                            val choices = listOf(
+                                "Any date" to null,
+                                "Last 7 days" to now - TimeUnit.DAYS.toMillis(7),
+                                "Last 30 days" to now - TimeUnit.DAYS.toMillis(30),
+                                "Last 6 months" to now - TimeUnit.DAYS.toMillis(183),
+                                "Last year" to now - TimeUnit.DAYS.toMillis(365),
+                            )
+                            choices.forEach { (label, after) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        onFiltersChange(
+                                            state.filters.copy(
+                                                modifiedAfter = after,
+                                                modifiedBefore = null,
+                                            ),
+                                        )
+                                        dateMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    Column {
+                        OutlinedButton(onClick = { sizeMenuOpen = true }) {
+                            Text(if (state.filters.minSizeBytes == null && state.filters.maxSizeBytes == null) "Size" else "Size ✓")
+                        }
+                        DropdownMenu(
+                            expanded = sizeMenuOpen,
+                            onDismissRequest = { sizeMenuOpen = false },
+                        ) {
+                            val mib = 1024L * 1024L
+                            val choices = listOf(
+                                Triple("Any size", null, null),
+                                Triple("Under 1 MiB", null, mib),
+                                Triple("1–10 MiB", mib, 10 * mib),
+                                Triple("10–100 MiB", 10 * mib, 100 * mib),
+                                Triple("Over 100 MiB", 100 * mib, null),
+                            )
+                            choices.forEach { (label, min, max) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        onFiltersChange(
+                                            state.filters.copy(
+                                                minSizeBytes = min,
+                                                maxSizeBytes = max,
+                                            ),
+                                        )
+                                        sizeMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = state.filters.pathContains,
+                    onValueChange = { onFiltersChange(state.filters.copy(pathContains = it)) },
+                    label = { Text("Folder/path contains") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                )
+            }
+        }
+
+        if (visible.isEmpty()) {
+            EmptyState(
+                if (state.allResults.isEmpty()) {
+                    "No indexed file contents matched “${state.query}”."
+                } else {
+                    "No results match the current filters."
+                },
+            )
+            return@Column
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+        ) {
+            items(visible, key = { it.stableRef }) { result ->
+                IndexedContentResultCard(
+                    result = result,
+                    expanded = result.stableRef in expandedRefs,
+                    onToggleExpanded = {
+                        expandedRefs = expandedRefs.toMutableSet().apply {
+                            if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IndexedContentResultCard(
+    result: IndexedFileSearchResult,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text(
+                text = result.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = buildString {
+                    append(result.extension.ifBlank { "file" }.uppercase())
+                    append(" · ")
+                    append(formatBytes(result.sizeBytes))
+                    result.modifiedAt?.let {
+                        append(" · ")
+                        append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))
+                    }
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+            result.parentRef?.let { parent ->
+                Text(
+                    text = parent,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
+
+            val shown = if (expanded) result.snippets else result.snippets.take(1)
+            shown.forEachIndexed { index, snippet ->
+                if (snippet.pageNumber != null || snippet.ocr) {
+                    Text(
+                        text = buildString {
+                            snippet.pageNumber?.let { append("Page $it") }
+                            if (snippet.ocr) {
+                                if (isNotEmpty()) append(" · ")
+                                append("OCR")
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = Spacing.tight),
+                    )
+                }
+                Text(
+                    text = snippet.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = if (index == 0) Spacing.hairline else Spacing.tight),
+                )
+            }
+
+            if (result.extraSnippetCount > 0) {
+                TextButton(onClick = onToggleExpanded) {
+                    Text(
+                        if (expanded) {
+                            "Show less"
+                        } else {
+                            "Show ${result.extraSnippetCount} more match${if (result.extraSnippetCount == 1) "" else "es"}"
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun ContentSearchSort.label(): String = when (this) {
+    ContentSearchSort.RELEVANCE -> "Relevance"
+    ContentSearchSort.NAME_ASC -> "Name A–Z"
+    ContentSearchSort.NAME_DESC -> "Name Z–A"
+    ContentSearchSort.MODIFIED_NEWEST -> "Newest"
+    ContentSearchSort.MODIFIED_OLDEST -> "Oldest"
+    ContentSearchSort.LARGEST -> "Largest"
+    ContentSearchSort.SMALLEST -> "Smallest"
+    ContentSearchSort.PATH -> "Folder"
+}
+
+private fun ContentSearchProvenance.label(): String = when (this) {
+    ContentSearchProvenance.ANY -> "Any"
+    ContentSearchProvenance.PDF -> "PDF"
+    ContentSearchProvenance.OCR -> "OCR"
+    ContentSearchProvenance.EXTRACTED_TEXT -> "Text"
 }
 
 @Composable
