@@ -1189,7 +1189,7 @@ class ScanViewModel(
                                         )
                                         return@launch
                                     }
-                                    val inspector = ContentInspector(container.gatewayFor(summary.mode))
+                                    val inspector = container.contentInspector(summary.mode)
                                     val result = withContext(Dispatchers.IO) {
                                         inspector.search(records, contentTerm) { processed, total ->
                                             _uiState.value = ScanUiState.Working(
