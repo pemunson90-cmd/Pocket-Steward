@@ -18,3 +18,21 @@ jobs:
       - run: chmod +x gradlew
       - name: Clean build and full unit suite
         run: ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-m13-3-indexed-search-ui-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - name: Package local APK signer tooling
+        run: |
+          APK_SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          TOOL_DIR="$(dirname "$APK_SIGNER")"
+          mkdir -p "$RUNNER_TEMP/apksigner-tool/lib"
+          cp "$APK_SIGNER" "$RUNNER_TEMP/apksigner-tool/apksigner"
+          cp "$TOOL_DIR/lib/apksigner.jar" "$RUNNER_TEMP/apksigner-tool/lib/apksigner.jar"
+          chmod +x "$RUNNER_TEMP/apksigner-tool/apksigner"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apksigner-tool
+          path: ${{ runner.temp }}/apksigner-tool
+          if-no-files-found: error
