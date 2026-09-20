@@ -134,6 +134,10 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                 checked = privacy.contentInspectionEnabled,
                 onCheckedChange = viewModel::setContentInspectionEnabled,
             )
+            Text(
+                text = "Reads supported text/code and Office documents only when you ask. Extracted text stays in memory and is not added to the file index. PDF text is not enabled yet.",
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
             SettingsSwitchRow(
                 label = stringResource(R.string.settings_image_analysis),
                 checked = privacy.imageAnalysisEnabled,
