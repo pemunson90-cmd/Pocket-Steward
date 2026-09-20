@@ -16,9 +16,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/master-source"
           git log --oneline --decorate --all > "$RUNNER_TEMP/master-source/GIT-HISTORY.txt"
           git show-ref > "$RUNNER_TEMP/master-source/GIT-REFS.txt"
-          git rev-parse HEAD > "$RUNNER_TEMP/master-source/HEAD.txt"
+          SHIP_COMMIT="da612f04c8235870a08a637909676595f7c48cea"
+          echo "$SHIP_COMMIT" > "$RUNNER_TEMP/master-source/SHIPPING-HEAD.txt"
+          git show -s --format=fuller "$SHIP_COMMIT" > "$RUNNER_TEMP/master-source/SHIPPING-COMMIT.txt"
           git bundle create "$RUNNER_TEMP/master-source/Pocket-Steward-full-history.bundle" --all
-          git archive --format=zip --output="$RUNNER_TEMP/master-source/Pocket-Steward-source-snapshot.zip" HEAD
+          git archive --format=zip --output="$RUNNER_TEMP/master-source/Pocket-Steward-source-M11A-da612f0.zip" "$SHIP_COMMIT"
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-steward-master-source
