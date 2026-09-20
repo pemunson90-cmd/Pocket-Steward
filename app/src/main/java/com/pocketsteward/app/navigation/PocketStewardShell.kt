@@ -2,7 +2,7 @@ package com.pocketsteward.app.navigation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -29,7 +29,7 @@ private data class AppDestination(
 private val appDestinations = listOf(
     AppDestination("Home", Routes.HOME, Icons.Default.Home),
     AppDestination("Explore", Routes.SCAN_FLOW, Icons.Default.Search),
-    AppDestination("Tasks", Routes.HISTORY, Icons.Default.History),
+    AppDestination("Tasks", Routes.HISTORY, Icons.Default.Menu),
     AppDestination("Settings", Routes.SETTINGS, Icons.Default.Settings),
 )
 
