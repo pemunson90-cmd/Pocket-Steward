@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -17,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +46,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
     // A depth guard that silently remembers "on" from a previous run is not a
     // guard.
     var includeSubfolders by remember { mutableStateOf(false) }
+    var request by rememberSaveable { mutableStateOf("") }
 
     val state = summary
     ScanFlowScaffold(
@@ -102,6 +106,28 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                 modifier = Modifier.padding(Spacing.base),
                             )
                         }
+                    }
+                }
+
+                item { SectionHeader("Ask Pocket Steward") }
+                item {
+                    OutlinedTextField(
+                        value = request,
+                        onValueChange = { request = it },
+                        label = { Text("What should I do with these files?") },
+                        supportingText = {
+                            Text("Offline deterministic parser. Unknown requests are refused rather than guessed.")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item {
+                    Button(
+                        onClick = { viewModel.handleNaturalLanguage(state, request) },
+                        enabled = request.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Build request")
                     }
                 }
 
