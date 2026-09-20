@@ -27,6 +27,16 @@ object DeterministicIntentParser {
             )
         }
 
+        val unsupportedCriterion = Regex(
+            """\bolder\s+than\b|\bnewer\s+than\b|\bold\s+files?\b|\brecent\s+files?\b|\blargest\b|\bsmallest\b|\bbiggest\b|\bbefore\b|\bafter\b""",
+        ).find(lower)?.value
+        if (unsupportedCriterion != null && action != IntentAction.RENAME) {
+            return IntentParseResult.Unsupported(
+                "I understood the command, but M9 does not apply age, size, or date criteria inside text requests yet. " +
+                    "Use the existing quick action where available.",
+            )
+        }
+
         val categories = parseCategories(lower).toMutableSet()
         if (action == IntentAction.ARCHIVE && categories.isEmpty()) {
             categories += FileCategory.ARCHIVE
