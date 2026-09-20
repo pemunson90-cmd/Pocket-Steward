@@ -34,6 +34,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
     val busy by viewModel.busy.collectAsState()
     var includeSubfolders by remember { mutableStateOf(false) }
     var request by rememberSaveable { mutableStateOf("") }
+    var workflowName by rememberSaveable { mutableStateOf("") }
 
     val state = summary
     ScanFlowScaffold(
@@ -114,6 +115,44 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Ask")
+                    }
+                }
+
+
+                if (canChangeFiles) {
+                    item { SectionHeader("Save this setup") }
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(Spacing.base)) {
+                                Text(
+                                    "Save these folders${if (request.isNotBlank()) " + current Ask text" else ""}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    "Running it later performs a fresh scan before rerunning the request.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = Spacing.hairline),
+                                )
+                                OutlinedTextField(
+                                    value = workflowName,
+                                    onValueChange = { workflowName = it },
+                                    placeholder = { Text("Writing cleanup") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                                )
+                                Button(
+                                    onClick = {
+                                        viewModel.saveWorkflow(state, workflowName, request)
+                                        workflowName = ""
+                                    },
+                                    enabled = workflowName.isNotBlank(),
+                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                                ) {
+                                    Text("Save workflow")
+                                }
+                            }
+                        }
                     }
                 }
 
