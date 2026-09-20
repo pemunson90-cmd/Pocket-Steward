@@ -53,7 +53,9 @@ import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -357,6 +359,9 @@ class ScanViewModel(
     /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
     private var autoStarted = false
 
+    private var scanJob: Job? = null
+    private var userScanCancellationRequested: Boolean = false
+
     init {
         viewModelScope.launch {
             _uiState.collect { routeToDestination(it) }
@@ -508,10 +513,29 @@ class ScanViewModel(
                     targets = targets,
                     thenRequest = workflow.request.takeIf { it.isNotBlank() },
                 )
+            } catch (cancel: CancellationException) {
+                if (userScanCancellationRequested) {
+                    _uiState.value = ScanUiState.Error(
+                        "Scan paused. Progress was saved; run the same selected folders again to resume.",
+                    )
+                } else {
+                    throw cancel
+                }
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
+        scanJob = job
+        job.invokeOnCompletion {
+            if (scanJob === job) scanJob = null
+        }
+    }
+
+    fun cancelScan() {
+        val job = scanJob ?: return
+        if (!job.isActive) return
+        userScanCancellationRequested = true
+        job.cancel(CancellationException("User paused scan"))
     }
 
     /** Save a fresh-scan recipe, never a previously validated/executed plan. */
@@ -580,7 +604,9 @@ class ScanViewModel(
         thenRun: PostScanAction? = null,
         thenRequest: String? = null,
     ) {
-        viewModelScope.launch {
+        scanJob?.cancel()
+        userScanCancellationRequested = false
+        val job = viewModelScope.launch {
             // A new scan invalidates everything derived from the old one.
             // Doing it here rather than in reset() is what lets back keep the
             // results while "Scan again" still clears them.
