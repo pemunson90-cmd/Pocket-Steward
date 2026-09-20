@@ -1,6 +1,7 @@
 package com.pocketsteward.app.di
 
 import android.content.Context
+import androidx.core.content.ContextCompat
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.GeminiNanoAgentModel
@@ -12,6 +13,7 @@ import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.scan.FileScanner
+import com.pocketsteward.app.service.FileTaskForegroundService
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -66,5 +68,12 @@ class AppContainer(context: Context) {
 
     val mutationRecovery: MutationRecovery by lazy {
         MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), ::gatewayFor)
+    }
+
+    fun startForegroundTask(taskRunId: Long) {
+        ContextCompat.startForegroundService(
+            appContext,
+            FileTaskForegroundService.runIntent(appContext, taskRunId),
+        )
     }
 }
