@@ -8,6 +8,7 @@ import com.pocketsteward.app.ai.AgentModelDownloadState
 import com.pocketsteward.app.data.settings.PrivacySettings
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
+import com.pocketsteward.app.data.settings.UiSettings
 import com.pocketsteward.app.rules.ProjectKeyword
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -34,6 +35,9 @@ class SettingsViewModel(
 
     val storageAccessState: StateFlow<StorageAccessState> = settingsRepository.storageAccessState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StorageAccessState())
+
+    val uiSettings: StateFlow<UiSettings> = settingsRepository.uiSettings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiSettings())
 
     val projectKeywords: StateFlow<List<ProjectKeyword>> = settingsRepository.projectKeywords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -87,6 +91,10 @@ class SettingsViewModel(
             }
             refreshModelStatus()
         }
+    }
+
+    fun setAdvancedModeEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAdvancedModeEnabled(enabled) }
     }
 
     fun setMetadataIndexingEnabled(enabled: Boolean) {
