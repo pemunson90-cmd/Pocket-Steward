@@ -3,6 +3,9 @@ package com.pocketsteward.app.ui.scan
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketsteward.app.ai.AgentModelAvailability
+import com.pocketsteward.app.ai.CoherenceClass
+import com.pocketsteward.app.ai.SemanticDocument
 import com.pocketsteward.app.cleanup.CleanupScopeReport
 import com.pocketsteward.app.cleanup.DO_NOT_SORT_MARKER
 import com.pocketsteward.app.cleanup.DO_NOT_SORT_TEMPLATE
@@ -11,6 +14,8 @@ import com.pocketsteward.app.cleanup.SortScope
 import com.pocketsteward.app.cleanup.PlanRequest
 import com.pocketsteward.app.cleanup.RuleBasedPlanSource
 import com.pocketsteward.app.cleanup.previewLines
+import com.pocketsteward.app.content.ContentExtraction
+import com.pocketsteward.app.content.ContentExtractor
 import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.data.db.FileRecord
@@ -87,6 +92,14 @@ data class ProtectableFolder(
     val isProtected: Boolean,
     val scope: ScanScope,
 )
+
+data class CoherenceAuditRow(
+    val record: FileRecord,
+    val classification: CoherenceClass,
+    val reason: String,
+    val suggestedGroup: String?,
+)
+
 
 sealed interface ScanUiState {
     data object Idle : ScanUiState
@@ -166,6 +179,14 @@ sealed interface ScanUiState {
         val unsupportedFiles: Int,
         val failedFiles: Int,
         val truncatedResults: Boolean,
+    ) : ScanUiState
+
+    data class CoherenceAuditReview(
+        val scopeLabel: String,
+        val rows: List<CoherenceAuditRow>,
+        val modelName: String?,
+        val skippedUnreadable: Int,
+        val limited: Boolean,
     ) : ScanUiState
 
     /**
@@ -380,6 +401,7 @@ class ScanViewModel(
             is ScanUiState.DuplicateReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
+            is ScanUiState.CoherenceAuditReview,
             is ScanUiState.ProtectFolders,
             -> {
                 _review.value = state
@@ -639,6 +661,130 @@ class ScanViewModel(
      * [PlanValidator] every other plan goes through — nothing about being
      * rule-generated exempts it from validation.
      */
+
+    /**
+     * M10B's first model feature. Read-only by construction: content is
+     * extracted through ContentInspector, AgentModel receives bounded text,
+     * and the result is rendered as advice rather than PlannedOperation.
+     */
+    fun runCoherenceAudit(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Coherence audit", "Preparing local document excerpts")
+            try {
+                if (summary.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+
+                val privacy = settingsRepository.privacySettings.first()
+                if (!privacy.contentInspectionEnabled) {
+                    _uiState.value = ScanUiState.Error(
+                        "Document content inspection is off. Enable it in Settings before running a coherence audit.",
+                    )
+                    return@launch
+                }
+                if (!privacy.onDeviceAiEnabled) {
+                    _uiState.value = ScanUiState.Error(
+                        "On-device AI is off. Enable it in Settings before running a coherence audit.",
+                    )
+                    return@launch
+                }
+
+                when (container.agentModel.availability()) {
+                    AgentModelAvailability.AVAILABLE -> Unit
+                    AgentModelAvailability.DOWNLOADABLE -> {
+                        _uiState.value = ScanUiState.Error(
+                            "Gemini Nano is available to download. Open Settings and tap Download Gemini Nano.",
+                        )
+                        return@launch
+                    }
+                    AgentModelAvailability.DOWNLOADING -> {
+                        _uiState.value = ScanUiState.Error("Gemini Nano is still downloading.")
+                        return@launch
+                    }
+                    AgentModelAvailability.UNAVAILABLE -> {
+                        _uiState.value = ScanUiState.Error(
+                            "Gemini Nano is unavailable on this device or current AICore configuration.",
+                        )
+                        return@launch
+                    }
+                }
+
+                val records = filesForScopes(summary.scopes)
+                    .filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
+                    .sortedBy { it.stableRef }
+                val inspector = container.contentInspector(summary.mode)
+                val documents = mutableListOf<SemanticDocument>()
+                val recordById = linkedMapOf<String, FileRecord>()
+                var skippedUnreadable = 0
+
+                for (record in records) {
+                    if (documents.size >= 20) break
+                    _uiState.value = ScanUiState.Working(
+                        label = "Coherence audit",
+                        detail = "Reading ${record.displayName}",
+                        processed = documents.size,
+                        total = minOf(records.size, 20),
+                    )
+                    when (val extraction = withContext(Dispatchers.IO) { inspector.extract(record) }) {
+                        is ContentExtraction.Text -> {
+                            val normalized = extraction.content
+                                .replace(Regex("""\s+"""), " ")
+                                .trim()
+                            if (normalized.isBlank()) {
+                                skippedUnreadable++
+                                continue
+                            }
+                            val id = record.stableRef
+                            documents += SemanticDocument(
+                                id = id,
+                                displayName = record.displayName,
+                                sourcePath = record.stableRef,
+                                excerpt = normalized.take(1_800),
+                            )
+                            recordById[id] = record
+                        }
+                        is ContentExtraction.Unsupported,
+                        is ContentExtraction.Failed,
+                        -> skippedUnreadable++
+                    }
+                }
+
+                if (documents.isEmpty()) {
+                    _uiState.value = ScanUiState.Error(
+                        "No readable text documents were available for the coherence audit.",
+                    )
+                    return@launch
+                }
+
+                _uiState.value = ScanUiState.Working(
+                    "Coherence audit",
+                    "Gemini Nano is classifying the prepared documents on device",
+                )
+                val audit = container.agentModel.coherenceAudit(summary.scopeLabel, documents)
+                val rows = audit.findings.mapNotNull { finding ->
+                    val record = recordById[finding.id] ?: return@mapNotNull null
+                    CoherenceAuditRow(
+                        record = record,
+                        classification = finding.classification,
+                        reason = finding.reason,
+                        suggestedGroup = finding.suggestedGroup,
+                    )
+                }
+
+                _uiState.value = ScanUiState.CoherenceAuditReview(
+                    scopeLabel = summary.scopeLabel,
+                    rows = rows,
+                    modelName = audit.modelName,
+                    skippedUnreadable = skippedUnreadable,
+                    limited = audit.limited || records.size > documents.size,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     fun proposeSmartCleanup(summary: ScanUiState.Summary, includeSubfolders: Boolean = false) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
