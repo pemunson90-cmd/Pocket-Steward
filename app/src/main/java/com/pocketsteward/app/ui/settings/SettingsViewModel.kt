@@ -2,16 +2,32 @@ package com.pocketsteward.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketsteward.app.ai.AgentModel
+import com.pocketsteward.app.ai.AgentModelAvailability
+import com.pocketsteward.app.ai.AgentModelDownloadState
 import com.pocketsteward.app.data.settings.PrivacySettings
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
 import com.pocketsteward.app.rules.ProjectKeyword
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(private val settingsRepository: SettingsRepository) : ViewModel() {
+data class ModelStatusUi(
+    val availability: AgentModelAvailability? = null,
+    val downloading: Boolean = false,
+    val bytesDownloaded: Long = 0,
+    val bytesToDownload: Long? = null,
+    val error: String? = null,
+)
+
+class SettingsViewModel(
+    private val settingsRepository: SettingsRepository,
+    private val agentModel: AgentModel,
+) : ViewModel() {
 
     val privacySettings: StateFlow<PrivacySettings> = settingsRepository.privacySettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PrivacySettings())
@@ -21,6 +37,57 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
 
     val projectKeywords: StateFlow<List<ProjectKeyword>> = settingsRepository.projectKeywords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _modelStatus = MutableStateFlow(ModelStatusUi())
+    val modelStatus: StateFlow<ModelStatusUi> = _modelStatus
+
+    init {
+        refreshModelStatus()
+    }
+
+    fun refreshModelStatus() {
+        viewModelScope.launch {
+            _modelStatus.value = try {
+                ModelStatusUi(availability = agentModel.availability())
+            } catch (t: Throwable) {
+                ModelStatusUi(error = t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** User-initiated only. Merely enabling AI never starts this download. */
+    fun downloadModel() {
+        if (_modelStatus.value.downloading) return
+        viewModelScope.launch {
+            var total: Long? = null
+            agentModel.download().collect { state ->
+                _modelStatus.value = when (state) {
+                    is AgentModelDownloadState.Started -> {
+                        total = state.bytesToDownload
+                        ModelStatusUi(
+                            availability = AgentModelAvailability.DOWNLOADING,
+                            downloading = true,
+                            bytesToDownload = total,
+                        )
+                    }
+                    is AgentModelDownloadState.Progress -> ModelStatusUi(
+                        availability = AgentModelAvailability.DOWNLOADING,
+                        downloading = true,
+                        bytesDownloaded = state.bytesDownloaded,
+                        bytesToDownload = total,
+                    )
+                    AgentModelDownloadState.Completed -> ModelStatusUi(
+                        availability = AgentModelAvailability.AVAILABLE,
+                    )
+                    is AgentModelDownloadState.Failed -> ModelStatusUi(
+                        availability = AgentModelAvailability.DOWNLOADABLE,
+                        error = state.message,
+                    )
+                }
+            }
+            refreshModelStatus()
+        }
+    }
 
     fun setMetadataIndexingEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setMetadataIndexingEnabled(enabled) }
@@ -38,20 +105,6 @@ class SettingsViewModel(private val settingsRepository: SettingsRepository) : Vi
         viewModelScope.launch { settingsRepository.setOnDeviceAiEnabled(enabled) }
     }
 
-    /**
-     * Parses one "term=folder" pair per line (blank lines and lines without
-     * an `=` are silently dropped rather than rejected — this is a plain
-     * text field, not a form with validation errors) and persists the
-     * result. [RuleEngine][com.pocketsteward.app.rules.RuleEngine] reads
-     * this list fresh each time Smart Cleanup runs, so a save here takes
-     * effect on the next cleanup proposal, no restart needed.
-     */
-    /**
-     * Clears the stored access choice so onboarding offers broad-vs-SAF again
-     * on next launch. Deliberately does not revoke anything at the OS level —
-     * it can't, and pretending otherwise would be the same dishonesty the
-     * dead Home tiles were. It only forgets *this app's* recorded preference.
-     */
     fun clearStorageAccessChoice() {
         viewModelScope.launch { settingsRepository.clearStorageAccessChoice() }
     }
