@@ -29,6 +29,7 @@ object Routes {
     const val SCAN_FLOW = ScanFlow.GRAPH
 
     fun scanFlowWith(action: PostScanAction): String = ScanFlow.entryWith(action)
+    fun scanFlowWithRequest(request: String): String = ScanFlow.entryWithRequest(request)
 }
 
 @Composable
@@ -49,6 +50,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
                 onScanStorage = { navController.navigate(Routes.SCAN_FLOW) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
+                onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
             )
         }
         composable(Routes.SETTINGS) {
