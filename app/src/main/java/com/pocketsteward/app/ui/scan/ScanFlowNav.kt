@@ -33,14 +33,16 @@ object ScanFlow {
     const val ARG_ACTION = "action"
     const val ARG_REQUEST = "request"
     const val ARG_WORKFLOW = "workflow"
+    const val ARG_SAVED_SEARCH = "savedSearch"
 
     /** Entry route, optionally carrying a Home action, bounded request, or saved workflow id. */
     const val ENTRY =
-        "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}&$ARG_REQUEST={$ARG_REQUEST}&$ARG_WORKFLOW={$ARG_WORKFLOW}"
+        "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}&$ARG_REQUEST={$ARG_REQUEST}&$ARG_WORKFLOW={$ARG_WORKFLOW}&$ARG_SAVED_SEARCH={$ARG_SAVED_SEARCH}"
 
     fun entryWith(action: PostScanAction): String = "scan_flow/scan?$ARG_ACTION=${action.name}"
     fun entryWithRequest(request: String): String = "scan_flow/scan?$ARG_REQUEST=${Uri.encode(request)}"
     fun entryWithWorkflow(workflowId: String): String = "scan_flow/scan?$ARG_WORKFLOW=${Uri.encode(workflowId)}"
+    fun entryWithSavedSearch(searchId: String): String = "scan_flow/scan?$ARG_SAVED_SEARCH=${Uri.encode(searchId)}"
 }
 
 fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: () -> Unit) {
@@ -63,6 +65,11 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(ScanFlow.ARG_SAVED_SEARCH) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             val viewModel = scanViewModel(navController)
@@ -72,6 +79,7 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                 autoAction = PostScanAction.fromRoute(entry.arguments?.getString(ScanFlow.ARG_ACTION)),
                 autoRequest = entry.arguments?.getString(ScanFlow.ARG_REQUEST),
                 autoWorkflowId = entry.arguments?.getString(ScanFlow.ARG_WORKFLOW),
+                autoSavedSearchId = entry.arguments?.getString(ScanFlow.ARG_SAVED_SEARCH),
                 onOpenPicker = { viewModel.browseFolders() },
                 onBack = onExitFlow,
             )
