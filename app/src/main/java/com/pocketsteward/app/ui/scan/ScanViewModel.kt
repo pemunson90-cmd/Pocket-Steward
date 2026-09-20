@@ -606,6 +606,7 @@ class ScanViewModel(
     ) {
         scanJob?.cancel()
         userScanCancellationRequested = false
+
         val job = viewModelScope.launch {
             // A new scan invalidates everything derived from the old one.
             // Doing it here rather than in reset() is what lets back keep the
@@ -617,6 +618,7 @@ class ScanViewModel(
             _picker.value = null
             _error.value = null
             _uiState.value = ScanUiState.Scanning(ScanProgress(0, null, ScanPhase.SCANNING))
+
             try {
                 val accessState = settingsRepository.storageAccessState.first()
                 val mode = accessState.mode
@@ -631,11 +633,13 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("Select at least one folder to scan.")
                     return@launch
                 }
+
                 val scanner = container.fileScanner(mode)
                 var completedBeforeThisRoot = 0
 
-                // Each root remains an independent scanner scope in Room.
-                // The UI aggregates them only after every root succeeds.
+                // Each root remains independent in Room. A paused current
+                // root resumes from its durable queue; already-completed
+                // earlier roots may be rescanned on the next multi-root run.
                 for (scope in scopes) {
                     var thisRootProcessed = 0
                     withContext(Dispatchers.IO) {
@@ -670,8 +674,6 @@ class ScanViewModel(
                 )
                 _uiState.value = summary
 
-                // Spec 2d. Only folders the user actually picked, and only
-                // after the whole selected scan succeeds.
                 targets.filterIsInstance<ScanTarget.CustomFolder>().forEach {
                     settingsRepository.rememberRecentFolder(it.absolutePath)
                 }
@@ -688,10 +690,30 @@ class ScanViewModel(
                 thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
                     handleNaturalLanguage(summary, request)
                 }
+            } catch (cancel: CancellationException) {
+                if (userScanCancellationRequested) {
+                    _uiState.value = ScanUiState.Error(
+                        "Scan paused. Progress was saved; run the same selected folders again to resume.",
+                    )
+                } else {
+                    throw cancel
+                }
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
+
+        scanJob = job
+        job.invokeOnCompletion {
+            if (scanJob === job) scanJob = null
+        }
+    }
+
+    fun cancelScan() {
+        val job = scanJob ?: return
+        if (!job.isActive) return
+        userScanCancellationRequested = true
+        job.cancel(CancellationException("User paused scan"))
     }
 
     /**
