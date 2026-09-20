@@ -11,6 +11,8 @@ import com.pocketsteward.app.cleanup.SortScope
 import com.pocketsteward.app.cleanup.PlanRequest
 import com.pocketsteward.app.cleanup.RuleBasedPlanSource
 import com.pocketsteward.app.cleanup.previewLines
+import com.pocketsteward.app.content.ContentInspector
+import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
@@ -155,6 +157,16 @@ sealed interface ScanUiState {
     }
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
+    /** M10A on-demand local content search. Read-only and never persisted to Room. */
+    data class ContentSearchReview(
+        val title: String,
+        val query: String,
+        val matches: List<ContentMatch>,
+        val inspectedFiles: Int,
+        val unsupportedFiles: Int,
+        val failedFiles: Int,
+        val truncatedResults: Boolean,
+    ) : ScanUiState
 
     /**
      * Spec 6c: the in-app folder browser. Directories only — this exists to
@@ -367,6 +379,7 @@ class ScanViewModel(
 
             is ScanUiState.DuplicateReview,
             is ScanUiState.FileListReview,
+            is ScanUiState.ContentSearchReview,
             is ScanUiState.ProtectFolders,
             -> {
                 _review.value = state
@@ -1158,17 +1171,54 @@ class ScanViewModel(
 
                             IntentAction.FIND -> {
                                 val records = filesForScopes(summary.scopes)
-                                val matches = records.filter { record ->
-                                    !record.isDirectory &&
-                                        (intent.categories.isEmpty() ||
-                                            classifyByExtension(record.extension) in intent.categories) &&
-                                        (intent.findTerm == null ||
-                                            record.displayName.contains(intent.findTerm, ignoreCase = true))
+                                    .filter { record ->
+                                        !record.isDirectory &&
+                                            (intent.categories.isEmpty() ||
+                                                classifyByExtension(record.extension) in intent.categories)
+                                    }
+                                val contentTerm = intent.contentTerm
+                                if (contentTerm != null) {
+                                    if (summary.mode != StorageAccessMode.DIRECT) {
+                                        _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                                        return@launch
+                                    }
+                                    val privacy = settingsRepository.privacySettings.first()
+                                    if (!privacy.contentInspectionEnabled) {
+                                        _uiState.value = ScanUiState.Error(
+                                            "Document content inspection is off. Enable it in Settings to search inside files.",
+                                        )
+                                        return@launch
+                                    }
+                                    val inspector = ContentInspector(container.gatewayFor(summary.mode))
+                                    val result = withContext(Dispatchers.IO) {
+                                        inspector.search(records, contentTerm) { processed, total ->
+                                            _uiState.value = ScanUiState.Working(
+                                                label = "Searching file contents",
+                                                detail = "Local read-only inspection",
+                                                processed = processed,
+                                                total = total,
+                                            )
+                                        }
+                                    }
+                                    _uiState.value = ScanUiState.ContentSearchReview(
+                                        title = "Content matches for “$contentTerm”",
+                                        query = contentTerm,
+                                        matches = result.matches,
+                                        inspectedFiles = result.inspectedFiles,
+                                        unsupportedFiles = result.unsupportedFiles,
+                                        failedFiles = result.failedFiles,
+                                        truncatedResults = result.truncatedResults,
+                                    )
+                                } else {
+                                    val matches = records.filter { record ->
+                                        intent.findTerm == null ||
+                                            record.displayName.contains(intent.findTerm, ignoreCase = true)
+                                    }
+                                    _uiState.value = ScanUiState.FileListReview(
+                                        title = "Request: ${intent.rawRequest}",
+                                        records = matches,
+                                    )
                                 }
-                                _uiState.value = ScanUiState.FileListReview(
-                                    title = "Request: ${intent.rawRequest}",
-                                    records = matches,
-                                )
                             }
 
                             IntentAction.RENAME -> {
