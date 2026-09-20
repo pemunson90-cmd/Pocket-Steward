@@ -65,13 +65,24 @@ class HistoryViewModel(
     val actionState: StateFlow<HistoryActionState> = _actionState
 
     fun resumeTask(task: TaskRun) {
-        try {
-            startForegroundTask(task.id)
-            _actionState.value = HistoryActionState.BackgroundStarted(
-                "Task #${task.id} is continuing in the foreground service. Progress is shown in the notification.",
-            )
-        } catch (t: Throwable) {
-            _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
+        viewModelScope.launch {
+            try {
+                val otherRunning = withContext(Dispatchers.IO) {
+                    taskRunDao.getRunning().firstOrNull { it.id != task.id }
+                }
+                if (otherRunning != null) {
+                    _actionState.value = HistoryActionState.Error(
+                        "Task #${otherRunning.id} is already running. Pause or finish it before continuing another task.",
+                    )
+                    return@launch
+                }
+                startForegroundTask(task.id)
+                _actionState.value = HistoryActionState.BackgroundStarted(
+                    "Task #${task.id} is continuing in the foreground service. Progress is shown in the notification.",
+                )
+            } catch (t: Throwable) {
+                _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
+            }
         }
     }
 
