@@ -1,5 +1,6 @@
 package com.pocketsteward.app.ui.scan
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -30,11 +31,13 @@ import com.pocketsteward.app.PocketStewardApplication
 object ScanFlow {
     const val GRAPH = "scan_flow"
     const val ARG_ACTION = "action"
+    const val ARG_REQUEST = "request"
 
-    /** Entry route, optionally carrying a Home tile's [PostScanAction]. */
-    const val ENTRY = "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}"
+    /** Entry route, optionally carrying a Home tile action or bounded text request. */
+    const val ENTRY = "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}&$ARG_REQUEST={$ARG_REQUEST}"
 
     fun entryWith(action: PostScanAction): String = "scan_flow/scan?$ARG_ACTION=${action.name}"
+    fun entryWithRequest(request: String): String = "scan_flow/scan?$ARG_REQUEST=${Uri.encode(request)}"
 }
 
 fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: () -> Unit) {
@@ -47,6 +50,11 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(ScanFlow.ARG_REQUEST) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             val viewModel = scanViewModel(navController)
@@ -54,6 +62,7 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
             ScanScreen(
                 viewModel = viewModel,
                 autoAction = PostScanAction.fromRoute(entry.arguments?.getString(ScanFlow.ARG_ACTION)),
+                autoRequest = entry.arguments?.getString(ScanFlow.ARG_REQUEST),
                 onOpenPicker = { viewModel.browseFolders() },
                 onBack = onExitFlow,
             )
