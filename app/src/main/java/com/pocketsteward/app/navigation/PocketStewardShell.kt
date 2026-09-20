@@ -40,7 +40,7 @@ fun PocketStewardShell(
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val current = backStackEntry?.destination
-    val showNavigation = current?.route != Routes.ONBOARDING
+    val showNavigation = current != null && current.route != Routes.ONBOARDING
 
     Scaffold(
         bottomBar = {
