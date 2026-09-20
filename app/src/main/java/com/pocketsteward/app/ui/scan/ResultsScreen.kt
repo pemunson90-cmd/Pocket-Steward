@@ -23,34 +23,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.pocketsteward.app.cleanup.DO_NOT_SORT_MARKER
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.ui.theme.Spacing
 
-/**
- * The scan result and what can be done with it.
- *
- * This is the destination back returns to from every review, preview and
- * completion screen, which is the whole point of M7 item 1: the index behind
- * [ScanUiState.Summary] cost a full filesystem walk to build and must not be
- * thrown away by a back press.
- */
 @Composable
 fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () -> Unit = onBack) {
     val summary by viewModel.summary.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
-
-    // Spec 6a: off by default, and re-defaulted to off on every composition.
-    // A depth guard that silently remembers "on" from a previous run is not a
-    // guard.
     var includeSubfolders by remember { mutableStateOf(false) }
     var request by rememberSaveable { mutableStateOf("") }
 
     val state = summary
     ScanFlowScaffold(
-        title = state?.scopeLabel ?: "Results",
+        title = "Explore",
         onBack = onBack,
         error = error,
         onDismissError = viewModel::dismissError,
@@ -61,12 +48,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
             return@ScanFlowScaffold
         }
 
-        // One fence for one limitation. SAF mode can scan and browse; it
-        // can't mutate or read contents, because those gateway methods are
-        // deliberately unimplemented. Rather than offering actions that then
-        // fail three different ways, the actions that need those capabilities
-        // aren't shown.
-        val canMutate = state.mode == StorageAccessMode.DIRECT
+        val canChangeFiles = state.mode == StorageAccessMode.DIRECT
 
         Column(modifier = contentModifier.fillMaxWidth()) {
             ScreenHeadline(
@@ -78,30 +60,32 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
-                item { SectionHeader("What's here") }
-                items(FileCategory.entries) { category ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = category.name.lowercase().replaceFirstChar { it.uppercase() },
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = "${state.byCategory[category]?.fileCount ?: 0}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                item { SectionHeader("Overview") }
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(Spacing.base)) {
+                            FileCategory.entries.forEach { category ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(category.friendlyName(), style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "${state.byCategory[category]?.fileCount ?: 0}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
-                if (!canMutate) {
+                if (!canChangeFiles) {
                     item {
-                        Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.base)) {
+                        Card(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "Folder-only access: scanning and browsing work here. Moving, trashing, " +
-                                    "and duplicate detection need full file-manager access — change it in Settings.",
+                                "This access mode is browse-only. Change storage access in Settings to organize or move files.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.base),
                             )
@@ -109,15 +93,17 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     }
                 }
 
-                item { SectionHeader("Ask Pocket Steward") }
+                item { SectionHeader("Ask about this scan") }
                 item {
                     OutlinedTextField(
                         value = request,
                         onValueChange = { request = it },
-                        label = { Text("What should I do with these files?") },
+                        placeholder = { Text("Find documents containing Lilith") },
                         supportingText = {
-                            Text("Offline deterministic parser. Try “find documents containing Lilith”. Content inspection must be enabled in Settings.")
+                            Text("Requests apply only to the folders in this scan.")
                         },
+                        minLines = 2,
+                        maxLines = 5,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -127,120 +113,122 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         enabled = request.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Build request")
+                        Text("Ask")
                     }
                 }
 
-                item { SectionHeader("Actions") }
-
-                if (canMutate) {
+                if (canChangeFiles) {
+                    item { SectionHeader("Organize") }
                     item {
                         ActionCard(
                             title = "Smart cleanup",
                             supporting = if (includeSubfolders) {
-                                "Rule-based, no AI. Will also sort files already inside folders."
+                                "Organize confident matches, including files already inside folders."
                             } else {
-                                "Rule-based, no AI. Only files sitting loose in ${state.scopeLabel}."
+                                "Organize confident matches sitting directly in the selected folders."
                             },
                             onClick = { viewModel.proposeSmartCleanup(state, includeSubfolders) },
                         )
                     }
                     item {
-                        // Outside the tile so tapping the switch can't start a
-                        // run. Spec 6a: sorting into existing folders is a
-                        // per-run choice someone has to make on purpose.
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("Include files inside subfolders", style = MaterialTheme.typography.bodyMedium)
+                            Column(modifier = Modifier.weight(1f).padding(end = Spacing.base)) {
+                                Text("Include nested files", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Off by default so existing folder structures stay untouched.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it })
                         }
                     }
+                }
 
-                    val apkCount = state.byCategory[FileCategory.APK]?.fileCount ?: 0
-                    if (apkCount > 0) {
-                        item {
-                            ActionCard(
-                                title = "Move $apkCount APK(s) into an APKs subfolder",
-                                supporting = "Milestone 2's fixed-plan sanity check",
-                                onClick = { viewModel.proposeOrganizeApks(state) },
-                            )
-                        }
-                    }
-
+                item { SectionHeader("Find") }
+                if (canChangeFiles) {
                     item {
                         ActionCard(
-                            title = "Find duplicates",
-                            supporting = "Exact match only, by SHA-256",
+                            title = "Duplicates",
+                            supporting = "Find byte-identical copies and choose what to keep.",
                             onClick = { viewModel.findDuplicates(state) },
                         )
                     }
-                    item {
-                        ActionCard(
-                            title = "Protect folders from sorting",
-                            supporting = "Puts a $DO_NOT_SORT_MARKER file in a folder. Survives reinstall.",
-                            onClick = { viewModel.reviewFolderProtection(state) },
-                        )
-                    }
                 }
-
                 item {
                     ActionCard(
-                        title = "Find largest files",
-                        supporting = "Browse only",
+                        title = "Largest files",
+                        supporting = "See the 50 files using the most space.",
                         onClick = { viewModel.findLargestFiles(state) },
                     )
                 }
                 item {
                     ActionCard(
-                        title = "Find files older than 6 months",
-                        supporting = "Browse only",
+                        title = "Older files",
+                        supporting = "See files not modified in the last six months.",
                         onClick = { viewModel.findOldFiles(state) },
                     )
                 }
                 item {
                     ActionCard(
-                        title = "Review uncategorized",
-                        supporting = "What the rules could not place, and why",
+                        title = "Uncategorized",
+                        supporting = "See what the deterministic rules could not place confidently.",
                         onClick = { viewModel.findUncategorized(state) },
                     )
                 }
-                if (canMutate) {
+
+                if (canChangeFiles) {
+                    item { SectionHeader("Understand") }
                     item {
                         ActionCard(
                             title = "Coherence audit",
-                            supporting = "Read-only · Gemini Nano on device · flags questionable files and suggests where they may belong",
+                            supporting = "On-device intelligence reviews readable documents, flags questionable files, and suggests where they may belong. Nothing moves.",
                             onClick = { viewModel.runCoherenceAudit(state) },
+                        )
+                    }
+
+                    item { SectionHeader("Protect") }
+                    item {
+                        ActionCard(
+                            title = "Protect folders",
+                            supporting = "Keep selected folders and everything inside them out of automated organization.",
+                            onClick = { viewModel.reviewFolderProtection(state) },
                         )
                     }
                 }
             }
 
             ActionRow {
-                // The one thing that genuinely throws the index away, and the
-                // only caller of reset() left in the UI. Back does not do
-                // this, which is the entire point of M7 item 1.
-                OutlinedButton(onClick = onScanAgain) { Text("Scan again") }
+                OutlinedButton(onClick = onScanAgain) { Text("Choose different folders") }
             }
         }
     }
 }
 
 @Composable
-private fun ActionCard(title: String, supporting: String?, onClick: () -> Unit) {
+private fun ActionCard(title: String, supporting: String, onClick: () -> Unit) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.screen)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            supporting?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = Spacing.hairline),
-                )
-            }
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                supporting,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
         }
     }
+}
+
+private fun FileCategory.friendlyName(): String = when (this) {
+    FileCategory.IMAGE -> "Images"
+    FileCategory.DOCUMENT -> "Documents"
+    FileCategory.APK -> "App installers"
+    FileCategory.ARCHIVE -> "Archives"
+    FileCategory.AUDIO_VIDEO -> "Audio & video"
+    FileCategory.OTHER -> "Other"
 }
