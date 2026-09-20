@@ -9,11 +9,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -35,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.ai.AgentModelAvailability
 import com.pocketsteward.app.R
 import com.pocketsteward.app.storage.StorageAccessMode
 
@@ -45,13 +48,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory {
-            initializer { SettingsViewModel(container.settingsRepository) }
+            initializer { SettingsViewModel(container.settingsRepository, container.agentModel) }
         },
     )
 
     val privacy by viewModel.privacySettings.collectAsState()
     val storageAccess by viewModel.storageAccessState.collectAsState()
     val storedKeywords by viewModel.projectKeywords.collectAsState()
+    val modelStatus by viewModel.modelStatus.collectAsState()
 
     // Seeded once from the stored value, not re-synced on every emission —
     // otherwise an in-progress edit would get overwritten by the DataStore
@@ -148,6 +152,43 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                 checked = privacy.onDeviceAiEnabled,
                 onCheckedChange = viewModel::setOnDeviceAiEnabled,
             )
+            Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Gemini Nano", style = androidx.compose.material3.MaterialTheme.typography.titleSmall)
+                    val statusText = when (modelStatus.availability) {
+                        AgentModelAvailability.AVAILABLE -> "Available on device"
+                        AgentModelAvailability.DOWNLOADABLE -> "Available to download"
+                        AgentModelAvailability.DOWNLOADING -> "Downloading"
+                        AgentModelAvailability.UNAVAILABLE -> "Unavailable on this device/configuration"
+                        null -> "Checking availability"
+                    }
+                    Text(statusText, modifier = Modifier.padding(top = 4.dp))
+                    modelStatus.error?.let { Text(it, modifier = Modifier.padding(top = 4.dp)) }
+                    if (modelStatus.downloading) {
+                        val total = modelStatus.bytesToDownload
+                        if (total != null && total > 0L) {
+                            LinearProgressIndicator(
+                                progress = { (modelStatus.bytesDownloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                        }
+                    }
+                    if (modelStatus.availability == AgentModelAvailability.DOWNLOADABLE && !modelStatus.downloading) {
+                        Button(
+                            onClick = viewModel::downloadModel,
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) {
+                            Text("Download Gemini Nano")
+                        }
+                    }
+                    Text(
+                        "Pocket Steward will never start the model download merely because AI is enabled.",
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
 
             HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
 
