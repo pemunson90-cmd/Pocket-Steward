@@ -29,7 +29,10 @@ data class BoundedIntent(
     val mainFolder: String? = null,
     val includeSubfolders: Boolean = false,
     val leaveUncertain: Boolean = true,
+    /** Filename term for ordinary metadata-only find requests. */
     val findTerm: String? = null,
+    /** Content term means the request explicitly asked to inspect file contents. */
+    val contentTerm: String? = null,
     val renameFrom: String? = null,
     val renameTo: String? = null,
 )
