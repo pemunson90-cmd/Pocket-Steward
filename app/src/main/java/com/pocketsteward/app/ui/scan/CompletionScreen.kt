@@ -72,8 +72,44 @@ fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
                 onDone = onDone,
                 modifier = contentModifier,
             )
+            is ScanUiState.ExecutionQueued -> ExecutionQueued(
+                state = current,
+                onDone = onDone,
+                modifier = contentModifier,
+            )
             is ScanUiState.UndoDone -> UndoDone(current.summary, onDone, contentModifier)
             else -> EmptyState("Nothing has run yet.", contentModifier)
+        }
+    }
+}
+
+@Composable
+private fun ExecutionQueued(
+    state: ScanUiState.ExecutionQueued,
+    onDone: () -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        ScreenHeadline(
+            text = "Running in background",
+            supporting = "${state.operationCount} approved operation(s) · task #${state.taskRunId}",
+        )
+        Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.base)) {
+            Column(modifier = Modifier.padding(Spacing.base)) {
+                Text(
+                    "Pocket Steward saved the exact approved plan before starting.",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "You can leave this screen or the app. Progress and Pause live in the foreground notification, and the task remains visible in Tasks. If Android stops it, Resume continues from the journal instead of replaying finished operations.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+            }
+        }
+        ActionRow {
+            Button(onClick = onDone) { Text("Done") }
         }
     }
 }
