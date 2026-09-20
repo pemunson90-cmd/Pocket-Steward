@@ -2,6 +2,8 @@ package com.pocketsteward.app.di
 
 import android.content.Context
 import com.pocketsteward.app.data.db.AppDatabase
+import com.pocketsteward.app.ai.AgentModel
+import com.pocketsteward.app.ai.GeminiNanoAgentModel
 import com.pocketsteward.app.content.AndroidPdfContentExtractor
 import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.data.settings.SettingsRepository
@@ -25,6 +27,7 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
+    val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
 
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
