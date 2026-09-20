@@ -12,6 +12,7 @@ import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.data.db.UndoState
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
@@ -24,6 +25,7 @@ import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.CancellationException
 
 data class ExecutionSummary(
     val taskRunId: Long,
@@ -55,6 +57,7 @@ data class ExecutionSummary(
      * distinction `MutationResult.Success.changed` draws for undo.
      */
     val createdFolders: List<String> = emptyList(),
+    val cancelled: Boolean = false,
 ) {
     val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed + filesWritten
 }
@@ -109,7 +112,7 @@ class PlanExecutor(
                 completedAt = null,
                 status = TaskRunStatus.RUNNING,
                 scanSnapshotId = null,
-                planJson = describePlan(plan.goal, validated),
+                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted),
                 summary = null,
                 scopeRootRef = scopeRootRef,
                 storageAccessMode = storageAccessMode,
@@ -336,6 +339,8 @@ class PlanExecutor(
             is PlannedOperation.WriteTextFile ->
                 gateway.writeTextFile(operation.parent, operation.name, operation.content)
         }
+    } catch (cancel: CancellationException) {
+        throw cancel
     } catch (t: Throwable) {
         MutationResult.Failure(t.message ?: t.javaClass.simpleName, t)
     }
