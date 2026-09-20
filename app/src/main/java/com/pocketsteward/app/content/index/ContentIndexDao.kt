@@ -94,14 +94,28 @@ interface ContentIndexDao {
         """
         SELECT s.id AS segmentId,
                s.stableRef AS stableRef,
+               d.sourceRoot AS sourceRoot,
+               d.displayName AS displayName,
+               d.parentRef AS parentRef,
+               d.extension AS extension,
+               d.category AS category,
+               d.sizeBytes AS sizeBytes,
+               d.modifiedAt AS modifiedAt,
+               d.contentKind AS contentKind,
                s.pageNumber AS pageNumber,
                s.ocr AS ocr,
                snippet(indexed_segments_fts, '⟦', '⟧', ' … ', 0, 28) AS snippet
         FROM indexed_segments_fts
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
+        INNER JOIN indexed_documents d ON d.stableRef = s.stableRef
         WHERE indexed_segments_fts MATCH :matchQuery
+          AND d.sourceRoot IN (:sourceRoots)
         LIMIT :limit
         """,
     )
-    suspend fun searchSegments(matchQuery: String, limit: Int): List<IndexedSearchHit>
+    suspend fun searchRows(
+        matchQuery: String,
+        sourceRoots: List<String>,
+        limit: Int,
+    ): List<IndexedSearchRow>
 }
