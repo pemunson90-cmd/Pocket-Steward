@@ -277,6 +277,248 @@ class PlanExecutor(
         return summary
     }
 
+    /**
+     * Continues an interrupted durable task under the same taskRunId.
+     *
+     * MutationRecovery must resolve any PENDING row before this is called.
+     * Resolved COMMITTED/FAILED rows are never replayed; execution begins at
+     * the first sequence that has no journal row.
+     */
+    suspend fun resume(
+        taskRunId: Long,
+        shouldPause: () -> Boolean = { false },
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+    ): ExecutionSummary {
+        var task = taskRunDao.getById(taskRunId) ?: error("Unknown task run: $taskRunId")
+        require(task.status == TaskRunStatus.RUNNING || task.status == TaskRunStatus.CANCELLED) {
+            "Task is not resumable: ${task.status}"
+        }
+
+        val durable = DurablePlanCodec.decodeOrNull(task.planJson)
+            ?: error("This task predates durable plan manifests and cannot be resumed safely.")
+        val operations = durable.operations
+        val existingRecords = mutationRecordDao.getForTaskRun(taskRunId)
+
+        require(existingRecords.none { it.status == MutationStatus.PENDING }) {
+            "Task still has a PENDING mutation. Run mutation recovery before resuming."
+        }
+        require(existingRecords.none { it.status == MutationStatus.NEEDS_REVIEW }) {
+            "Task has an ambiguous mutation and needs review before resuming."
+        }
+        require(existingRecords.map { it.sequence }.distinct().size == existingRecords.size) {
+            "Task journal contains duplicate operation sequences."
+        }
+        require(existingRecords.all { it.sequence in operations.indices }) {
+            "Task journal contains a sequence outside the durable plan."
+        }
+
+        task = task.copy(
+            status = TaskRunStatus.RUNNING,
+            completedAt = null,
+        )
+        taskRunDao.update(task)
+
+        var foldersCreated = 0
+        var filesMoved = 0
+        var filesRenamed = 0
+        var filesTrashed = 0
+        var filesWritten = 0
+        var failed = 0
+        val failures = mutableListOf<OperationFailure>()
+        val createdFolders = mutableListOf<String>()
+        val existingBySequence = existingRecords.associateBy { it.sequence }
+
+        fun countCommitted(sequence: Int, record: MutationRecord) {
+            if (record.status != MutationStatus.COMMITTED || record.undoState != UndoState.AVAILABLE) return
+            val operation = operations[sequence]
+            when (operation) {
+                is PlannedOperation.CreateDirectory -> {
+                    foldersCreated++
+                    record.destinationAfter
+                        ?.let(FileRefJournalCodec::decode)
+                        ?.rawValue()
+                        ?.let(createdFolders::add)
+                }
+                is PlannedOperation.Move -> filesMoved++
+                is PlannedOperation.Rename -> filesRenamed++
+                is PlannedOperation.Trash -> filesTrashed++
+                is PlannedOperation.WriteTextFile -> filesWritten++
+            }
+        }
+
+        for (record in existingRecords) {
+            when (record.status) {
+                MutationStatus.COMMITTED -> countCommitted(record.sequence, record)
+                MutationStatus.FAILED -> {
+                    val reason = record.error ?: "Operation failed before interruption."
+                    failures += operations[record.sequence].toFailure(record.sequence, reason)
+                    failed++
+                }
+                MutationStatus.UNDONE -> error("A task with undone operations cannot be resumed.")
+                MutationStatus.PENDING,
+                MutationStatus.NEEDS_REVIEW,
+                -> error("Task journal is not in a resumable state.")
+            }
+        }
+
+        fun summary(cancelled: Boolean = false): ExecutionSummary = ExecutionSummary(
+            taskRunId = taskRunId,
+            foldersCreated = foldersCreated,
+            filesMoved = filesMoved,
+            filesRenamed = filesRenamed,
+            filesTrashed = filesTrashed,
+            filesWritten = filesWritten,
+            failed = failed,
+            leftUntouched = emptyList(),
+            failures = failures.toList(),
+            createdFolders = createdFolders.toList(),
+            cancelled = cancelled,
+        )
+
+        onProgress(existingBySequence.size, operations.size)
+
+        for ((sequence, operation) in operations.withIndex()) {
+            if (sequence in existingBySequence) continue
+
+            if (shouldPause()) {
+                val paused = summary(cancelled = true)
+                val latest = taskRunDao.getById(taskRunId) ?: task
+                taskRunDao.update(
+                    latest.copy(
+                        status = TaskRunStatus.CANCELLED,
+                        completedAt = System.currentTimeMillis(),
+                        summary = "Paused after ${paused.succeededTotal + paused.failed} of ${operations.size} operations.",
+                    ),
+                )
+                return paused
+            }
+
+            val expectedDestination = try {
+                expectedDestination(operation)
+            } catch (t: Throwable) {
+                val reason = t.message ?: t.javaClass.simpleName
+                recordPreflightFailure(taskRunId, sequence, operation, reason)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, operations.size)
+                continue
+            }
+
+            if (operation is PlannedOperation.CreateDirectory &&
+                expectedDestination != null &&
+                gateway.exists(expectedDestination)
+            ) {
+                val existing = gateway.stat(expectedDestination)
+                if (existing.isDirectory) {
+                    mutationRecordDao.insert(
+                        newRecord(
+                            taskRunId = taskRunId,
+                            sequence = sequence,
+                            operation = operation,
+                            destination = expectedDestination,
+                            status = MutationStatus.COMMITTED,
+                            executedAt = System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                        ),
+                    )
+                    onProgress(sequence + 1, operations.size)
+                    continue
+                }
+                val reason = "A file already occupies the requested directory path."
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, operations.size)
+                continue
+            }
+
+            val mutationId = mutationRecordDao.insert(
+                newRecord(
+                    taskRunId = taskRunId,
+                    sequence = sequence,
+                    operation = operation,
+                    destination = expectedDestination,
+                    status = MutationStatus.PENDING,
+                    executedAt = null,
+                    undoState = UndoState.NOT_AVAILABLE,
+                ),
+            )
+
+            when (val result = runOne(operation)) {
+                is MutationResult.Success -> {
+                    val committed = MutationRecord(
+                        id = mutationId,
+                        taskRunId = taskRunId,
+                        sequence = sequence,
+                        operationType = operation.toOperationType(),
+                        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                        destinationAfter = FileRefJournalCodec.encode(result.resultRef),
+                        sourceFingerprint = operation.fingerprintOrNull(),
+                        status = MutationStatus.COMMITTED,
+                        executedAt = System.currentTimeMillis(),
+                        undoState = if (result.changed) UndoState.AVAILABLE else UndoState.NOT_AVAILABLE,
+                        undoAttemptedAt = null,
+                        error = null,
+                        undoError = null,
+                    )
+                    mutationRecordDao.update(committed)
+                    if (result.changed) {
+                        reindexAfterMutation(operation, result.resultRef, task.scopeRootRef)
+                        when (operation) {
+                            is PlannedOperation.CreateDirectory -> {
+                                foldersCreated++
+                                createdFolders += result.resultRef.rawValue()
+                            }
+                            is PlannedOperation.Move -> filesMoved++
+                            is PlannedOperation.Rename -> filesRenamed++
+                            is PlannedOperation.Trash -> filesTrashed++
+                            is PlannedOperation.WriteTextFile -> filesWritten++
+                        }
+                    }
+                }
+                is MutationResult.Failure -> {
+                    mutationRecordDao.update(
+                        MutationRecord(
+                            id = mutationId,
+                            taskRunId = taskRunId,
+                            sequence = sequence,
+                            operationType = operation.toOperationType(),
+                            sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                            destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
+                            sourceFingerprint = operation.fingerprintOrNull(),
+                            status = MutationStatus.FAILED,
+                            executedAt = System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                            undoAttemptedAt = null,
+                            error = result.reason,
+                            undoError = null,
+                        ),
+                    )
+                    failures += operation.toFailure(sequence, result.reason)
+                    failed++
+                }
+            }
+            onProgress(sequence + 1, operations.size)
+        }
+
+        val finishedSummary = summary()
+        val latest = taskRunDao.getById(taskRunId) ?: task
+        taskRunDao.update(
+            latest.copy(
+                completedAt = System.currentTimeMillis(),
+                status = when {
+                    failed == 0 -> TaskRunStatus.COMPLETED
+                    finishedSummary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
+                    else -> TaskRunStatus.FAILED
+                },
+                summary = "${finishedSummary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
+                    "$filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed",
+            ),
+        )
+        onProgress(operations.size, operations.size)
+        return finishedSummary
+    }
+
     private suspend fun recordPreflightFailure(
         taskRunId: Long,
         sequence: Int,
