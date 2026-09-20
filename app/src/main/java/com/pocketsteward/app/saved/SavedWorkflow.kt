@@ -17,7 +17,7 @@ object SavedWorkflowCodec {
                 enc(workflow.id),
                 enc(workflow.name),
                 enc(workflow.request),
-                workflow.roots.joinToString(",")(::enc),
+                workflow.roots.joinToString(",") { enc(it) },
             ).joinToString(";")
         }
 
