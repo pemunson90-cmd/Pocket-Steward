@@ -56,7 +56,6 @@ data class IndexedSegment(
 data class IndexedSegmentFts(
     @PrimaryKey
     val rowid: Int,
-    val stableRef: String,
     val body: String,
 )
 
