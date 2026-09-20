@@ -36,6 +36,7 @@ fun ScanScreen(
     autoAction: PostScanAction?,
     autoRequest: String?,
     autoWorkflowId: String?,
+    autoSavedSearchId: String?,
     onOpenPicker: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -46,9 +47,10 @@ fun ScanScreen(
     val recents by viewModel.recentFolders.collectAsState()
     val selectedTargets by viewModel.selectedTargets.collectAsState()
 
-    LaunchedEffect(autoAction, autoRequest, autoWorkflowId, accessState) {
+    LaunchedEffect(autoAction, autoRequest, autoWorkflowId, autoSavedSearchId, accessState) {
         if (accessState?.mode != null) {
             when {
+                !autoSavedSearchId.isNullOrBlank() -> viewModel.startSavedSearch(autoSavedSearchId)
                 !autoWorkflowId.isNullOrBlank() -> viewModel.startSavedWorkflow(autoWorkflowId)
                 !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
                 autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
