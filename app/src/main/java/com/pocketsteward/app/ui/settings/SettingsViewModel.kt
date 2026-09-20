@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.AgentModelAvailability
 import com.pocketsteward.app.ai.AgentModelDownloadState
+import com.pocketsteward.app.content.index.ContentIndexOverview
 import com.pocketsteward.app.data.settings.PrivacySettings
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 data class ModelStatusUi(
@@ -25,9 +28,18 @@ data class ModelStatusUi(
     val error: String? = null,
 )
 
+data class ContentIndexStatusUi(
+    val overview: ContentIndexOverview = ContentIndexOverview(0, 0, 0),
+    val loading: Boolean = false,
+    val message: String? = null,
+    val error: String? = null,
+)
+
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val agentModel: AgentModel,
+    private val loadContentIndexOverview: suspend () -> ContentIndexOverview,
+    private val clearContentIndexCache: () -> Boolean,
 ) : ViewModel() {
 
     val privacySettings: StateFlow<PrivacySettings> = settingsRepository.privacySettings
@@ -45,8 +57,42 @@ class SettingsViewModel(
     private val _modelStatus = MutableStateFlow(ModelStatusUi())
     val modelStatus: StateFlow<ModelStatusUi> = _modelStatus
 
+    private val _contentIndexStatus = MutableStateFlow(ContentIndexStatusUi())
+    val contentIndexStatus: StateFlow<ContentIndexStatusUi> = _contentIndexStatus
+
     init {
         refreshModelStatus()
+        refreshContentIndexStatus()
+    }
+
+    fun refreshContentIndexStatus() {
+        viewModelScope.launch {
+            _contentIndexStatus.value = _contentIndexStatus.value.copy(loading = true, error = null)
+            _contentIndexStatus.value = try {
+                val overview = withContext(Dispatchers.IO) { loadContentIndexOverview() }
+                ContentIndexStatusUi(overview = overview)
+            } catch (t: Throwable) {
+                ContentIndexStatusUi(error = t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun clearContentIndex() {
+        viewModelScope.launch {
+            _contentIndexStatus.value = _contentIndexStatus.value.copy(loading = true, error = null)
+            try {
+                withContext(Dispatchers.IO) { clearContentIndexCache() }
+                val overview = withContext(Dispatchers.IO) { loadContentIndexOverview() }
+                _contentIndexStatus.value = ContentIndexStatusUi(
+                    overview = overview,
+                    message = "Content index cleared. Source files were not changed.",
+                )
+            } catch (t: Throwable) {
+                _contentIndexStatus.value = ContentIndexStatusUi(
+                    error = t.message ?: t.javaClass.simpleName,
+                )
+            }
+        }
     }
 
     fun refreshModelStatus() {
