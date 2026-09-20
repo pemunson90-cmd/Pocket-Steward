@@ -81,14 +81,19 @@ object DeterministicIntentParser {
             )
         }
 
-        val findTerm = if (action == IntentAction.FIND && categories.isEmpty()) {
+        val contentTerm = if (action == IntentAction.FIND) parseContentTerm(raw) else null
+        val findTerm = if (action == IntentAction.FIND && contentTerm == null && categories.isEmpty()) {
             parseFindTerm(raw)
         } else {
             null
         }
-        if (action == IntentAction.FIND && categories.isEmpty() && findTerm.isNullOrBlank()) {
+        if (action == IntentAction.FIND &&
+            categories.isEmpty() &&
+            findTerm.isNullOrBlank() &&
+            contentTerm.isNullOrBlank()
+        ) {
             return IntentParseResult.Unsupported(
-                "Tell me what to find, for example “find APKs” or “find files named invoice”.",
+                "Tell me what to find, for example “find APKs”, “find files named invoice”, or “find documents containing Lilith”.",
             )
         }
 
@@ -102,6 +107,7 @@ object DeterministicIntentParser {
                 includeSubfolders = includeSubfolders,
                 leaveUncertain = true,
                 findTerm = findTerm,
+                contentTerm = contentTerm,
             ),
         )
     }
@@ -128,6 +134,19 @@ object DeterministicIntentParser {
         if (!called.isNullOrBlank()) return called
 
         return if (Regex("""(?i)\bone\s+main\s+folder\b""").containsMatchIn(raw)) "Organized" else null
+    }
+
+    private fun parseContentTerm(raw: String): String? {
+        val patterns = listOf(
+            Regex("""(?i)\b(?:containing|contains|mentioning|mentions)\s+["']?(.+?)["']?\s*$"""),
+            Regex("""(?i)\bwith\s+(?:the\s+)?(?:text|content)\s+["']?(.+?)["']?\s*$"""),
+        )
+        return patterns.firstNotNullOfOrNull { pattern ->
+            pattern.find(raw)?.groupValues?.getOrNull(1)
+                ?.trim()
+                ?.trim('"', '\'')
+                ?.takeIf { it.isNotBlank() }
+        }
     }
 
     private fun parseFindTerm(raw: String): String? {
