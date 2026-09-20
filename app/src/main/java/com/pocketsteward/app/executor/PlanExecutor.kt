@@ -97,6 +97,9 @@ class PlanExecutor(
         index: FileIndex? = null,
     ): Long {
         require(plan.operations.isNotEmpty()) { "Cannot enqueue an empty plan." }
+        require(taskRunDao.getRunning().isEmpty()) {
+            "Another Pocket Steward file task is already running. Pause or finish it before starting another."
+        }
 
         val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, effectiveIndex)
