@@ -39,7 +39,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: SettingsViewModel = viewModel(
         factory = viewModelFactory {
-            initializer { SettingsViewModel(container.settingsRepository, container.agentModel) }
+            initializer {
+                SettingsViewModel(
+                    settingsRepository = container.settingsRepository,
+                    agentModel = container.agentModel,
+                    loadContentIndexOverview = container::contentIndexOverview,
+                    clearContentIndexCache = container::clearContentIndex,
+                )
+            }
         },
     )
 
@@ -48,6 +55,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val uiSettings by viewModel.uiSettings.collectAsState()
     val storedKeywords by viewModel.projectKeywords.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
+    val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
 
     var keywordsText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(storedKeywords) {
@@ -116,6 +124,56 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
             checked = privacy.contentInspectionEnabled,
             onCheckedChange = viewModel::setContentInspectionEnabled,
         )
+        Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Content search index", style = MaterialTheme.typography.titleMedium)
+                val index = contentIndexStatus.overview
+                Text(
+                    text = when {
+                        contentIndexStatus.loading -> "Checking local index…"
+                        contentIndexStatus.error != null -> "Index status unavailable"
+                        index.documentCount == 0 -> "No cached document content yet"
+                        else -> "${index.documentCount} files · ${index.segmentCount} searchable segment(s) · ${index.rootCount} root(s)"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    text = if (privacy.contentInspectionEnabled) {
+                        "Search content stays on this device. Unchanged files are reused on later searches."
+                    } else {
+                        "Content inspection is off. Any existing local cache remains private until you clear it."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                contentIndexStatus.message?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                contentIndexStatus.error?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                Button(
+                    onClick = viewModel::clearContentIndex,
+                    enabled = !contentIndexStatus.loading && index.documentCount > 0,
+                    modifier = Modifier.padding(top = 10.dp),
+                ) {
+                    Text("Clear content index")
+                }
+            }
+        }
+
         SettingsSwitchRow(
             label = "On-device intelligence",
             supporting = "Allows local semantic analysis when a compatible model is available.",
