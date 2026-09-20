@@ -63,11 +63,16 @@ interface ContentIndexDao {
             insertFts(
                 IndexedSegmentFts(
                     rowid = id.toInt(),
-                    stableRef = stableRef,
                     body = segment.body,
                 ),
             )
         }
+    }
+
+    @Transaction
+    suspend fun replaceDocument(document: IndexedDocument, segments: List<IndexedSegment>) {
+        putDocument(document)
+        replaceSegments(document.stableRef, segments)
     }
 
     @Transaction
@@ -91,7 +96,7 @@ interface ContentIndexDao {
                s.stableRef AS stableRef,
                s.pageNumber AS pageNumber,
                s.ocr AS ocr,
-               snippet(indexed_segments_fts, 1, '⟦', '⟧', ' … ', 28) AS snippet
+               snippet(indexed_segments_fts, '⟦', '⟧', ' … ', 0, 28) AS snippet
         FROM indexed_segments_fts
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
         WHERE indexed_segments_fts MATCH :matchQuery
