@@ -20,6 +20,10 @@ import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
+import com.pocketsteward.app.intent.DeterministicIntentParser
+import com.pocketsteward.app.intent.IntentAction
+import com.pocketsteward.app.intent.IntentParseResult
+import com.pocketsteward.app.intent.IntentPlanGenerator
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
@@ -433,6 +437,13 @@ class ScanViewModel(
         startScan(target, action)
     }
 
+    /** Home prompt entry: scan first, then interpret the request against that exact snapshot. */
+    fun startScanThenRequest(target: ScanTarget, request: String) {
+        if (autoStarted) return
+        autoStarted = true
+        startScan(target, thenRequest = request)
+    }
+
     fun toggleScanTarget(target: ScanTarget) {
         val key = target.selectionKey()
         val current = _selectedTargets.value
@@ -459,11 +470,19 @@ class ScanViewModel(
         startScan(targets)
     }
 
-    fun startScan(target: ScanTarget, thenRun: PostScanAction? = null) {
-        startScan(listOf(target), thenRun)
+    fun startScan(
+        target: ScanTarget,
+        thenRun: PostScanAction? = null,
+        thenRequest: String? = null,
+    ) {
+        startScan(listOf(target), thenRun, thenRequest)
     }
 
-    fun startScan(targets: Collection<ScanTarget>, thenRun: PostScanAction? = null) {
+    fun startScan(
+        targets: Collection<ScanTarget>,
+        thenRun: PostScanAction? = null,
+        thenRequest: String? = null,
+    ) {
         viewModelScope.launch {
             // A new scan invalidates everything derived from the old one.
             // Doing it here rather than in reset() is what lets back keep the
@@ -541,6 +560,10 @@ class ScanViewModel(
                     PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
                     PostScanAction.FIND_OLD -> findOldFiles(summary)
                     PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
+                }
+
+                thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
+                    handleNaturalLanguage(summary, request)
                 }
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -1113,6 +1136,118 @@ class ScanViewModel(
         }
     }
 
+    /**
+     * M9 natural-language entry. Parsing is deterministic and offline; the
+     * result can only invoke read-only review or build ordinary typed plans.
+     */
+    fun handleNaturalLanguage(summary: ScanUiState.Summary, request: String) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working("Understanding request", "Offline deterministic parser")
+            try {
+                when (val parsed = DeterministicIntentParser.parse(request)) {
+                    is IntentParseResult.Unsupported -> {
+                        _uiState.value = ScanUiState.Error(parsed.reason)
+                    }
+
+                    is IntentParseResult.Parsed -> {
+                        val intent = parsed.intent
+                        when (intent.action) {
+                            IntentAction.DUPLICATE_REVIEW -> {
+                                findDuplicates(summary)
+                            }
+
+                            IntentAction.FIND -> {
+                                val records = filesForScopes(summary.scopes)
+                                val matches = records.filter { record ->
+                                    !record.isDirectory &&
+                                        (intent.categories.isEmpty() ||
+                                            classifyByExtension(record.extension) in intent.categories) &&
+                                        (intent.findTerm == null ||
+                                            record.displayName.contains(intent.findTerm, ignoreCase = true))
+                                }
+                                _uiState.value = ScanUiState.FileListReview(
+                                    title = "Request: ${intent.rawRequest}",
+                                    records = matches,
+                                )
+                            }
+
+                            IntentAction.RENAME -> {
+                                if (summary.mode != StorageAccessMode.DIRECT) {
+                                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                                    return@launch
+                                }
+                                val from = requireNotNull(intent.renameFrom)
+                                val to = requireNotNull(intent.renameTo)
+                                val matches = filesForScopes(summary.scopes).filter { record ->
+                                    !record.isDirectory && record.displayName.equals(from, ignoreCase = true)
+                                }
+                                if (matches.isEmpty()) {
+                                    _uiState.value = ScanUiState.Error("No file named \"$from\" was found in the selected scope.")
+                                    return@launch
+                                }
+                                val operations = matches.map { record ->
+                                    PlannedOperation.Rename(
+                                        source = parseFileRef(record.stableRef),
+                                        newName = to,
+                                        reason = "Natural-language rename request",
+                                    )
+                                }
+                                showPlanPreview(intent.rawRequest, operations, summary.scopes)
+                            }
+
+                            IntentAction.ORGANIZE,
+                            IntentAction.GROUP,
+                            IntentAction.ARCHIVE,
+                            -> {
+                                if (summary.mode != StorageAccessMode.DIRECT ||
+                                    summary.scopes.any { it.root !is FileRef.Direct }
+                                ) {
+                                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                                    return@launch
+                                }
+
+                                val projectKeywords = settingsRepository.projectKeywords.first()
+                                val generatedByScope = summary.scopes.map { scope ->
+                                    val root = scope.root as FileRef.Direct
+                                    val records = container.database.fileRecordDao()
+                                        .getFilesUnderScopeRoot(root.rawValue())
+                                    scope to IntentPlanGenerator.generate(
+                                        scopeRoot = root,
+                                        records = records,
+                                        projectKeywords = projectKeywords,
+                                        intent = intent,
+                                    )
+                                }
+                                val operations = generatedByScope.flatMap { it.second.plan.operations }
+                                if (operations.isEmpty()) {
+                                    _uiState.value = ScanUiState.Error(
+                                        "The request was understood, but there are no confidently matching files to move.",
+                                    )
+                                    return@launch
+                                }
+                                val notes = buildList {
+                                    if (summary.scopes.size > 1) {
+                                        add("Each selected scan root stays local; this request will not move files between roots.")
+                                    }
+                                    if (intent.action == IntentAction.ARCHIVE) {
+                                        add("Archive means grouping files that are already archive formats; M9 does not create ZIP files.")
+                                    }
+                                    generatedByScope.forEach { (scope, generated) ->
+                                        generated.scopeReport.previewLines().forEach { line ->
+                                            add(if (summary.scopes.size == 1) line else "${scope.label}: $line")
+                                        }
+                                    }
+                                }
+                                showPlanPreview(intent.rawRequest, operations, summary.scopes, notes)
+                            }
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
     fun setPlanOperationSelected(index: Int, selected: Boolean) {
         val current = _preview.value ?: return
         _preview.value = current.copy(
