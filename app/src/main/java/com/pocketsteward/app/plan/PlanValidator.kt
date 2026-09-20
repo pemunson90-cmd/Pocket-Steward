@@ -58,7 +58,7 @@ object PlanValidator {
         traversalRejection(operation)?.let { return it }
 
         return when (operation) {
-            is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index)
+            is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index, plannedDirectories)
             is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Rename -> validateRename(operation, index, claimedDestinations)
             is PlannedOperation.Trash -> validateTrash(operation, index)
@@ -66,13 +66,23 @@ object PlanValidator {
         }
     }
 
-    private fun validateCreateDirectory(op: PlannedOperation.CreateDirectory, index: FileIndex): String? {
-        if (!index.exists(op.parent)) return "Parent directory does not exist in the index."
-        if (!index.isDirectory(op.parent)) return "Parent is not a directory."
+    private fun validateCreateDirectory(
+        op: PlannedOperation.CreateDirectory,
+        index: FileIndex,
+        plannedDirectories: Set<String>,
+    ): String? {
+        val parentPlanned = op.parent.rawValue() in plannedDirectories
+        if (!index.exists(op.parent) && !parentPlanned) return "Parent directory does not exist in the index or plan."
+        if (index.exists(op.parent) && !index.isDirectory(op.parent)) return "Parent is not a directory."
         if (op.name.isBlank()) return "Directory name is blank."
+        if ('/' in op.name || '\\' in op.name) return "Directory name cannot contain a path separator."
 
-        val existing = index.caseInsensitiveMatch(op.parent, op.name)
-            ?: directRef(op.parent, op.name)?.takeIf { index.exists(it) }
+        val existing = if (parentPlanned) {
+            null
+        } else {
+            index.caseInsensitiveMatch(op.parent, op.name)
+                ?: directRef(op.parent, op.name)?.takeIf { index.exists(it) }
+        }
         // Creating a directory that already exists as a directory is a
         // harmless no-op, not a collision — repeated organize runs need
         // this to not fail every time after the first.
