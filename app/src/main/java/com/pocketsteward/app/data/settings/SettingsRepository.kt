@@ -7,10 +7,14 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.pocketsteward.app.picker.RecentFolders
+import com.pocketsteward.app.content.index.ContentSearchFilters
+import com.pocketsteward.app.content.index.ContentSearchSort
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.SavedWorkflow
 import com.pocketsteward.app.saved.SavedWorkflowCodec
+import com.pocketsteward.app.saved.SavedSearch
+import com.pocketsteward.app.saved.SavedSearchCodec
 import com.pocketsteward.app.storage.StorageAccessMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -43,6 +47,7 @@ class SettingsRepository(private val context: Context) {
 
     private companion object {
         const val MAX_SAVED_WORKFLOWS = 12
+        const val MAX_SAVED_SEARCHES = 20
     }
 
     private object Keys {
@@ -55,6 +60,7 @@ class SettingsRepository(private val context: Context) {
         val PROJECT_KEYWORDS = stringPreferencesKey("project_keywords")
         val ADVANCED_MODE = booleanPreferencesKey("advanced_mode_enabled")
         val SAVED_WORKFLOWS = stringPreferencesKey("saved_workflows")
+        val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -101,6 +107,12 @@ class SettingsRepository(private val context: Context) {
         SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
     }
 
+
+    val savedSearches: Flow<List<SavedSearch>> = context.dataStore.data.map { prefs ->
+        SavedSearchCodec.decode(prefs[Keys.SAVED_SEARCHES])
+            .sortedByDescending { it.lastOpenedAt }
+    }
+
     suspend fun saveWorkflow(
         name: String,
         request: String,
@@ -135,6 +147,74 @@ class SettingsRepository(private val context: Context) {
             val updated = SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
                 .filterNot { it.id == id }
             prefs[Keys.SAVED_WORKFLOWS] = SavedWorkflowCodec.encode(updated)
+        }
+    }
+
+    suspend fun saveSearch(
+        name: String,
+        query: String,
+        roots: List<String>,
+        sort: ContentSearchSort,
+        filters: ContentSearchFilters,
+        lastResultCount: Int,
+    ): SavedSearch {
+        val cleanedName = name.trim().take(80)
+        val cleanedQuery = query.trim().take(2_000)
+        val cleanedRoots = roots
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        require(cleanedName.isNotBlank()) { "Saved search name cannot be blank." }
+        require(cleanedQuery.isNotBlank()) { "Saved search query cannot be blank." }
+        require(cleanedRoots.isNotEmpty()) { "Saved search needs at least one folder." }
+
+        val saved = SavedSearch(
+            id = UUID.randomUUID().toString(),
+            name = cleanedName,
+            query = cleanedQuery,
+            roots = cleanedRoots,
+            sort = sort,
+            filters = filters,
+            lastResultCount = lastResultCount.coerceAtLeast(0),
+            lastOpenedAt = System.currentTimeMillis(),
+        )
+
+        context.dataStore.edit { prefs ->
+            val current = SavedSearchCodec.decode(prefs[Keys.SAVED_SEARCHES])
+            val updated = (listOf(saved) + current)
+                .distinctBy { it.id }
+                .sortedByDescending { it.lastOpenedAt }
+                .take(MAX_SAVED_SEARCHES)
+            prefs[Keys.SAVED_SEARCHES] = SavedSearchCodec.encode(updated)
+        }
+        return saved
+    }
+
+    suspend fun touchSavedSearch(id: String, resultCount: Int) {
+        context.dataStore.edit { prefs ->
+            val current = SavedSearchCodec.decode(prefs[Keys.SAVED_SEARCHES])
+            val updated = current.map { saved ->
+                if (saved.id == id) {
+                    saved.copy(
+                        lastResultCount = resultCount.coerceAtLeast(0),
+                        lastOpenedAt = System.currentTimeMillis(),
+                    )
+                } else {
+                    saved
+                }
+            }
+            prefs[Keys.SAVED_SEARCHES] = SavedSearchCodec.encode(
+                updated.sortedByDescending { it.lastOpenedAt }.take(MAX_SAVED_SEARCHES),
+            )
+        }
+    }
+
+    suspend fun deleteSavedSearch(id: String) {
+        context.dataStore.edit { prefs ->
+            val updated = SavedSearchCodec.decode(prefs[Keys.SAVED_SEARCHES])
+                .filterNot { it.id == id }
+            prefs[Keys.SAVED_SEARCHES] = SavedSearchCodec.encode(updated)
         }
     }
 
