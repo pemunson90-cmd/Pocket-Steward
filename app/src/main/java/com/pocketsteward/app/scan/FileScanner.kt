@@ -10,6 +10,11 @@ import com.pocketsteward.app.storage.FileMetadata
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 enum class ScanPhase { SCANNING, COMPLETED, FAILED }
 
@@ -50,7 +55,7 @@ class FileScanner(
         // Bound once as a local so the smart cast holds through both branches
         // below — the previous shape needed `!!` twice to convince the
         // compiler of something already guaranteed by this check.
-        val resumable = existing?.takeIf { it.status == ScanStatus.RUNNING }
+        val resumable = existing?.takeIf { it.status.isResumable() }
         val startedAt = resumable?.startedAt ?: System.currentTimeMillis()
 
         val queue = ArrayDeque<FileRef>()
@@ -81,6 +86,7 @@ class FileScanner(
 
         try {
             while (queue.isNotEmpty()) {
+                currentCoroutineContext().ensureActive()
                 val directory = queue.removeFirst()
                 val children = gateway.listChildren(directory)
 
@@ -101,6 +107,15 @@ class FileScanner(
 
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.COMPLETED, startedAt)
             onProgress(ScanProgress(processedCount, null, ScanPhase.COMPLETED))
+        } catch (cancel: CancellationException) {
+            // Cancellation is an intentional pause or lifecycle interruption,
+            // not evidence that the filesystem scan failed. Persist in a
+            // NonCancellable context so the cancellation itself cannot abort
+            // writing the resume queue.
+            withContext(NonCancellable) {
+                persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.PAUSED, startedAt)
+            }
+            throw cancel
         } catch (t: Throwable) {
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.FAILED, startedAt)
             onProgress(ScanProgress(processedCount, null, ScanPhase.FAILED))
@@ -145,3 +160,7 @@ private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord {
         isHidden = isHidden,
     )
 }
+
+
+internal fun ScanStatus.isResumable(): Boolean =
+    this == ScanStatus.RUNNING || this == ScanStatus.PAUSED
