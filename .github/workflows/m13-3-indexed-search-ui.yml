@@ -1,0 +1,22 @@
+name: Build M13.3 Indexed Search UI
+on:
+  push:
+    branches:
+      - build/m13-3-indexed-search-ui
+  workflow_dispatch:
+concurrency:
+  group: m13-3-indexed-search-ui
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Build and test
+        run: ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
