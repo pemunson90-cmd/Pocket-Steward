@@ -83,6 +83,48 @@ class PlanExecutor(
     private val mutationRecordDao: MutationRecordDao,
 ) {
     /**
+     * Revalidates the user's selected operations and durably records the
+     * exact approved task before a foreground runner is allowed to start.
+     *
+     * Nothing executes here. If the filesystem snapshot has drifted enough
+     * for validation to reject anything, fail closed and send the user back
+     * through preview rather than silently enqueueing a smaller task.
+     */
+    suspend fun enqueueApproved(
+        plan: AgentPlan,
+        scopeRootRef: String,
+        storageAccessMode: StorageAccessMode,
+        index: FileIndex? = null,
+    ): Long {
+        require(plan.operations.isNotEmpty()) { "Cannot enqueue an empty plan." }
+
+        val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
+        val validated = PlanValidator.validate(plan.operations, effectiveIndex)
+        require(validated.rejected.isEmpty()) {
+            "Filesystem state changed since preview; rebuild the proposal before running it."
+        }
+        require(validated.accepted.size == plan.operations.size) {
+            "Approved task validation did not preserve every selected operation."
+        }
+
+        val startedAt = System.currentTimeMillis()
+        return taskRunDao.insert(
+            TaskRun(
+                requestText = plan.goal,
+                startedAt = startedAt,
+                completedAt = null,
+                status = TaskRunStatus.RUNNING,
+                scanSnapshotId = null,
+                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted),
+                summary = "Queued · 0 of ${validated.accepted.size} operations",
+                scopeRootRef = scopeRootRef,
+                storageAccessMode = storageAccessMode,
+                undoCompletedAt = null,
+            ),
+        )
+    }
+
+    /**
      * [onProgress] fires after each accepted operation resolves, so a caller
      * can show a moving count instead of a frozen screen while real files are
      * being moved. Purely advisory: correctness never depends on anyone
