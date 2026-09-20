@@ -113,7 +113,7 @@ object SavedSearchCodec {
     private fun DataOutputStream.writeStrings(values: Collection<String>) {
         require(values.size <= 256) { "Too many saved-search values." }
         writeInt(values.size)
-        values.forEach(::writeString)
+        values.forEach { value -> writeString(value) }
     }
 
     private fun DataInputStream.readStrings(): List<String> {
