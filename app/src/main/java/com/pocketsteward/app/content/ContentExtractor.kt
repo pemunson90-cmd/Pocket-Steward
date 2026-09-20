@@ -25,7 +25,7 @@ object ContentExtractor {
 
     fun supports(extension: String): Boolean {
         val ext = extension.lowercase()
-        return ext in plainTextExtensions || ext in ooxmlExtensions
+        return ext in plainTextExtensions || ext in ooxmlExtensions || ext == "pdf"
     }
 
     fun extract(extension: String, input: InputStream): ContentExtraction {
@@ -35,9 +35,9 @@ object ContentExtractor {
                 ext in plainTextExtensions -> extractPlainText(input)
                 ext in ooxmlExtensions -> extractOoxml(ext, input)
                 ext == "pdf" -> ContentExtraction.Unsupported(
-                    "PDF text extraction is not enabled yet; M10A deliberately does not guess at a parser.",
+                    "PDF requires the Android PDF extractor.",
                 )
-                else -> ContentExtraction.Unsupported("This file type is not text-readable in M10A.")
+                else -> ContentExtraction.Unsupported("This file type is not text-readable.")
             }
         } catch (t: Throwable) {
             ContentExtraction.Failed(t.message ?: t.javaClass.simpleName)
