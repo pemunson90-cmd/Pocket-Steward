@@ -16,7 +16,7 @@
     <string name="home_quick_action_find_old_files">Find old files</string>
     <string name="home_quick_action_review_uncategorized">Review uncategorized</string>
     <string name="home_quick_action_recent_tasks">Recent tasks</string>
-    <string name="home_prompt_supporting">Offline deterministic requests. Nothing moves until you approve the preview.</string>
+    <string name="home_prompt_supporting">Offline deterministic requests. Content search is local and opt-in; mutations still require preview approval.</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_storage_access_section">Storage access</string>
@@ -24,7 +24,7 @@
     <string name="settings_storage_mode_saf">Selected folders only</string>
     <string name="settings_privacy_section">Privacy</string>
     <string name="settings_metadata_indexing">Metadata indexing</string>
-    <string name="settings_content_inspection">Document content inspection</string>
+    <string name="settings_content_inspection">Document content inspection (local, on demand)</string>
     <string name="settings_image_analysis">Image analysis</string>
     <string name="settings_on_device_ai">On-device AI</string>
     <string name="settings_change_storage_mode">Change storage access</string>
