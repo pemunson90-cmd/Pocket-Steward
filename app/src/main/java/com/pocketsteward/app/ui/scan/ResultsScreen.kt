@@ -207,6 +207,15 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         onClick = { viewModel.findUncategorized(state) },
                     )
                 }
+                if (canMutate) {
+                    item {
+                        ActionCard(
+                            title = "Coherence audit",
+                            supporting = "Read-only · Gemini Nano on device · flags questionable files and suggests where they may belong",
+                            onClick = { viewModel.runCoherenceAudit(state) },
+                        )
+                    }
+                }
             }
 
             ActionRow {
