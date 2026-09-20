@@ -1,0 +1,28 @@
+name: Export Master Source M12D Shipping
+on:
+  push:
+    branches:
+      - handoff/master-m12d-shipping-2026-09-20
+  workflow_dispatch:
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build exact shipping source continuity package
+        run: |
+          mkdir -p "$RUNNER_TEMP/master-source"
+          SHIP_COMMIT="f336642035647f373f2e7b49c4cf1852d066f46b"
+          echo "$SHIP_COMMIT" > "$RUNNER_TEMP/master-source/SHIPPING-HEAD.txt"
+          git show -s --format=fuller "$SHIP_COMMIT" > "$RUNNER_TEMP/master-source/SHIPPING-COMMIT.txt"
+          git log --oneline --decorate --all > "$RUNNER_TEMP/master-source/GIT-HISTORY.txt"
+          git show-ref > "$RUNNER_TEMP/master-source/GIT-REFS.txt"
+          git bundle create "$RUNNER_TEMP/master-source/Pocket-Steward-full-history.bundle" --all
+          git archive --format=zip --output="$RUNNER_TEMP/master-source/Pocket-Steward-source-M12D-f336642.zip" "$SHIP_COMMIT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-master-source-m12d-shipping
+          path: ${{ runner.temp }}/master-source
+          if-no-files-found: error
