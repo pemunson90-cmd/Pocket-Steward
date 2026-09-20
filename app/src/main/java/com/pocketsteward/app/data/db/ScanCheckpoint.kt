@@ -3,7 +3,7 @@ package com.pocketsteward.app.data.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-enum class ScanStatus { RUNNING, COMPLETED, FAILED }
+enum class ScanStatus { RUNNING, PAUSED, COMPLETED, FAILED }
 
 /**
  * Resume state for one in-progress or finished scan (plan Section 18). Keyed
