@@ -11,10 +11,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,7 +59,13 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         when (val current = state) {
             is ScanUiState.FileListReview -> FileListReview(current, contentModifier)
             is ScanUiState.ContentSearchReview -> ContentSearchReview(current, contentModifier)
-            is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(current, contentModifier)
+            is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
+                state = current,
+                onBuildProposal = { includeSubfolders ->
+                    viewModel.proposeSemanticOrganization(current, includeSubfolders)
+                },
+                modifier = contentModifier,
+            )
             is ScanUiState.DuplicateReview -> DuplicateReview(
                 state = current,
                 onTrashDuplicates = { viewModel.proposeTrashDuplicates(current) },
@@ -189,7 +199,12 @@ private fun ContentMatchCard(match: ContentMatch) {
 }
 
 @Composable
-private fun CoherenceAuditReview(state: ScanUiState.CoherenceAuditReview, modifier: Modifier) {
+private fun CoherenceAuditReview(
+    state: ScanUiState.CoherenceAuditReview,
+    onBuildProposal: (Boolean) -> Unit,
+    modifier: Modifier,
+) {
+    var includeSubfolders by remember { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         val model = state.modelName?.let { " · $it" } ?: ""
         val limitNote = if (state.limited) " · bounded sample, not every readable file was analyzed" else ""
@@ -233,6 +248,53 @@ private fun CoherenceAuditReview(state: ScanUiState.CoherenceAuditReview, modifi
                                 modifier = Modifier.padding(top = Spacing.hairline),
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        val proposalCandidates = state.rows.count {
+            it.suggestedGroup?.isNotBlank() == true &&
+                it.classification in setOf(
+                    com.pocketsteward.app.ai.CoherenceClass.QUESTIONABLE,
+                    com.pocketsteward.app.ai.CoherenceClass.DOES_NOT_BELONG,
+                )
+        }
+        if (proposalCandidates > 0) {
+            Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Text(
+                        "Build a safe proposal",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Pocket Steward will re-check these findings against the current scan, keep destinations inside each source root, and open the normal checkbox preview. Nothing moves yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Include files already inside folders")
+                            Text(
+                                "Off by default to preserve existing human organization.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = includeSubfolders,
+                            onCheckedChange = { includeSubfolders = it },
+                        )
+                    }
+                    Button(
+                        onClick = { onBuildProposal(includeSubfolders) },
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                    ) {
+                        Text("Build organization proposal")
                     }
                 }
             }
