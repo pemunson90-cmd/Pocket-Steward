@@ -157,6 +157,10 @@ sealed interface ScanUiState {
             get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
     }
     data class ExecutionDone(val summary: ExecutionSummary) : ScanUiState
+    data class ExecutionQueued(
+        val taskRunId: Long,
+        val operationCount: Int,
+    ) : ScanUiState
     data class Undoing(
         val taskRunId: Long,
         val completed: Int = 0,
@@ -424,6 +428,7 @@ class ScanViewModel(
             }
 
             is ScanUiState.ExecutionDone,
+            is ScanUiState.ExecutionQueued,
             is ScanUiState.UndoDone,
             -> {
                 _completion.value = state
@@ -1632,12 +1637,15 @@ class ScanViewModel(
                 _uiState.value = ScanUiState.Error("Select at least one action to run.")
                 return@launch
             }
+
             _uiState.value = ScanUiState.Working(
-                label = "Organizing files",
-                detail = "Starting",
+                label = "Starting task",
+                detail = "Saving the approved changes before execution",
                 processed = 0,
                 total = selectedOperations.size,
             )
+
+            var queuedTaskRunId: Long? = null
             try {
                 val accessState = settingsRepository.storageAccessState.first()
                 val mode = accessState.mode ?: run {
@@ -1645,10 +1653,6 @@ class ScanViewModel(
                     return@launch
                 }
                 val executor = container.planExecutor(mode)
-                // Only the operations the preview showed as accepted are
-                // sent for execution — rejected ones stay untouched, per
-                // Decision 5, rather than being re-submitted for the
-                // executor's own validation pass to reject again.
                 val plan = AgentPlan(preview.goal, selectedOperations)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
@@ -1656,21 +1660,45 @@ class ScanViewModel(
                 } else {
                     SingleFolderIndex(
                         unindexed,
-                        withContext(Dispatchers.IO) { container.gatewayFor(mode).listChildren(unindexed) },
+                        withContext(Dispatchers.IO) {
+                            container.gatewayFor(mode).listChildren(unindexed)
+                        },
                     )
                 }
-                val summary = withContext(Dispatchers.IO) {
-                    executor.execute(plan, preview.scopeRoot.rawValue(), mode, index) { completed, total ->
-                        _uiState.value = ScanUiState.Working(
-                            label = "Organizing files",
-                            detail = "Moving and trashing — safe to interrupt, every step is journaled",
-                            processed = completed,
-                            total = total,
-                        )
+
+                val taskRunId = withContext(Dispatchers.IO) {
+                    executor.enqueueApproved(
+                        plan = plan,
+                        scopeRootRef = preview.scopeRoot.rawValue(),
+                        storageAccessMode = mode,
+                        index = index,
+                    )
+                }
+                queuedTaskRunId = taskRunId
+
+                // The service receives only the durable task id. It cannot
+                // alter the approved plan or bypass the validator/preview.
+                container.startForegroundTask(taskRunId)
+
+                _uiState.value = ScanUiState.ExecutionQueued(
+                    taskRunId = taskRunId,
+                    operationCount = selectedOperations.size,
+                )
+            } catch (t: Throwable) {
+                queuedTaskRunId?.let { id ->
+                    withContext(Dispatchers.IO) {
+                        val dao = container.database.taskRunDao()
+                        dao.getById(id)?.let { task ->
+                            dao.update(
+                                task.copy(
+                                    status = com.pocketsteward.app.data.db.TaskRunStatus.CANCELLED,
+                                    completedAt = System.currentTimeMillis(),
+                                    summary = "Queued safely, but foreground execution did not start. Resume from Tasks.",
+                                ),
+                            )
+                        }
                     }
                 }
-                _uiState.value = ScanUiState.ExecutionDone(summary)
-            } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
