@@ -66,6 +66,12 @@ class DeterministicIntentParserTest {
     }
 
     @Test
+    fun unsupportedAgeQualifierIsRefusedRatherThanIgnored() {
+        assertThat(DeterministicIntentParser.parse("organize old files"))
+            .isInstanceOf(IntentParseResult.Unsupported::class.java)
+    }
+
+    @Test
     fun unknownCommandIsRefused() {
         assertThat(DeterministicIntentParser.parse("make my phone beautiful"))
             .isInstanceOf(IntentParseResult.Unsupported::class.java)
