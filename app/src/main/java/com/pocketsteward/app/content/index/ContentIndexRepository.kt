@@ -85,44 +85,44 @@ class ContentIndexRepository(
                 when (val extraction = inspector.extract(record)) {
                     is ContentExtraction.Text -> {
                         val segments = extraction.toSegments(record.stableRef)
-                        dao.putDocument(
-                            record.toIndexedDocument(
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
                                 sourceRoot = root,
                                 kind = extraction.kind,
                                 status = IndexedExtractionStatus.INDEXED,
                                 error = null,
                                 segmentCount = segments.size,
                             ),
+                            segments = segments,
                         )
-                        dao.replaceSegments(record.stableRef, segments)
                         extracted++
                     }
 
                     is ContentExtraction.Unsupported -> {
-                        dao.putDocument(
-                            record.toIndexedDocument(
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
                                 sourceRoot = root,
                                 kind = null,
                                 status = IndexedExtractionStatus.UNSUPPORTED,
                                 error = extraction.reason,
                                 segmentCount = 0,
                             ),
+                            segments = emptyList(),
                         )
-                        dao.replaceSegments(record.stableRef, emptyList())
                         unsupported++
                     }
 
                     is ContentExtraction.Failed -> {
-                        dao.putDocument(
-                            record.toIndexedDocument(
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
                                 sourceRoot = root,
                                 kind = null,
                                 status = IndexedExtractionStatus.FAILED,
                                 error = extraction.reason,
                                 segmentCount = 0,
                             ),
+                            segments = emptyList(),
                         )
-                        dao.replaceSegments(record.stableRef, emptyList())
                         failed++
                     }
                 }
