@@ -33,7 +33,6 @@ class AppContainer(context: Context) {
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
-    val contentSearchDatabase: ContentSearchDatabase by lazy { ContentSearchDatabase.getInstance(appContext) }
 
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
@@ -55,7 +54,7 @@ class AppContainer(context: Context) {
 
     fun contentIndexRepository(mode: StorageAccessMode): ContentIndexRepository =
         ContentIndexRepository(
-            dao = contentSearchDatabase.contentIndexDao(),
+            dao = ContentSearchDatabase.getInstance(appContext).contentIndexDao(),
             inspector = contentInspector(mode),
         )
 
