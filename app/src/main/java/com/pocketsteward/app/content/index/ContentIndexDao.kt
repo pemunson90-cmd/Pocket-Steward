@@ -38,6 +38,15 @@ interface ContentIndexDao {
     @Query("SELECT * FROM content_index_state WHERE sourceRoot = :sourceRoot")
     suspend fun getState(sourceRoot: String): ContentIndexState?
 
+    @Query("SELECT COUNT(*) FROM indexed_documents")
+    suspend fun countDocuments(): Int
+
+    @Query("SELECT COUNT(*) FROM indexed_segments")
+    suspend fun countSegments(): Int
+
+    @Query("SELECT COUNT(DISTINCT sourceRoot) FROM indexed_documents")
+    suspend fun countRoots(): Int
+
     @Query("DELETE FROM content_index_state WHERE sourceRoot = :sourceRoot")
     suspend fun clearState(sourceRoot: String)
 
