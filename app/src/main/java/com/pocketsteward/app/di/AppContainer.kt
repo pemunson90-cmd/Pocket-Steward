@@ -58,6 +58,12 @@ class AppContainer(context: Context) {
             inspector = contentInspector(mode),
         )
 
+    suspend fun contentIndexOverview(): com.pocketsteward.app.content.index.ContentIndexOverview =
+        ContentIndexRepository(
+            dao = ContentSearchDatabase.getInstance(appContext).contentIndexDao(),
+            inspector = contentInspector(StorageAccessMode.DIRECT),
+        ).overview()
+
     fun clearContentIndex(): Boolean {
         return ContentSearchDatabase.delete(appContext)
     }
