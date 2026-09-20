@@ -3,6 +3,7 @@ package com.pocketsteward.app.content
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
+import kotlinx.coroutines.CancellationException
 
 /**
  * On-demand local content search. No extracted text is persisted to Room.
@@ -28,6 +29,8 @@ class ContentInspector(
                     ContentExtractor.extract(record.extension, input)
                 }
             }
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             ContentExtraction.Failed(t.message ?: t.javaClass.simpleName)
         }
