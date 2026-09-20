@@ -1,0 +1,26 @@
+name: Export Master Source
+on:
+  push:
+    branches:
+      - handoff/master-2026-09-19
+  workflow_dispatch:
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build source continuity package
+        run: |
+          mkdir -p "$RUNNER_TEMP/master-source"
+          git log --oneline --decorate --all > "$RUNNER_TEMP/master-source/GIT-HISTORY.txt"
+          git show-ref > "$RUNNER_TEMP/master-source/GIT-REFS.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/master-source/HEAD.txt"
+          git bundle create "$RUNNER_TEMP/master-source/Pocket-Steward-full-history.bundle" --all
+          git archive --format=zip --output="$RUNNER_TEMP/master-source/Pocket-Steward-source-snapshot.zip" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-master-source
+          path: ${{ runner.temp }}/master-source
+          if-no-files-found: error
