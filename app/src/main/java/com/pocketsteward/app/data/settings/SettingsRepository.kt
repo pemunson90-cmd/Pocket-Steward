@@ -41,6 +41,10 @@ data class UiSettings(
 
 class SettingsRepository(private val context: Context) {
 
+    private companion object {
+        const val MAX_SAVED_WORKFLOWS = 12
+    }
+
     private object Keys {
         val STORAGE_MODE = stringPreferencesKey("storage_access_mode")
         val SAF_TREE_URI = stringPreferencesKey("saf_tree_uri")
