@@ -32,6 +32,10 @@ data class StorageAccessState(
     val safTreeUri: String? = null,
 )
 
+data class UiSettings(
+    val advancedModeEnabled: Boolean = false,
+)
+
 class SettingsRepository(private val context: Context) {
 
     private object Keys {
@@ -42,6 +46,7 @@ class SettingsRepository(private val context: Context) {
         val IMAGE_ANALYSIS = booleanPreferencesKey("image_analysis_enabled")
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
         val PROJECT_KEYWORDS = stringPreferencesKey("project_keywords")
+        val ADVANCED_MODE = booleanPreferencesKey("advanced_mode_enabled")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -91,6 +96,10 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    val uiSettings: Flow<UiSettings> = context.dataStore.data.map { prefs ->
+        UiSettings(advancedModeEnabled = prefs[Keys.ADVANCED_MODE] ?: false)
+    }
+
     val storageAccessState: Flow<StorageAccessState> = context.dataStore.data.map { prefs ->
         StorageAccessState(
             mode = prefs[Keys.STORAGE_MODE]?.let { StorageAccessMode.valueOf(it) },
@@ -125,6 +134,10 @@ class SettingsRepository(private val context: Context) {
             it.remove(Keys.STORAGE_MODE)
             it.remove(Keys.SAF_TREE_URI)
         }
+    }
+
+    suspend fun setAdvancedModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.ADVANCED_MODE] = enabled }
     }
 
     suspend fun setMetadataIndexingEnabled(enabled: Boolean) {
