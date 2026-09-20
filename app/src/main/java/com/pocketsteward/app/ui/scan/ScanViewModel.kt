@@ -513,29 +513,10 @@ class ScanViewModel(
                     targets = targets,
                     thenRequest = workflow.request.takeIf { it.isNotBlank() },
                 )
-            } catch (cancel: CancellationException) {
-                if (userScanCancellationRequested) {
-                    _uiState.value = ScanUiState.Error(
-                        "Scan paused. Progress was saved; run the same selected folders again to resume.",
-                    )
-                } else {
-                    throw cancel
-                }
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
-        scanJob = job
-        job.invokeOnCompletion {
-            if (scanJob === job) scanJob = null
-        }
-    }
-
-    fun cancelScan() {
-        val job = scanJob ?: return
-        if (!job.isActive) return
-        userScanCancellationRequested = true
-        job.cancel(CancellationException("User paused scan"))
     }
 
     /** Save a fresh-scan recipe, never a previously validated/executed plan. */
