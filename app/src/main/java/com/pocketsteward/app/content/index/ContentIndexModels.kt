@@ -93,3 +93,10 @@ data class IndexedSearchRow(
     val ocr: Boolean,
     val snippet: String,
 )
+
+
+data class ContentIndexOverview(
+    val documentCount: Int,
+    val segmentCount: Int,
+    val rootCount: Int,
+)
