@@ -77,3 +77,19 @@ data class IndexedSearchHit(
     val ocr: Boolean,
     val snippet: String,
 )
+
+data class IndexedSearchRow(
+    val segmentId: Long,
+    val stableRef: String,
+    val sourceRoot: String,
+    val displayName: String,
+    val parentRef: String?,
+    val extension: String,
+    val category: String,
+    val sizeBytes: Long,
+    val modifiedAt: Long?,
+    val contentKind: String?,
+    val pageNumber: Int?,
+    val ocr: Boolean,
+    val snippet: String,
+)
