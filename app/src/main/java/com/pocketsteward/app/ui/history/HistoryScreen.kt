@@ -35,6 +35,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunStatus
+import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.report.TaskManifestDocument
 import java.text.DateFormat
 import java.util.Date
@@ -53,6 +54,8 @@ fun HistoryScreen(onBack: () -> Unit) {
                     manifestService = container.taskManifestService,
                     mutationRecordDao = container.database.mutationRecordDao(),
                     gatewayFor = container::gatewayFor,
+                    mutationRecovery = container.mutationRecovery,
+                    planExecutorFor = container::planExecutor,
                 )
             }
         },
@@ -95,6 +98,22 @@ fun HistoryScreen(onBack: () -> Unit) {
                     }
                 }
 
+                is HistoryActionState.Resuming -> {
+                    if (action.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { action.completed.toFloat() / action.total.toFloat() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Continuing ${action.completed} of ${action.total}…",
+                            modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Recovering task state…", modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+                    }
+                }
+
                 is HistoryActionState.Done -> {
                     Card(onClick = viewModel::dismissAction, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -115,6 +134,15 @@ fun HistoryScreen(onBack: () -> Unit) {
                                 )
                             }
                         }
+                    }
+                }
+
+                is HistoryActionState.ResumeDone -> {
+                    Card(onClick = viewModel::dismissAction, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                        Text(
+                            "Task continued: ${action.summary.succeededTotal} succeeded, ${action.summary.failed} failed. Tap to dismiss.",
+                            modifier = Modifier.padding(12.dp),
+                        )
                     }
                 }
 
@@ -147,6 +175,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                     items(tasks, key = { it.id }) { task ->
                         TaskCard(
                             task = task,
+                            onResume = { viewModel.resumeTask(task) },
                             onUndo = { viewModel.requestUndo(task) },
                             onManifest = { viewModel.showManifest(task.id) },
                         )
@@ -234,7 +263,12 @@ private fun ManifestCard(
 }
 
 @Composable
-private fun TaskCard(task: TaskRun, onUndo: () -> Unit, onManifest: () -> Unit) {
+private fun TaskCard(
+    task: TaskRun,
+    onResume: () -> Unit,
+    onUndo: () -> Unit,
+    onManifest: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(task.requestText)
@@ -257,6 +291,11 @@ private fun TaskCard(task: TaskRun, onUndo: () -> Unit, onManifest: () -> Unit) 
             }
 
             Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (task.isResumable()) {
+                    Card(onClick = onResume) {
+                        Text("Resume", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                }
                 if (task.status.isUndoable()) {
                     Card(onClick = onUndo) {
                         Text("Undo", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
@@ -274,8 +313,15 @@ private fun TaskCard(task: TaskRun, onUndo: () -> Unit, onManifest: () -> Unit) 
     }
 }
 
+private fun TaskRun.isResumable(): Boolean =
+    (status == TaskRunStatus.RUNNING || status == TaskRunStatus.CANCELLED) &&
+        DurablePlanCodec.isDurable(planJson)
+
 private fun TaskRunStatus.isUndoable(): Boolean =
-    this == TaskRunStatus.COMPLETED || this == TaskRunStatus.PARTIAL || this == TaskRunStatus.FAILED
+    this == TaskRunStatus.COMPLETED ||
+        this == TaskRunStatus.PARTIAL ||
+        this == TaskRunStatus.FAILED ||
+        this == TaskRunStatus.CANCELLED
 
 @Composable
 private fun TaskRunStatus.statusColor(): Color = when (this) {
@@ -289,5 +335,7 @@ private fun TaskRunStatus.statusColor(): Color = when (this) {
 
 private fun TaskRunStatus.displayName(): String = when (this) {
     TaskRunStatus.PARTIAL -> "Partly done"
+    TaskRunStatus.RUNNING -> "Interrupted · resumable"
+    TaskRunStatus.CANCELLED -> "Paused · resumable"
     else -> name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
