@@ -7,6 +7,8 @@ import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.GeminiNanoAgentModel
 import com.pocketsteward.app.content.AndroidPdfContentExtractor
 import com.pocketsteward.app.content.ContentInspector
+import com.pocketsteward.app.content.index.ContentIndexRepository
+import com.pocketsteward.app.content.index.ContentSearchDatabase
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
@@ -31,6 +33,7 @@ class AppContainer(context: Context) {
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
+    val contentSearchDatabase: ContentSearchDatabase by lazy { ContentSearchDatabase.getInstance(appContext) }
 
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
@@ -49,6 +52,16 @@ class AppContainer(context: Context) {
             gateway = gatewayFor(mode),
             pdfExtractor = if (mode == StorageAccessMode.DIRECT) AndroidPdfContentExtractor(appContext) else null,
         )
+
+    fun contentIndexRepository(mode: StorageAccessMode): ContentIndexRepository =
+        ContentIndexRepository(
+            dao = contentSearchDatabase.contentIndexDao(),
+            inspector = contentInspector(mode),
+        )
+
+    fun clearContentIndex(): Boolean {
+        return ContentSearchDatabase.delete(appContext)
+    }
 
     fun planExecutor(mode: StorageAccessMode): PlanExecutor =
         PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
