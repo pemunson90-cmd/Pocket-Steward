@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.ui.theme.Spacing
@@ -37,6 +38,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
     val title = when (val current = state) {
         is ScanUiState.FileListReview -> current.title
+        is ScanUiState.ContentSearchReview -> current.title
         is ScanUiState.DuplicateReview -> "Duplicates"
         is ScanUiState.ProtectFolders -> "Protect folders"
         else -> "Review"
@@ -51,6 +53,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     ) { contentModifier ->
         when (val current = state) {
             is ScanUiState.FileListReview -> FileListReview(current, contentModifier)
+            is ScanUiState.ContentSearchReview -> ContentSearchReview(current, contentModifier)
             is ScanUiState.DuplicateReview -> DuplicateReview(
                 state = current,
                 onTrashDuplicates = { viewModel.proposeTrashDuplicates(current) },
@@ -114,6 +117,61 @@ private fun FileRow(record: FileRecord) {
             softWrap = false,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+@Composable
+private fun ContentSearchReview(state: ScanUiState.ContentSearchReview, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        val details = buildString {
+            append("${state.matches.size} match(es) · ${state.inspectedFiles} readable file(s) inspected")
+            if (state.unsupportedFiles > 0) append(" · ${state.unsupportedFiles} unsupported")
+            if (state.failedFiles > 0) append(" · ${state.failedFiles} failed")
+            if (state.truncatedResults) append(" · first 500 matches shown")
+        }
+        ScreenHeadline(
+            text = state.title,
+            supporting = "$details · local read-only inspection, nothing planned",
+        )
+        if (state.matches.isEmpty()) {
+            EmptyState("No readable file contents matched “${state.query}”.")
+            return@Column
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+        ) {
+            items(state.matches, key = { it.record.stableRef }) { match ->
+                ContentMatchCard(match)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentMatchCard(match: ContentMatch) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text(
+                text = match.record.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = match.snippet,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+            Text(
+                text = match.record.stableRef,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+        }
     }
 }
 
