@@ -127,7 +127,7 @@ private fun ContentSearchReview(state: ScanUiState.ContentSearchReview, modifier
             append("${state.matches.size} match(es) · ${state.inspectedFiles} readable file(s) inspected")
             if (state.unsupportedFiles > 0) append(" · ${state.unsupportedFiles} unsupported")
             if (state.failedFiles > 0) append(" · ${state.failedFiles} failed")
-            if (state.truncatedResults) append(" · first 500 matches shown")
+            if (state.truncatedResults) append(" · inspection limit reached, results may be incomplete")
         }
         ScreenHeadline(
             text = state.title,
