@@ -116,7 +116,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         onValueChange = { request = it },
                         label = { Text("What should I do with these files?") },
                         supportingText = {
-                            Text("Offline deterministic parser. Unknown requests are refused rather than guessed.")
+                            Text("Offline deterministic parser. Try “find documents containing Lilith”. Content inspection must be enabled in Settings.")
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
