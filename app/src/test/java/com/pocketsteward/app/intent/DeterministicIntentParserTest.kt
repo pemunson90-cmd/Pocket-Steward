@@ -127,4 +127,38 @@ class DeterministicIntentParserTest {
         assertThat(DeterministicIntentParser.parse("make my phone beautiful"))
             .isInstanceOf(IntentParseResult.Unsupported::class.java)
     }
+    @Test
+    fun moveRequestParsesDestinationCategoryAndWordAge() {
+        val now = 2_000_000_000_000L
+        val result = DeterministicIntentParser.parse(
+            request = "move PDFs older than six months to Documents/Archive/PDF",
+            previous = null,
+            nowMillis = now,
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.action).isEqualTo(IntentAction.MOVE)
+        assertThat(result.intent.categories).containsExactly(com.pocketsteward.app.scan.FileCategory.DOCUMENT)
+        assertThat(result.intent.destinationFolder).isEqualTo("Documents/Archive/PDF")
+        assertThat(result.intent.modifiedBefore)
+            .isEqualTo(now - 6L * 30L * 24L * 60L * 60L * 1000L)
+    }
+
+    @Test
+    fun copyNamedFileParsesAsBoundedCopy() {
+        val result = DeterministicIntentParser.parse(
+            "copy file named invoice.pdf to Documents/Invoices",
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.action).isEqualTo(IntentAction.COPY)
+        assertThat(result.intent.findTerm).isEqualTo("invoice.pdf")
+        assertThat(result.intent.destinationFolder).isEqualTo("Documents/Invoices")
+    }
+
+    @Test
+    fun moveWithoutDestinationIsRefused() {
+        val result = DeterministicIntentParser.parse("move PDFs older than six months")
+
+        assertThat(result).isInstanceOf(IntentParseResult.Unsupported::class.java)
+    }
+
 }
