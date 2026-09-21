@@ -52,11 +52,32 @@ object DeterministicIntentParser {
         val includeSubfolders = includesSubfolders(lower)
 
         if (action == IntentAction.RENAME) {
+            val batch = Regex(
+                """(?i)\brename\s+files?\s+(?:named|matching|containing)\s+["']?(.+?)["']?\s+to\s+["']?([^/"']+)["']?\s*$""",
+            ).find(raw)
+            if (batch != null) {
+                val term = batch.groupValues[1].trim().trim('"', '\'')
+                val template = batch.groupValues[2].trim().trim('"', '\'')
+                if (term.isBlank() || template.isBlank() || '/' in template || '\\' in template) {
+                    return IntentParseResult.Unsupported(
+                        "Batch rename needs a filename term and one safe filename template.",
+                    )
+                }
+                return IntentParseResult.Parsed(
+                    BoundedIntent(
+                        action = action,
+                        rawRequest = raw,
+                        renameMatchTerm = term,
+                        renameTemplate = template,
+                    ),
+                )
+            }
+
             val match = Regex(
                 """(?i)\brename\s+["']?(.+?)["']?\s+to\s+["']?([^/"']+)["']?\s*$""",
             ).find(raw)
                 ?: return IntentParseResult.Unsupported(
-                    "Rename requests must use “rename <current name> to <new name>”.",
+                    "Rename requests must use “rename <current name> to <new name>” or “rename files matching <term> to <template>”.",
                 )
             val from = match.groupValues[1].trim().trim('"', '\'')
             val to = match.groupValues[2].trim().trim('"', '\'')
