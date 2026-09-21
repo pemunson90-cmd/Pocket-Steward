@@ -149,6 +149,10 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 state = current,
                 modifier = contentModifier,
             )
+            is ScanUiState.RichMetadataReview -> RichMetadataReview(
+                state = current,
+                modifier = contentModifier,
+            )
             is ScanUiState.ArtifactExportReview -> ArtifactExportReview(
                 state = current,
                 modifier = contentModifier,
@@ -1296,6 +1300,95 @@ private fun CoherenceAuditReview(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RichMetadataReview(
+    state: ScanUiState.RichMetadataReview,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = "Rich metadata · ${state.scopeLabel}",
+                supporting = "${state.entries.size} file(s) inspected · Level-1 local metadata",
+            )
+        }
+
+        if (state.entries.isEmpty()) {
+            item { EmptyState("No supported image, media, APK, PDF, or ZIP files were available.") }
+        }
+
+        items(state.entries, key = { it.record.stableRef }) { entry ->
+            val record = entry.record
+            Card(
+                onClick = {
+                    openDirectFile(
+                        context = context,
+                        path = record.stableRef,
+                        displayName = record.displayName,
+                        extension = record.extension,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Text(
+                        record.displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val details = buildList {
+                        if (record.width != null && record.height != null) {
+                            add("${record.width} × ${record.height}")
+                        }
+                        record.durationMs?.let { add("Duration ${formatDuration(it)}") }
+                        record.apkPackageName?.let { pkg ->
+                            add("APK $pkg${record.apkVersionName?.let { " · $it" }.orEmpty()}")
+                        }
+                        entry.pdfPageCount?.let { add("PDF · $it page(s)") }
+                        entry.archiveEntryCount?.let { add("ZIP · $it entries") }
+                        entry.exifCamera?.let { add("Camera: $it") }
+                        entry.exifOrientation?.let { add("Orientation: $it") }
+                    }
+                    details.forEach { line ->
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                    }
+                    if (entry.archiveSample.isNotEmpty()) {
+                        Text(
+                            "Archive sample: " + entry.archiveSample.joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = durationMs / 1_000
+    val hours = totalSeconds / 3_600
+    val minutes = (totalSeconds % 3_600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
     }
 }
 
