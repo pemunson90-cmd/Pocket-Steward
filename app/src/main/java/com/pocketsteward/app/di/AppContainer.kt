@@ -8,6 +8,8 @@ import androidx.work.workDataOf
 import androidx.work.WorkManager
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.Constraints
+import com.pocketsteward.app.service.FileTaskWorker
+import androidx.work.ExistingWorkPolicy
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.GeminiNanoAgentModel
@@ -121,14 +123,39 @@ class AppContainer(context: Context) {
     }
 
     fun startForegroundTask(taskRunId: Long) {
-        ContextCompat.startForegroundService(
-            appContext,
-            FileTaskForegroundService.runIntent(appContext, taskRunId),
+        try {
+            ContextCompat.startForegroundService(
+                appContext,
+                FileTaskForegroundService.runIntent(appContext, taskRunId),
+            )
+        } catch (_: IllegalStateException) {
+            enqueueFileTaskFallback(taskRunId)
+        }
+    }
+
+    private fun enqueueFileTaskFallback(taskRunId: Long) {
+        val request = OneTimeWorkRequestBuilder<FileTaskWorker>()
+            .setInputData(workDataOf(FileTaskWorker.KEY_TASK_RUN_ID to taskRunId))
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiresStorageNotLow(true)
+                    .build(),
+            )
+            .addTag(FileTaskWorker.WORK_TAG)
+            .build()
+
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            FileTaskWorker.uniqueName(taskRunId),
+            ExistingWorkPolicy.KEEP,
+            request,
         )
     }
 
     fun pauseForegroundTask() {
-        appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
+        WorkManager.getInstance(appContext).cancelAllWorkByTag(FileTaskWorker.WORK_TAG)
+        runCatching {
+            appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
+        }
     }
 
     fun startContentIndexing(sourceRoots: List<String>) {
