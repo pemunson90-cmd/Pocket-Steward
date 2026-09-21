@@ -31,9 +31,9 @@ class V1FailureMatrixTest {
             val parent = (directory as? FileRef.Direct)?.absolutePath?.trimEnd('/') ?: return null
             return existing.asSequence()
                 .filter { it.substringBeforeLast('/', "") == parent }
-                .firstOrNull { it.substringAfterLast('/').equals(name, ignoreCase = true) }
-                ?.let(FileRef::Direct)
-                ?.takeUnless { it == excluding }
+                .map(FileRef::Direct)
+                .filterNot { it == excluding }
+                .firstOrNull { it.absolutePath.substringAfterLast('/').equals(name, ignoreCase = true) }
         }
     }
 
