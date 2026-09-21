@@ -13,6 +13,7 @@ import com.pocketsteward.app.data.settings.UiSettings
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.CorrectionRule
 import com.pocketsteward.app.saved.FavoriteDestination
+import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +43,7 @@ class SettingsViewModel(
     private val agentModel: AgentModel,
     private val loadContentIndexOverview: suspend () -> ContentIndexOverview,
     private val clearContentIndexCache: () -> Boolean,
+    private val applyScheduledCleanup: (ScheduledCleanupSettings) -> Unit,
 ) : ViewModel() {
 
     val privacySettings: StateFlow<PrivacySettings> = settingsRepository.privacySettings
@@ -61,6 +63,10 @@ class SettingsViewModel(
 
     val correctionRules: StateFlow<List<CorrectionRule>> = settingsRepository.correctionRules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val scheduledCleanupSettings: StateFlow<ScheduledCleanupSettings> =
+        settingsRepository.scheduledCleanupSettings
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScheduledCleanupSettings())
 
     private val _modelStatus = MutableStateFlow(ModelStatusUi())
     val modelStatus: StateFlow<ModelStatusUi> = _modelStatus
@@ -169,6 +175,26 @@ class SettingsViewModel(
 
     fun clearStorageAccessChoice() {
         viewModelScope.launch { settingsRepository.clearStorageAccessChoice() }
+    }
+
+    fun setScheduledCleanup(
+        enabled: Boolean,
+        intervalHours: Long,
+        rootsText: String,
+    ) {
+        val value = ScheduledCleanupSettings(
+            enabled = enabled,
+            intervalHours = intervalHours.coerceIn(1, 24 * 30),
+            roots = rootsText.lineSequence()
+                .map { it.trim().trimEnd('/') }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .toList(),
+        )
+        viewModelScope.launch {
+            settingsRepository.setScheduledCleanupSettings(value)
+            applyScheduledCleanup(value)
+        }
     }
 
     fun setFavoriteDestinationsFromText(text: String) {
