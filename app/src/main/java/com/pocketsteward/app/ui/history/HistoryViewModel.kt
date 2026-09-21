@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.db.MutationRecordDao
 import com.pocketsteward.app.data.db.MutationStatus
+import com.pocketsteward.app.data.db.TaskJournalProgress
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.UndoState
@@ -17,6 +18,7 @@ import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -61,6 +63,11 @@ class HistoryViewModel(
 ) : ViewModel() {
     val tasks: StateFlow<List<TaskRun>> = taskRunDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val taskProgress: StateFlow<Map<Long, TaskJournalProgress>> =
+        mutationRecordDao.observeTaskProgress()
+            .map { rows -> rows.associateBy(TaskJournalProgress::taskRunId) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _actionState = MutableStateFlow<HistoryActionState>(HistoryActionState.Idle)
     val actionState: StateFlow<HistoryActionState> = _actionState
