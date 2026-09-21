@@ -198,7 +198,9 @@ class UndoExecutor(
             // file itself, moments ago — and it still goes to Trash, because
             // "nothing in this app permanently deletes" is a property worth
             // more than saving the user one manual step.
-            MutationOperationType.WRITE_TEXT_FILE -> {
+            MutationOperationType.WRITE_TEXT_FILE,
+            MutationOperationType.COPY,
+            -> {
                 if (!gateway.exists(destinationAfter)) {
                     MutationResult.Success(destinationAfter, changed = false)
                 } else {
@@ -222,7 +224,6 @@ class UndoExecutor(
                     else -> gateway.move(destinationAfter, original)
                 }
             }
-            MutationOperationType.COPY -> MutationResult.Failure("COPY undo is not implemented in V1.")
         }
     }
 
@@ -231,6 +232,7 @@ class UndoExecutor(
         when (record.operationType) {
             MutationOperationType.CREATE_DIRECTORY,
             MutationOperationType.WRITE_TEXT_FILE,
+            MutationOperationType.COPY,
             -> {
                 fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
             }
