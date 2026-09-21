@@ -720,18 +720,51 @@ class ScanViewModel(
         }
     }
 
-    private fun destinationParentForImportedOperation(operation: PlannedOperation): FileRef.Direct? =
-        when (operation) {
-            is PlannedOperation.CreateDirectory -> operation.parent as? FileRef.Direct
-            is PlannedOperation.Move -> (operation.destination as? FileRef.Direct)?.absolutePath
-                ?.substringBeforeLast('/', missingDelimiterValue = "")
-                ?.takeIf { it.isNotBlank() }
-                ?.let(FileRef::Direct)
-            is PlannedOperation.Rename,
-            is PlannedOperation.Trash,
-            -> null
-            is PlannedOperation.WriteTextFile -> operation.parent as? FileRef.Direct
+    private fun authorizedRootsForImportedPlan(
+        operations: List<PlannedOperation>,
+        sourceRoots: List<String>,
+    ): List<FileRef.Direct> {
+        val plannedDirectories = operations
+            .filterIsInstance<PlannedOperation.CreateDirectory>()
+            .mapNotNull { op ->
+                val parent = op.parent as? FileRef.Direct ?: return@mapNotNull null
+                "${parent.absolutePath.trimEnd('/')}/${op.name}"
+            }
+            .toSet()
+
+        val candidates = operations.mapNotNull { operation ->
+            when (operation) {
+                is PlannedOperation.CreateDirectory -> operation.parent as? FileRef.Direct
+                is PlannedOperation.WriteTextFile -> operation.parent as? FileRef.Direct
+                is PlannedOperation.Move -> {
+                    val parentPath = (operation.destination as? FileRef.Direct)
+                        ?.absolutePath
+                        ?.substringBeforeLast('/', missingDelimiterValue = "")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    if (parentPath in plannedDirectories) null else FileRef.Direct(parentPath)
+                }
+                is PlannedOperation.Rename,
+                is PlannedOperation.Trash,
+                -> null
+            }
         }
+            .filterNot { candidate ->
+                val path = candidate.absolutePath.trimEnd('/')
+                sourceRoots.any { source ->
+                    path == source || path.startsWith("$source/")
+                }
+            }
+            .distinctBy { it.absolutePath.trimEnd('/') }
+            .sortedBy { it.absolutePath.length }
+
+        return candidates.filter { candidate ->
+            candidates.none { other ->
+                other !== candidate &&
+                    candidate.absolutePath.startsWith(other.absolutePath.trimEnd('/') + "/")
+            }
+        }
+    }
 
     /** Recreates a saved scope/request from fresh storage state before doing anything else. */
     fun startSavedWorkflow(workflowId: String) {
@@ -987,16 +1020,12 @@ class ScanViewModel(
                 }
 
                 thenImportedPlan?.let { imported ->
-                    val destinationRoots = imported.operations
-                        .mapNotNull(::destinationParentForImportedOperation)
-                        .filterNot { destination ->
-                            summary.scopes.any { scope ->
-                                val root = (scope.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') ?: return@any false
-                                destination.absolutePath.trimEnd('/') == root ||
-                                    destination.absolutePath.startsWith("$root/")
-                            }
-                        }
-                        .distinctBy { it.absolutePath.trimEnd('/') }
+                    val sourceRoots = summary.scopes
+                        .mapNotNull { (it.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') }
+                    val destinationRoots = authorizedRootsForImportedPlan(
+                        operations = imported.operations,
+                        sourceRoots = sourceRoots,
+                    )
 
                     showPlanPreview(
                         goal = "Imported reviewed plan · ${imported.goal}",
