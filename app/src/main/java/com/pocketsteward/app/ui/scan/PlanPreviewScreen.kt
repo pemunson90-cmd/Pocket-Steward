@@ -148,6 +148,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    PlanOperationEditControls(
+                                        operation = operation,
+                                        onApplyMove = { destination ->
+                                            viewModel.editPlanOperation(
+                                                operationIndex = index,
+                                                newDestinationPath = destination,
+                                            )
+                                        },
+                                        onApplyRename = { name ->
+                                            viewModel.editPlanOperation(
+                                                operationIndex = index,
+                                                newName = name,
+                                            )
+                                        },
+                                    )
                                 }
                             }
                         }
@@ -190,6 +205,72 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
         }
+    }
+}
+
+@Composable
+private fun PlanOperationEditControls(
+    operation: PlannedOperation,
+    onApplyMove: (String) -> Unit,
+    onApplyRename: (String) -> Unit,
+) {
+    var editing by remember(operation) { mutableStateOf(false) }
+
+    when (operation) {
+        is PlannedOperation.Move -> {
+            TextButton(onClick = { editing = !editing }) {
+                Text(if (editing) "Hide editor" else "Edit destination")
+            }
+            if (editing) {
+                val current = (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
+                var destination by remember(operation) { mutableStateOf(current) }
+                OutlinedTextField(
+                    value = destination,
+                    onValueChange = { destination = it },
+                    label = { Text("Destination file path") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        onApplyMove(destination)
+                        editing = false
+                    },
+                    enabled = destination.isNotBlank() && destination != current,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                ) {
+                    Text("Apply move edit")
+                }
+            }
+        }
+
+        is PlannedOperation.Rename -> {
+            TextButton(onClick = { editing = !editing }) {
+                Text(if (editing) "Hide editor" else "Edit new name")
+            }
+            if (editing) {
+                var name by remember(operation) { mutableStateOf(operation.newName) }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("New file name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        onApplyRename(name)
+                        editing = false
+                    },
+                    enabled = name.isNotBlank() && name != operation.newName,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                ) {
+                    Text("Apply rename edit")
+                }
+            }
+        }
+
+        else -> Unit
     }
 }
 
