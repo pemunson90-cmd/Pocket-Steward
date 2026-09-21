@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -272,6 +273,7 @@ private fun IndexedContentSearchReview(
     var expandedRefs by remember { mutableStateOf<Set<String>>(emptySet()) }
     var saveName by remember { mutableStateOf("") }
     var selectedRef by rememberSaveable { mutableStateOf<String?>(null) }
+    val resultListState = rememberLazyListState()
 
     val visible = state.visibleResults
     val refresh = state.refreshSummary
@@ -327,6 +329,7 @@ private fun IndexedContentSearchReview(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
                 ) {
                     LazyColumn(
+                        state = resultListState,
                         modifier = Modifier
                             .weight(0.52f)
                             .fillMaxHeight(),
@@ -358,6 +361,7 @@ private fun IndexedContentSearchReview(
                 }
             } else {
                 LazyColumn(
+                    state = resultListState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
