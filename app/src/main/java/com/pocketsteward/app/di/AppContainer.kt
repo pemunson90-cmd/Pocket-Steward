@@ -14,6 +14,7 @@ import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
+import com.pocketsteward.app.metadata.MetadataEnricher
 import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.service.ContentIndexForegroundService
@@ -96,6 +97,8 @@ class AppContainer(context: Context) {
             },
         )
     }
+
+    val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
 
     val mutationRecovery: MutationRecovery by lazy {
         MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), ::gatewayFor)
