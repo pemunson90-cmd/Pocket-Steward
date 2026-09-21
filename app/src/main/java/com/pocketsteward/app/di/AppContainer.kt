@@ -15,6 +15,7 @@ import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.scan.FileScanner
+import com.pocketsteward.app.service.ContentIndexForegroundService
 import com.pocketsteward.app.service.FileTaskForegroundService
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
@@ -97,5 +98,18 @@ class AppContainer(context: Context) {
 
     fun pauseForegroundTask() {
         appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
+    }
+
+    fun startContentIndexing(sourceRoots: List<String>) {
+        val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
+        if (roots.isEmpty()) return
+        ContextCompat.startForegroundService(
+            appContext,
+            ContentIndexForegroundService.runIntent(appContext, roots),
+        )
+    }
+
+    fun pauseContentIndexing() {
+        appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
     }
 }
