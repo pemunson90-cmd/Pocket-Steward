@@ -100,6 +100,7 @@ object PlanSelection {
         val requiredParent = when (operation) {
             is PlannedOperation.CreateDirectory -> operation.parent.rawValue()
             is PlannedOperation.Move -> operation.destination.parentRaw()
+            is PlannedOperation.Copy -> operation.destination.parentRaw()
             is PlannedOperation.WriteTextFile -> operation.parent.rawValue()
             is PlannedOperation.Rename,
             is PlannedOperation.Trash,
@@ -123,6 +124,7 @@ object PlanSelection {
             when (val candidate = operations[candidateIndex]) {
                 is PlannedOperation.CreateDirectory -> candidate.parent.rawValue() == directory
                 is PlannedOperation.Move -> candidate.destination.parentRaw() == directory
+                is PlannedOperation.Copy -> candidate.destination.parentRaw() == directory
                 is PlannedOperation.WriteTextFile -> candidate.parent.rawValue() == directory
                 is PlannedOperation.Rename,
                 is PlannedOperation.Trash,
