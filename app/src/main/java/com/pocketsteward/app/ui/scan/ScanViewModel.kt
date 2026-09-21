@@ -48,6 +48,7 @@ import com.pocketsteward.app.intent.IntentOrder
 import com.pocketsteward.app.intent.IntentParseResult
 import com.pocketsteward.app.intent.IntentPlanGenerator
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.DurablePlan
 import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
@@ -58,6 +59,7 @@ import com.pocketsteward.app.report.VerifiedTextExporter
 import com.pocketsteward.app.report.duplicateTrashReason
 import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.plan.ReviewedPlanPackage
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
@@ -645,7 +647,7 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("The imported plan has no direct-file sources to rescan.")
                     return@launch
                 }
-                val targets = roots.map(::ScanTarget.CustomFolder)
+                val targets = roots.map { ScanTarget.CustomFolder(it) }
                 _selectedTargets.value = targets
                 startScan(
                     targets = targets,
