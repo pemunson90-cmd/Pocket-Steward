@@ -133,6 +133,7 @@ private fun ExecutionDone(
             supporting = buildList {
                 if (summary.foldersCreated > 0) add("${summary.foldersCreated} folder(s) created")
                 if (summary.filesMoved > 0) add("${summary.filesMoved} moved")
+                if (summary.filesCopied > 0) add("${summary.filesCopied} copied")
                 if (summary.filesRenamed > 0) add("${summary.filesRenamed} renamed")
                 if (summary.filesTrashed > 0) add("${summary.filesTrashed} moved to Trash")
                 if (summary.filesWritten > 0) add("${summary.filesWritten} file(s) written")
