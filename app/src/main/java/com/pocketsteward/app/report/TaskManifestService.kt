@@ -84,6 +84,7 @@ class TaskManifestService(
         document: TaskManifestDocument,
         gateway: StorageGateway,
         scopeRootRef: String,
+        format: ManifestFormat = ManifestFormat.MARKDOWN,
     ): ExportResult {
         // `TaskRun.scopeRootRef` holds a raw `rawValue()`, not a
         // FileRefJournalCodec string — the codec's prefixes appear only on
@@ -97,6 +98,7 @@ class TaskManifestService(
             gateway = gateway,
             parent = parent,
             document = document,
+            format = format,
         )
         if (result is ExportResult.Written) {
             onVerifiedExport(result.path)
