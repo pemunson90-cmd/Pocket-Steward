@@ -67,6 +67,45 @@ class CoherenceTextProtocolTest {
         )
     }
 
+
+    @Test
+    fun singleDocumentParserAcceptsExactPipeResponse() {
+        val result = CoherenceTextProtocol.parseSingle(
+            "QUESTIONABLE|Receipts|Looks financial rather than narrative.",
+            ids.getValue("D0001"),
+        )
+
+        assertThat(result).isEqualTo(
+            CoherenceTextProtocol.ParsedFinding(
+                ids.getValue("D0001"),
+                CoherenceClass.QUESTIONABLE,
+                "Receipts",
+                "Looks financial rather than narrative.",
+            ),
+        )
+    }
+
+    @Test
+    fun singleDocumentParserToleratesHarmlessProseAroundClosedEnum() {
+        val result = CoherenceTextProtocol.parseSingle(
+            "Classification: DOES NOT BELONG because this is unrelated.",
+            ids.getValue("D0002"),
+        )
+
+        assertThat(result!!.classification).isEqualTo(CoherenceClass.DOES_NOT_BELONG)
+        assertThat(result.documentId).isEqualTo(ids.getValue("D0002"))
+    }
+
+    @Test
+    fun singleDocumentParserRejectsResponsesWithoutClosedClassification() {
+        assertThat(
+            CoherenceTextProtocol.parseSingle(
+                "I am not sure what to call this.",
+                ids.getValue("D0001"),
+            ),
+        ).isNull()
+    }
+
     @Test
     fun unknownAliasIsIgnored() {
         val result = CoherenceTextProtocol.parse(
