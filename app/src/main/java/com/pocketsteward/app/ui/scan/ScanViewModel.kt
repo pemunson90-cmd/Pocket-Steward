@@ -2772,6 +2772,7 @@ class ScanViewModel(
         operationIndex: Int,
         newDestinationPath: String? = null,
         newName: String? = null,
+        keepOriginal: Boolean? = null,
     ) {
         val current = _preview.value ?: return
         if (operationIndex !in current.accepted.indices) return
@@ -2781,21 +2782,41 @@ class ScanViewModel(
                 val original = current.accepted[operationIndex]
                 val edited = when (original) {
                     is PlannedOperation.Move -> {
-                        val path = newDestinationPath?.trim()?.trimEnd('/')
-                        if (path.isNullOrBlank()) {
-                            _error.value = "Move destination cannot be blank."
-                            return@launch
+                        when {
+                            keepOriginal == true -> PlannedOperation.Copy(
+                                source = original.source,
+                                destination = original.destination,
+                                reason = original.reason,
+                            )
+                            newDestinationPath != null -> {
+                                val path = newDestinationPath.trim().trimEnd('/')
+                                if (path.isBlank()) {
+                                    _error.value = "Move destination cannot be blank."
+                                    return@launch
+                                }
+                                original.copy(destination = FileRef.Direct(path))
+                            }
+                            else -> original
                         }
-                        original.copy(destination = FileRef.Direct(path))
                     }
 
                     is PlannedOperation.Copy -> {
-                        val path = newDestinationPath?.trim()?.trimEnd('/')
-                        if (path.isNullOrBlank()) {
-                            _error.value = "Copy destination cannot be blank."
-                            return@launch
+                        when {
+                            keepOriginal == false -> PlannedOperation.Move(
+                                source = original.source,
+                                destination = original.destination,
+                                reason = original.reason,
+                            )
+                            newDestinationPath != null -> {
+                                val path = newDestinationPath.trim().trimEnd('/')
+                                if (path.isBlank()) {
+                                    _error.value = "Copy destination cannot be blank."
+                                    return@launch
+                                }
+                                original.copy(destination = FileRef.Direct(path))
+                            }
+                            else -> original
                         }
-                        original.copy(destination = FileRef.Direct(path))
                     }
 
                     is PlannedOperation.Rename -> {
@@ -2812,6 +2833,8 @@ class ScanViewModel(
                         return@launch
                     }
                 }
+
+                if (edited == original) return@launch
 
                 val transformed = current.accepted.toMutableList().apply {
                     this[operationIndex] = edited
