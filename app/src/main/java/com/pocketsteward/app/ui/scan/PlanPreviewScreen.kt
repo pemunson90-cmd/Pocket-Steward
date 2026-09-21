@@ -76,11 +76,12 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     items(destinationGroups, key = { it.directory }) { group ->
                         DestinationEditCard(
                             group = group,
-                            onApply = { root, name ->
+                            onApply = { root, name, rememberRule ->
                                 viewModel.editPlanDestinationGroup(
                                     groupDirectory = group.directory,
                                     newDestinationRootPath = root,
                                     newGroupName = name,
+                                    rememberForSimilarFiles = rememberRule,
                                 )
                             },
                         )
@@ -195,10 +196,11 @@ private data class DestinationEditGroup(
 @Composable
 private fun DestinationEditCard(
     group: DestinationEditGroup,
-    onApply: (root: String, groupName: String) -> Unit,
+    onApply: (root: String, groupName: String, rememberRule: Boolean) -> Unit,
 ) {
     var root by remember(group.directory) { mutableStateOf(group.root) }
     var groupName by remember(group.directory) { mutableStateOf(group.groupName) }
+    var rememberRule by remember(group.directory) { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
@@ -222,8 +224,24 @@ private fun DestinationEditCard(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            ) {
+                Checkbox(
+                    checked = rememberRule,
+                    onCheckedChange = { rememberRule = it },
+                )
+                Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
+                    Text("Remember this correction")
+                    Text(
+                        "When there is a clear shared filename term, reuse this group for similar files.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Button(
-                onClick = { onApply(root, groupName) },
+                onClick = { onApply(root, groupName, rememberRule) },
                 enabled = root.isNotBlank() && groupName.isNotBlank(),
                 modifier = Modifier.padding(top = Spacing.tight),
             ) {
