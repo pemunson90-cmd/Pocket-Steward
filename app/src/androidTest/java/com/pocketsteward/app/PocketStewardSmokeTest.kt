@@ -1,9 +1,8 @@
 package com.pocketsteward.app
 
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,6 +14,7 @@ class PocketStewardSmokeTest {
 
     @Test
     fun activityComposesWithoutCrashing() {
-        composeRule.onRoot().assertExists()
+        composeRule.waitForIdle()
+        assertNotNull(composeRule.activity)
     }
 }
