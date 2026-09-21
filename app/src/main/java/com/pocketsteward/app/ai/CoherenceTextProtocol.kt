@@ -91,11 +91,14 @@ object CoherenceTextProtocol {
                     }
                 }
 
-                val normalized = line.uppercase().replace(' ', '_')
-                CoherenceClass.entries.firstOrNull { classification ->
-                    Regex("""(^|[^A-Z_])${classification.name}([^A-Z_]|$)""")
-                        .containsMatchIn(normalized)
-                }?.let { classification ->
+                val normalized = line
+                    .uppercase()
+                    .replace(' ', '_')
+                    .replace('-', '_')
+                CoherenceClass.entries
+                    .sortedByDescending { it.name.length }
+                    .firstOrNull { classification -> classification.name in normalized }
+                    ?.let { classification ->
                     return ParsedFinding(
                         documentId = documentId,
                         classification = classification,
