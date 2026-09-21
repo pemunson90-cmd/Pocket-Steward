@@ -242,12 +242,18 @@ private fun PlanOperationEditControls(
     var editing by remember(operation) { mutableStateOf(false) }
 
     when (operation) {
-        is PlannedOperation.Move -> {
+        is PlannedOperation.Move,
+        is PlannedOperation.Copy,
+        -> {
             TextButton(onClick = { editing = !editing }) {
                 Text(if (editing) "Hide editor" else "Edit destination")
             }
             if (editing) {
-                val current = (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
+                val current = when (operation) {
+                    is PlannedOperation.Move -> (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
+                    is PlannedOperation.Copy -> (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
+                    else -> ""
+                }
                 var destination by remember(operation) { mutableStateOf(current) }
                 OutlinedTextField(
                     value = destination,
@@ -370,6 +376,10 @@ private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGr
             "${parent.absolutePath.trimEnd('/')}/${operation.name}"
         }
         is PlannedOperation.Move -> {
+            val destination = operation.destination as? FileRef.Direct ?: return null
+            destination.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
+        }
+        is PlannedOperation.Copy -> {
             val destination = operation.destination as? FileRef.Direct ?: return null
             destination.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
         }
