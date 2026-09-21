@@ -13,6 +13,23 @@ import com.pocketsteward.app.storage.rawValue
 object PlanSelection {
     fun allSelected(operations: List<PlannedOperation>): Set<Int> = operations.indices.toSet()
 
+    fun noneSelected(): Set<Int> = emptySet()
+
+    fun safeSelected(operations: List<PlannedOperation>): Set<Int> {
+        var selected = emptySet<Int>()
+        operations.forEachIndexed { index, operation ->
+            if (operation.safetyClass() != MutationSafetyClass.RED) {
+                selected = setSelected(
+                    operations = operations,
+                    current = selected,
+                    index = index,
+                    selected = true,
+                )
+            }
+        }
+        return selected
+    }
+
     fun selectedOperations(
         operations: List<PlannedOperation>,
         selectedIndices: Set<Int>,
