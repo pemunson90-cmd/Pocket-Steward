@@ -1,5 +1,13 @@
 package com.pocketsteward.app.ui.home
 
+import java.io.File
+
+import android.widget.Toast
+
+import androidx.activity.result.contract.ActivityResultContracts
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +43,7 @@ fun HomeScreen(
     onNaturalLanguageRequest: (String) -> Unit,
     onSavedWorkflow: (String) -> Unit,
     onSavedSearch: (String) -> Unit,
+    onImportedPlan: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
@@ -52,6 +61,27 @@ fun HomeScreen(
     val savedWorkflows by viewModel.savedWorkflows.collectAsState()
     val savedSearches by viewModel.savedSearches.collectAsState()
     var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+
+    val importPlanLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val cacheFile = File(context.cacheDir, "reviewed-plan-import-${System.currentTimeMillis()}.json")
+                context.contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "Could not open the selected file." }
+                    cacheFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                onImportedPlan(cacheFile.absolutePath)
+            }.onFailure { error ->
+                Toast.makeText(
+                    context,
+                    error.message ?: "Could not import the reviewed plan.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -183,6 +213,23 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+
+        Card(
+            onClick = {
+                importPlanLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text("Import reviewed plan", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "Open a Pocket Steward reviewed-plan JSON. It will be rescanned and revalidated before anything can run.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
 
