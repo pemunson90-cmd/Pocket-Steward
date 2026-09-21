@@ -2577,6 +2577,66 @@ class ScanViewModel(
                                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                                     return@launch
                                 }
+
+                                val batchTerm = intent.renameMatchTerm
+                                val batchTemplate = intent.renameTemplate
+                                if (batchTerm != null && batchTemplate != null) {
+                                    val matches = filesForScopes(summary.scopes)
+                                        .filter { record ->
+                                            !record.isDirectory &&
+                                                record.displayName.contains(batchTerm, ignoreCase = true)
+                                        }
+                                        .sortedBy { it.stableRef }
+
+                                    if (matches.isEmpty()) {
+                                        _uiState.value = ScanUiState.Error(
+                                            "No files matching \"$batchTerm\" were found in the selected scope.",
+                                        )
+                                        return@launch
+                                    }
+                                    if (matches.size > 1 && "{n}" !in batchTemplate) {
+                                        _uiState.value = ScanUiState.Error(
+                                            "That template would rename multiple files to the same name. Add {n}, for example \"Vacation-{n}.{ext}\".",
+                                        )
+                                        return@launch
+                                    }
+
+                                    val width = matches.size.toString().length.coerceAtLeast(1)
+                                    val operations = matches.mapIndexed { index, record ->
+                                        val newName = renderRenameTemplate(
+                                            template = batchTemplate,
+                                            record = record,
+                                            ordinal = index + 1,
+                                            ordinalWidth = width,
+                                        )
+                                        require(
+                                            newName.isNotBlank() &&
+                                                '/' !in newName &&
+                                                '\\' !in newName &&
+                                                newName != ".."
+                                        ) {
+                                            "The rename template produced an unsafe file name."
+                                        }
+
+                                        PlannedOperation.Rename(
+                                            source = parseFileRef(record.stableRef),
+                                            newName = newName,
+                                            reason = "Deterministic batch rename matching \"$batchTerm\"",
+                                        )
+                                    }
+
+                                    showPlanPreview(
+                                        goal = intent.rawRequest,
+                                        operations = operations,
+                                        scopes = summary.scopes,
+                                        scopeNotes = listOf(
+                                            "Batch rename template: $batchTemplate",
+                                            "Supported placeholders: {n}, {name}, {ext}. Ordering is deterministic by full source path.",
+                                        ),
+                                    )
+                                    return@launch
+                                }
+
                                 val from = requireNotNull(intent.renameFrom)
                                 val to = requireNotNull(intent.renameTo)
                                 val matches = filesForScopes(summary.scopes).filter { record ->
@@ -2766,6 +2826,28 @@ class ScanViewModel(
             authorizedRoot = ancestorRef,
             destinationDirectory = destinationRef,
         )
+    }
+
+    private fun renderRenameTemplate(
+        template: String,
+        record: FileRecord,
+        ordinal: Int,
+        ordinalWidth: Int,
+    ): String {
+        val baseName = record.displayName.substringBeforeLast('.', record.displayName)
+        val extension = record.extension
+        var rendered = template
+            .replace("{n}", ordinal.toString().padStart(ordinalWidth, '0'))
+            .replace("{name}", baseName)
+            .replace("{ext}", extension)
+
+        if ("{ext}" !in template &&
+            '.' !in rendered &&
+            extension.isNotBlank()
+        ) {
+            rendered += ".$extension"
+        }
+        return rendered
     }
 
     private fun applyIntentCriteria(
