@@ -1174,6 +1174,7 @@ class ScanViewModel(
                     !it.isDirectory && ContentExtractor.supports(it.extension)
                 }
                 val projectKeywords = settingsRepository.projectKeywords.first()
+                val correctionRules = settingsRepository.correctionRules.first()
                 val indexedEvidence = linkedMapOf<String, String>()
                 if (projectKeywords.isNotEmpty()) {
                     val roots = review.scopes.map { it.root.rawValue().trimEnd('/') }
@@ -1206,6 +1207,7 @@ class ScanViewModel(
                     SemanticGroupingEngine.decide(
                         records = documentRecords,
                         projectKeywords = projectKeywords,
+                        correctionRules = correctionRules,
                         indexedTextByRef = indexedEvidence,
                         modelSuggestions = modelSuggestions,
                     )
@@ -1244,7 +1246,7 @@ class ScanViewModel(
 
                 val notes = buildList {
                     add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
-                    add("Grouping evidence priority: project keywords → repeated filename/title signals → indexed content → model advice.")
+                    add("Grouping evidence priority: learned corrections → project keywords → repeated filename/title signals → indexed content → model advice.")
                     add("Approved destination: $destinationLabel.")
                     if (groupingDecisions.isNotEmpty()) {
                         val evidenceSummary = groupingDecisions
