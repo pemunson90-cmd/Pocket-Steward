@@ -17,6 +17,14 @@ enum class GroupingMode {
     PROJECT,
 }
 
+enum class IntentOrder {
+    DEFAULT,
+    LARGEST_FIRST,
+    SMALLEST_FIRST,
+    NEWEST_FIRST,
+    OLDEST_FIRST,
+}
+
 /**
  * Parsed natural-language intent. This type contains no filesystem mutation
  * primitive; it is only input to deterministic planners/read-only queries.
@@ -35,6 +43,12 @@ data class BoundedIntent(
     val contentTerm: String? = null,
     val renameFrom: String? = null,
     val renameTo: String? = null,
+    val minSizeBytes: Long? = null,
+    val maxSizeBytes: Long? = null,
+    val modifiedBefore: Long? = null,
+    val modifiedAfter: Long? = null,
+    val order: IntentOrder = IntentOrder.DEFAULT,
+    val resultLimit: Int? = null,
 )
 
 sealed interface IntentParseResult {
