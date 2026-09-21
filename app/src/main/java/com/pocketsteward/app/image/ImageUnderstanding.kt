@@ -31,11 +31,17 @@ class ImageUnderstanding(
 ) {
     suspend fun analyze(record: FileRecord): ImageInsight? {
         if (record.isDirectory) return null
-        val file = File(record.stableRef)
-        if (!file.isFile) return null
+        val uri = when {
+            record.stableRef.startsWith("content://") -> Uri.parse(record.stableRef)
+            else -> {
+                val file = File(record.stableRef)
+                if (!file.isFile) return null
+                Uri.fromFile(file)
+            }
+        }
 
         val input = runCatching {
-            InputImage.fromFilePath(context, Uri.fromFile(file))
+            InputImage.fromFilePath(context, uri)
         }.getOrNull() ?: return null
 
         val labeler = ImageLabeling.getClient(
@@ -62,6 +68,9 @@ class ImageUnderstanding(
             labeler.close()
         }
     }
+
+    fun perceptualHash(record: FileRecord): Long? =
+        ImageDHash.fromRef(context, record.stableRef)
 
     companion object {
         const val MIN_CONFIDENCE = 0.60f
