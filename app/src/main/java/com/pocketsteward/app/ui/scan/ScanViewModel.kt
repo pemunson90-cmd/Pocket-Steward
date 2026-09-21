@@ -19,6 +19,7 @@ import com.pocketsteward.app.content.ContentExtractor
 import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.content.index.ContentIndexCandidate
+import com.pocketsteward.app.content.index.ContentIndexJob
 import com.pocketsteward.app.content.index.ContentIndexJobStatus
 import com.pocketsteward.app.content.index.ContentIndexPolicy
 import com.pocketsteward.app.content.index.ContentIndexRefreshSummary
@@ -221,6 +222,7 @@ sealed interface ScanUiState {
         val allResults: List<IndexedFileSearchResult>,
         val refreshSummary: ContentIndexRefreshSummary,
         val indexStates: List<ContentIndexState>,
+        val indexJobs: List<ContentIndexJob> = emptyList(),
         val sort: ContentSearchSort = ContentSearchSort.RELEVANCE,
         val filters: ContentSearchFilters = ContentSearchFilters(),
         val savedSearchId: String? = null,
@@ -229,7 +231,18 @@ sealed interface ScanUiState {
             get() = ContentSearchView.apply(allResults, sort, filters)
 
         val indexComplete: Boolean
-            get() = indexStates.isNotEmpty() && indexStates.all { it.completed }
+            get() = when {
+                indexJobs.isNotEmpty() -> indexJobs.all {
+                    it.status == ContentIndexJobStatus.COMPLETED.name
+                }
+                else -> indexStates.isNotEmpty() && indexStates.all { it.completed }
+            }
+
+        val indexProcessed: Int
+            get() = indexJobs.sumOf { it.processedCount }
+
+        val indexEligible: Int
+            get() = indexJobs.sumOf { it.eligibleCount }
 
         val availableRoots: List<String>
             get() = allResults.map { it.sourceRoot }.distinct().sorted()
