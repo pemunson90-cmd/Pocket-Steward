@@ -181,6 +181,12 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 ) {
                     Text("Run ${preview.selectedIndices.size} selected")
                 }
+                OutlinedButton(
+                    onClick = { viewModel.exportReviewedPlan(preview) },
+                    enabled = preview.selectedIndices.isNotEmpty(),
+                ) {
+                    Text("Export plan")
+                }
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
         }
