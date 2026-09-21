@@ -60,6 +60,7 @@ object PlanValidator {
         return when (operation) {
             is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index, plannedDirectories)
             is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations, plannedDirectories)
+            is PlannedOperation.Copy -> validateCopy(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Rename -> validateRename(operation, index, claimedDestinations)
             is PlannedOperation.Trash -> validateTrash(operation, index)
             is PlannedOperation.WriteTextFile -> validateWriteTextFile(operation, index, claimedDestinations)
@@ -109,6 +110,24 @@ object PlanValidator {
         }
         if (index.isDirectory(op.source) && isNestedUnder(op.destination, op.source)) {
             return "Destination is inside the source directory — recursive move."
+        }
+        return checkDestinationFree(op.destination, index, claimedDestinations)
+    }
+
+    private fun validateCopy(
+        op: PlannedOperation.Copy,
+        index: FileIndex,
+        claimedDestinations: Set<String>,
+        plannedDirectories: Set<String>,
+    ): String? {
+        if (!index.exists(op.source)) return "Source does not exist in the index."
+        if (index.isDirectory(op.source)) return "Directory copy is not supported by this operation."
+        if (op.source == op.destination) return "Source and destination are the same."
+        val destinationParent = parentOf(op.destination)
+            ?: return "Cannot determine destination parent."
+        val parentAuthorized = index.isDirectory(destinationParent) || destinationParent.rawValue() in plannedDirectories
+        if (!parentAuthorized) {
+            return "Destination parent is outside the indexed/authorized scope."
         }
         return checkDestinationFree(op.destination, index, claimedDestinations)
     }
@@ -197,6 +216,7 @@ object PlanValidator {
         val refs = when (operation) {
             is PlannedOperation.CreateDirectory -> listOf(operation.parent)
             is PlannedOperation.Move -> listOf(operation.source, operation.destination)
+            is PlannedOperation.Copy -> listOf(operation.source, operation.destination)
             is PlannedOperation.Rename -> listOf(operation.source)
             is PlannedOperation.Trash -> listOf(operation.source)
             is PlannedOperation.WriteTextFile -> listOf(operation.parent)
@@ -216,6 +236,7 @@ object PlanValidator {
     private fun destinationOf(operation: PlannedOperation): FileRef? = when (operation) {
         is PlannedOperation.CreateDirectory -> directRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
+        is PlannedOperation.Copy -> operation.destination
         is PlannedOperation.Rename -> parentOf(operation.source)?.let { directRef(it, operation.newName) }
         is PlannedOperation.Trash -> null
         is PlannedOperation.WriteTextFile -> directRef(operation.parent, operation.name)
