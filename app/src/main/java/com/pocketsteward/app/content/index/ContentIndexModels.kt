@@ -70,6 +70,39 @@ data class ContentIndexState(
     val extractorVersion: Int,
 )
 
+
+
+enum class ContentIndexJobStatus {
+    QUEUED,
+    RUNNING,
+    PAUSED,
+    COMPLETED,
+    FAILED,
+}
+
+/**
+ * Durable read-only indexing cursor. One row per source root keeps content
+ * indexing resumable without coupling the derived search cache to the
+ * mutation/task database.
+ */
+@Entity(tableName = "content_index_jobs")
+data class ContentIndexJob(
+    @PrimaryKey val sourceRoot: String,
+    val status: String,
+    val cursorRef: String?,
+    val eligibleCount: Int,
+    val processedCount: Int,
+    val reused: Int,
+    val extracted: Int,
+    val unsupported: Int,
+    val failed: Int,
+    val removedStale: Int,
+    val startedAt: Long,
+    val updatedAt: Long,
+    val extractorVersion: Int,
+    val error: String?,
+)
+
 data class IndexedSearchHit(
     val segmentId: Long,
     val stableRef: String,
