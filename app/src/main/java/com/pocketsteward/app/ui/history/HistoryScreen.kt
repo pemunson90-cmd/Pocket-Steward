@@ -390,7 +390,7 @@ private fun TaskRunStatus.statusColor(): Color = when (this) {
 
 private fun TaskRunStatus.displayName(): String = when (this) {
     TaskRunStatus.PARTIAL -> "Partly done"
-    TaskRunStatus.RUNNING -> "Interrupted · resumable"
+    TaskRunStatus.RUNNING -> "Running · resumable"
     TaskRunStatus.CANCELLED -> "Paused · resumable"
     else -> name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
