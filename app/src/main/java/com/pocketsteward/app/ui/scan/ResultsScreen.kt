@@ -86,7 +86,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "This access mode is browse-only. Change storage access in Settings to organize or move files.",
+                                "This access mode allows browsing and read-only analysis. Change storage access in Settings to organize, move, trash, or export files.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.base),
                             )
@@ -189,14 +189,16 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
                 item { SectionHeader("Find") }
-                if (canChangeFiles) {
-                    item {
-                        ActionCard(
-                            title = "Duplicates",
-                            supporting = "Find byte-identical copies and choose what to keep.",
-                            onClick = { viewModel.findDuplicates(state) },
-                        )
-                    }
+                item {
+                    ActionCard(
+                        title = "Duplicates",
+                        supporting = if (canChangeFiles) {
+                            "Find byte-identical copies and choose what to keep."
+                        } else {
+                            "Find byte-identical copies by SHA-256. Review is read-only in this access mode."
+                        },
+                        onClick = { viewModel.findDuplicates(state) },
+                    )
                 }
                 item {
                     ActionCard(
