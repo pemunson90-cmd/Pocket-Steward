@@ -15,4 +15,13 @@ class ContentSearchPresentationTest {
         assertThat(ContentSearchPresentation.quotedSnippet("  pain in context  "))
             .isEqualTo("“pain in context”")
     }
+    @Test
+    fun mimeMappingCoversPreviewedDocumentTypes() {
+        assertThat(ContentSearchPresentation.mimeType("PDF")).isEqualTo("application/pdf")
+        assertThat(ContentSearchPresentation.mimeType("md")).isEqualTo("text/plain")
+        assertThat(ContentSearchPresentation.mimeType("docx"))
+            .isEqualTo("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        assertThat(ContentSearchPresentation.mimeType("weird")).isEqualTo("*/*")
+    }
+
 }
