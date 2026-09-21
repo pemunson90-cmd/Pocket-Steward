@@ -145,6 +145,10 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 state = current,
                 modifier = contentModifier,
             )
+            is ScanUiState.ImageAnalysisReview -> ImageAnalysisReview(
+                state = current,
+                modifier = contentModifier,
+            )
             is ScanUiState.ArtifactExportReview -> ArtifactExportReview(
                 state = current,
                 modifier = contentModifier,
@@ -1288,6 +1292,80 @@ private fun CoherenceAuditReview(
                         ) {
                             Text("Review proposed moves")
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageAnalysisReview(
+    state: ScanUiState.ImageAnalysisReview,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = "Image understanding · ${state.scopeLabel}",
+                supporting = buildString {
+                    append("${state.insights.size} analyzed successfully · ${state.attempted} attempted")
+                    if (state.limited) append(" · bounded recent-image sample")
+                    append(" · local ML Kit model")
+                },
+            )
+        }
+
+        if (state.insights.isEmpty()) {
+            item { EmptyState("No usable image labels were produced.") }
+        }
+
+        items(state.insights, key = { it.stableRef }) { insight ->
+            Card(
+                onClick = {
+                    openDirectFile(
+                        context = context,
+                        path = insight.stableRef,
+                        displayName = insight.displayName,
+                        extension = insight.displayName.substringAfterLast('.', ""),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Text(
+                        insight.displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (insight.likelyScreenshot) {
+                        Text(
+                            "Likely screenshot",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                    }
+                    if (insight.labels.isNotEmpty()) {
+                        Text(
+                            insight.labels.joinToString(" · ") { label ->
+                                "${label.label} ${(label.confidence * 100).toInt()}%"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                    } else {
+                        Text(
+                            "No label exceeded the confidence threshold.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
                     }
                 }
             }
