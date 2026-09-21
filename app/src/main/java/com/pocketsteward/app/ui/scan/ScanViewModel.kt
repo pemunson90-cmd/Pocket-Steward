@@ -59,6 +59,8 @@ import com.pocketsteward.app.scan.ScanProgress
 import com.pocketsteward.app.scan.ScanRootSet
 import com.pocketsteward.app.scan.classifyByExtension
 import com.pocketsteward.app.semantic.CoherenceCandidateSelector
+import com.pocketsteward.app.semantic.DestinationPolicy
+import com.pocketsteward.app.semantic.SemanticDestinationChoice
 import com.pocketsteward.app.semantic.SemanticPlanAdapter
 import com.pocketsteward.app.semantic.SemanticSuggestion
 import com.pocketsteward.app.storage.FileRef
@@ -1088,17 +1090,49 @@ class ScanViewModel(
     fun proposeSemanticOrganization(
         review: ScanUiState.CoherenceAuditReview,
         includeSubfolders: Boolean = false,
+        destinationPolicy: DestinationPolicy = DestinationPolicy.ROOT_LOCAL,
+        explicitDestinationPath: String? = null,
     ) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working(
                 "Building organization proposal",
-                "Validating semantic suggestions against the current scan",
+                "Resolving the approved destination and validating semantic suggestions",
             )
             try {
                 if (review.scopes.any { it.root !is FileRef.Direct }) {
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
                     return@launch
                 }
+
+                @Suppress("DEPRECATION")
+                val documentsRoot = FileRef.Direct(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).absolutePath,
+                )
+
+                val explicitRoot = if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
+                    val path = explicitDestinationPath?.trim()?.trimEnd('/')
+                    if (path.isNullOrBlank()) {
+                        _uiState.value = ScanUiState.Error("Choose an existing destination folder first.")
+                        return@launch
+                    }
+                    val ref = FileRef.Direct(path)
+                    val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
+                    val valid = withContext(Dispatchers.IO) {
+                        gateway.exists(ref) && runCatching { gateway.stat(ref).isDirectory }.getOrDefault(false)
+                    }
+                    if (!valid) {
+                        _uiState.value = ScanUiState.Error("That destination folder does not exist or is not a directory.")
+                        return@launch
+                    }
+                    ref
+                } else {
+                    null
+                }
+
+                val destinationChoice = SemanticDestinationChoice(
+                    policy = destinationPolicy,
+                    explicitRoot = explicitRoot,
+                )
 
                 val records = allRecordsForScopes(review.scopes)
                 val result = withContext(Dispatchers.Default) {
@@ -1113,6 +1147,8 @@ class ScanViewModel(
                             )
                         },
                         includeSubfolders = includeSubfolders,
+                        destinationChoice = destinationChoice,
+                        recommendedDocumentsRoot = documentsRoot,
                     )
                 }
 
@@ -1131,9 +1167,15 @@ class ScanViewModel(
                     return@launch
                 }
 
+                val destinationLabel = when (destinationPolicy) {
+                    DestinationPolicy.ROOT_LOCAL -> "inside each current scan root"
+                    DestinationPolicy.RECOMMENDED_DOCUMENTS -> documentsRoot.absolutePath
+                    DestinationPolicy.EXPLICIT_FOLDER -> explicitRoot!!.absolutePath
+                }
+
                 val notes = buildList {
                     add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
-                    add("Destinations stay inside each file's originating scan root.")
+                    add("Approved destination: $destinationLabel.")
                     if (!includeSubfolders) {
                         add("Files already inside folders were left alone unless nested moves were explicitly enabled.")
                     }
@@ -1144,10 +1186,11 @@ class ScanViewModel(
                 }
 
                 showPlanPreview(
-                    goal = "Organize ${result.plannedFileCount} file(s) from coherence suggestions",
+                    goal = "Organize ${result.plannedFileCount} file(s) from semantic findings",
                     operations = result.operations,
                     scopes = review.scopes,
                     scopeNotes = notes,
+                    authorizedDestinationRoots = result.authorizedDestinationRoots,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
