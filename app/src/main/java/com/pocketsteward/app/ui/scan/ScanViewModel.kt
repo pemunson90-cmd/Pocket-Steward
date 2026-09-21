@@ -33,6 +33,7 @@ import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.di.AppContainer
+import com.pocketsteward.app.executor.CompositeFileIndex
 import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
@@ -154,6 +155,12 @@ sealed interface ScanUiState {
          * source spared nothing, which renders as no section at all.
          */
         val scopeNotes: List<String> = emptyList(),
+        /**
+         * Extra user-approved destination roots. These are re-listed live
+         * and composed with the source scan for validation; PlanValidator is
+         * never weakened for cross-root moves.
+         */
+        val authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
         /**
          * Set when this plan targets a folder the scanner has never walked
          * (spec 6c's browser). Execution re-validates against a live listing
