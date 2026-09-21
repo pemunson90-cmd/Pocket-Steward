@@ -1784,6 +1784,52 @@ class ScanViewModel(
         }
     }
 
+    fun enrichMetadata(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                val privacy = settingsRepository.privacySettings.first()
+                if (!privacy.metadataIndexingEnabled) {
+                    _uiState.value = ScanUiState.Error(
+                        "Metadata indexing is off. Enable it in Settings before enriching file metadata.",
+                    )
+                    return@launch
+                }
+                if (summary.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+
+                val records = filesForScopes(summary.scopes)
+                val eligible = records.filter(container.metadataEnricher::supports)
+                val changed = mutableListOf<FileRecord>()
+                for ((index, record) in eligible.withIndex()) {
+                    _uiState.value = ScanUiState.Working(
+                        label = "Reading rich metadata",
+                        detail = record.displayName,
+                        processed = index,
+                        total = eligible.size,
+                    )
+                    val enrichment = withContext(Dispatchers.IO) {
+                        container.metadataEnricher.enrich(record)
+                    }
+                    if (enrichment.changed) {
+                        withContext(Dispatchers.IO) {
+                            container.database.fileRecordDao().upsert(enrichment.record)
+                        }
+                        changed += enrichment.record
+                    }
+                }
+
+                _uiState.value = ScanUiState.FileListReview(
+                    title = "Rich metadata updated for ${changed.size} file(s)",
+                    records = changed,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     /** Plan Section 16's "find old files" quick action — browse only, nothing planned yet. */
     fun findOldFiles(summary: ScanUiState.Summary, olderThanMonths: Int = 6) {
         viewModelScope.launch {
