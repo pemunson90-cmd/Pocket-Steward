@@ -5,10 +5,8 @@ import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.FileRefJournalCodec
-import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
-import com.pocketsteward.app.storage.rawValue
 import java.text.DateFormat
 import java.util.Date
 
@@ -36,6 +34,7 @@ data class TaskManifestDocument(
 class TaskManifestService(
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
+    private val onVerifiedExport: (String) -> Unit = {},
 ) {
     suspend fun build(taskRunId: Long): TaskManifestDocument? {
         val task = taskRunDao.getById(taskRunId) ?: return null
@@ -94,11 +93,15 @@ class TaskManifestService(
         if (parent !is FileRef.Direct) {
             return ExportResult.Failed("Exporting a manifest needs full file-manager access.")
         }
-        val name = TaskManifest.fileName(document.taskRunId, System.currentTimeMillis())
-        return when (val result = gateway.writeTextFile(parent, name, document.text)) {
-            is MutationResult.Success -> ExportResult.Written(result.resultRef.rawValue())
-            is MutationResult.Failure -> ExportResult.Failed(result.reason)
+        val result = VerifiedManifestExporter.export(
+            gateway = gateway,
+            parent = parent,
+            document = document,
+        )
+        if (result is ExportResult.Written) {
+            onVerifiedExport(result.path)
         }
+        return result
     }
 
     private fun formatTimestamp(epochMs: Long): String =
