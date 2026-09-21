@@ -88,9 +88,38 @@ class DeterministicIntentParserTest {
     }
 
     @Test
-    fun unsupportedAgeQualifierIsRefusedRatherThanIgnored() {
-        assertThat(DeterministicIntentParser.parse("organize old files"))
-            .isInstanceOf(IntentParseResult.Unsupported::class.java)
+    fun ageQualifierBecomesBoundedCriterion() {
+        val now = 2_000_000_000_000L
+        val result = DeterministicIntentParser.parse(
+            request = "find files older than 30 days",
+            previous = null,
+            nowMillis = now,
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.modifiedBefore).isEqualTo(now - 30L * 24L * 60L * 60L * 1000L)
+    }
+
+    @Test
+    fun sizeAndOrderCriteriaParse() {
+        val result = DeterministicIntentParser.parse("find largest files over 500 MB") as IntentParseResult.Parsed
+
+        assertThat(result.intent.minSizeBytes).isEqualTo(500_000_000L)
+        assertThat(result.intent.order).isEqualTo(IntentOrder.LARGEST_FIRST)
+        assertThat(result.intent.resultLimit).isEqualTo(50)
+    }
+
+    @Test
+    fun followUpRefinesPreviousRequestWithoutInventingNewAction() {
+        val previous = (DeterministicIntentParser.parse("organize images") as IntentParseResult.Parsed).intent
+        val result = DeterministicIntentParser.parse(
+            request = "same but include subfolders and only files larger than 10 MB",
+            previous = previous,
+            nowMillis = 1_000L,
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.action).isEqualTo(IntentAction.ORGANIZE)
+        assertThat(result.intent.includeSubfolders).isTrue()
+        assertThat(result.intent.minSizeBytes).isEqualTo(10_000_000L)
     }
 
     @Test
