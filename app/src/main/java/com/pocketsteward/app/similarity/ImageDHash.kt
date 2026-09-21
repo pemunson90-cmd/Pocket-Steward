@@ -1,10 +1,49 @@
 package com.pocketsteward.app.similarity
 
+import android.content.Context
+import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.File
 
 object ImageDHash {
+    fun fromRef(context: Context, stableRef: String): Long? =
+        if (stableRef.startsWith("content://")) {
+            fromUri(context, Uri.parse(stableRef))
+        } else {
+            fromPath(stableRef)
+        }
+
+    private fun fromUri(context: Context, uri: Uri): Long? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, bounds)
+            }
+        }.getOrNull() ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (bounds.outWidth / sample > 256 || bounds.outHeight / sample > 256) {
+            sample *= 2
+        }
+
+        val bitmap = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(
+                    input,
+                    null,
+                    BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    },
+                )
+            }
+        }.getOrNull() ?: return null
+
+        return bitmap.useHash()
+    }
+
     fun fromPath(path: String): Long? {
         val file = File(path)
         if (!file.isFile) return null
@@ -22,8 +61,12 @@ object ImageDHash {
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         val bitmap = BitmapFactory.decodeFile(path, options) ?: return null
-        return try {
-            val scaled = Bitmap.createScaledBitmap(bitmap, 9, 8, true)
+        return bitmap.useHash()
+    }
+
+    private fun Bitmap.useHash(): Long =
+        try {
+            val scaled = Bitmap.createScaledBitmap(this, 9, 8, true)
             try {
                 var hash = 0L
                 var bit = 0
@@ -37,12 +80,11 @@ object ImageDHash {
                 }
                 hash
             } finally {
-                if (scaled !== bitmap) scaled.recycle()
+                if (scaled !== this) scaled.recycle()
             }
         } finally {
-            bitmap.recycle()
+            recycle()
         }
-    }
 
     fun likelyScreenshot(displayName: String): Boolean {
         val lower = displayName.lowercase()
