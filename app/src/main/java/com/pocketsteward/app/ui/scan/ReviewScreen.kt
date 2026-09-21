@@ -12,6 +12,7 @@ import androidx.compose.ui.text.withStyle
 import com.pocketsteward.app.navigation.AdaptiveLayoutPolicy
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -949,19 +950,26 @@ private fun openIndexedFile(
     result: IndexedFileSearchResult,
 ) {
     val file = File(result.stableRef)
-    if (!file.exists()) return
-
-    val uri = FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        file,
-    )
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, ContentSearchPresentation.mimeType(result.extension))
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    if (!file.exists()) {
+        Toast.makeText(context, "That file is no longer at this path.", Toast.LENGTH_SHORT).show()
+        return
     }
-    runCatching {
+
+    val opened = runCatching {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, ContentSearchPresentation.mimeType(result.extension))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         context.startActivity(Intent.createChooser(intent, "Open ${result.displayName}"))
+    }.isSuccess
+
+    if (!opened) {
+        Toast.makeText(context, "No installed app could open this file.", Toast.LENGTH_SHORT).show()
     }
 }
 
