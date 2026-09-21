@@ -118,29 +118,44 @@ class GeminiNanoAgentModel : AgentModel {
         documents: List<SemanticDocument>,
     ): AuditAttempt {
         val prepared = fitToInputBudget(scopeLabel, documents, structured = false)
-        return try {
+
+        val first = try {
             runTextFallback(scopeLabel, prepared)
         } catch (cancel: CancellationException) {
             throw cancel
-        } catch (first: Throwable) {
-            if (!CoherencePromptPolicy.isComputeFailure(first.message)) throw first
-
-            // COMPUTE_ERROR is deliberately retried once with a much smaller
-            // request. This covers transient/model pressure without looping or
-            // silently pretending the full set was classified.
-            val retryDocuments = CoherencePromptPolicy.retry(prepared)
-            try {
-                runTextFallback(scopeLabel, retryDocuments)
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (retry: Throwable) {
-                throw IllegalStateException(
-                    "On-device intelligence could not complete this audit after Pocket Steward reduced the request. " +
-                        "No files were changed.",
-                    retry,
-                )
-            }
+        } catch (failure: Throwable) {
+            if (!CoherencePromptPolicy.isComputeFailure(failure.message)) throw failure
+            null
         }
+
+        if (first != null && first.findings.isNotEmpty()) {
+            return first
+        }
+
+        // Retry once for either the observed AICore compute failure or a
+        // syntactically successful response that contained no safe protocol
+        // records. The retry is deliberately smaller and still read-only.
+        val retryDocuments = CoherencePromptPolicy.retry(prepared)
+        val retry = try {
+            runTextFallback(scopeLabel, retryDocuments)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (failure: Throwable) {
+            throw IllegalStateException(
+                "On-device intelligence could not complete this audit after Pocket Steward reduced the request. " +
+                    "No files were changed.",
+                failure,
+            )
+        }
+
+        if (retry.findings.isEmpty()) {
+            throw IllegalStateException(
+                "On-device intelligence answered, but Pocket Steward could not safely parse any classifications. " +
+                    "No files were changed.",
+            )
+        }
+
+        return retry
     }
 
     private suspend fun runTextFallback(
@@ -267,10 +282,11 @@ class GeminiNanoAgentModel : AgentModel {
         appendLine()
         appendLine("OUTPUT PROTOCOL:")
         appendLine("Return exactly one protocol line per document and no prose.")
-        appendLine("Each line must be five tab-separated fields:")
-        appendLine("PSF<TAB>ALIAS<TAB>CLASSIFICATION<TAB>GROUP<TAB>REASON")
+        appendLine("Each line must be exactly five pipe-separated fields:")
+        appendLine("PSF|ALIAS|CLASSIFICATION|GROUP|REASON")
+        appendLine("Do not make a Markdown table and do not add bullets or numbering.")
         appendLine("Use - for GROUP when there is no suggested group.")
-        appendLine("GROUP and REASON must each stay on one line and contain no tab characters.")
+        appendLine("GROUP and REASON must each stay on one line and contain no pipe characters.")
         appendLine("Preserve each ALIAS exactly. Never output a path as the alias.")
         appendLine()
         documents.forEach { (alias, doc) ->
