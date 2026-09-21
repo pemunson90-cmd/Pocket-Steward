@@ -2,10 +2,13 @@ package com.pocketsteward.app.storage
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.google.common.truth.Truth.assertThat
 import java.io.File
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,7 +32,7 @@ class DirectStorageGatewayCopyTest {
     }
 
     @Test
-    fun copyPreservesSourceAndWritesExactDestinationBytes() = runTest {
+    fun copyPreservesSourceAndWritesExactDestinationBytes() = runBlocking {
         val source = File(root, "source.bin").apply {
             writeBytes(ByteArray(32 * 1024) { index -> (index % 251).toByte() })
         }
@@ -40,14 +43,14 @@ class DirectStorageGatewayCopyTest {
             FileRef.Direct(destination.absolutePath),
         )
 
-        assertThat(result).isInstanceOf(MutationResult.Success::class.java)
-        assertThat(source.exists()).isTrue()
-        assertThat(destination.exists()).isTrue()
-        assertThat(destination.readBytes()).isEqualTo(source.readBytes())
+        assertTrue(result is MutationResult.Success)
+        assertTrue(source.exists())
+        assertTrue(destination.exists())
+        assertArrayEquals(source.readBytes(), destination.readBytes())
     }
 
     @Test
-    fun copyRefusesOverwriteAndLeavesBothFilesUntouched() = runTest {
+    fun copyRefusesOverwriteAndLeavesBothFilesUntouched() = runBlocking {
         val source = File(root, "source.txt").apply { writeText("source") }
         val destination = File(root, "destination.txt").apply { writeText("existing") }
 
@@ -56,13 +59,13 @@ class DirectStorageGatewayCopyTest {
             FileRef.Direct(destination.absolutePath),
         )
 
-        assertThat(result).isInstanceOf(MutationResult.Failure::class.java)
-        assertThat(source.readText()).isEqualTo("source")
-        assertThat(destination.readText()).isEqualTo("existing")
+        assertTrue(result is MutationResult.Failure)
+        assertEquals("source", source.readText())
+        assertEquals("existing", destination.readText())
     }
 
     @Test
-    fun copyRefusesDirectorySources() = runTest {
+    fun copyRefusesDirectorySources() = runBlocking {
         val source = File(root, "folder").apply { mkdirs() }
         val destination = File(root, "folder-copy")
 
@@ -71,7 +74,7 @@ class DirectStorageGatewayCopyTest {
             FileRef.Direct(destination.absolutePath),
         )
 
-        assertThat(result).isInstanceOf(MutationResult.Failure::class.java)
-        assertThat(destination.exists()).isFalse()
+        assertTrue(result is MutationResult.Failure)
+        assertFalse(destination.exists())
     }
 }
