@@ -2085,6 +2085,111 @@ class ScanViewModel(
             }
         }
     }
+    fun editPlanDestinationGroup(
+        groupDirectory: String,
+        newDestinationRootPath: String? = null,
+        newGroupName: String? = null,
+    ) {
+        val current = _preview.value ?: return
+        viewModelScope.launch {
+            try {
+                val oldDirectory = groupDirectory.trimEnd('/')
+                val oldGroup = oldDirectory.substringAfterLast('/')
+                val oldRoot = oldDirectory.substringBeforeLast('/', missingDelimiterValue = "")
+                if (oldRoot.isBlank()) {
+                    _error.value = "Cannot determine the current destination root."
+                    return@launch
+                }
+
+                val targetRoot = newDestinationRootPath
+                    ?.trim()
+                    ?.trimEnd('/')
+                    ?.takeIf { it.isNotBlank() }
+                    ?: oldRoot
+                val targetGroup = if (newGroupName == null) {
+                    oldGroup
+                } else {
+                    SemanticPlanAdapter.sanitizeGroup(newGroupName)
+                        ?: run {
+                            _error.value = "Group name is blank or contains an unsafe path separator."
+                            return@launch
+                        }
+                }
+
+                val targetRootRef = FileRef.Direct(targetRoot)
+                val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
+                val targetExists = withContext(Dispatchers.IO) {
+                    gateway.exists(targetRootRef) &&
+                        runCatching { gateway.stat(targetRootRef).isDirectory }.getOrDefault(false)
+                }
+                if (!targetExists) {
+                    _error.value = "The selected destination root does not exist."
+                    return@launch
+                }
+
+                val transformed = current.accepted.map { operation ->
+                    when (operation) {
+                        is PlannedOperation.CreateDirectory -> {
+                            val candidate = (operation.parent as? FileRef.Direct)
+                                ?.let { parent -> "${parent.absolutePath.trimEnd('/')}/${operation.name}" }
+                            if (candidate == oldDirectory) {
+                                operation.copy(parent = targetRootRef, name = targetGroup)
+                            } else {
+                                operation
+                            }
+                        }
+
+                        is PlannedOperation.Move -> {
+                            val destination = operation.destination as? FileRef.Direct
+                            val destinationParent = destination?.absolutePath
+                                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                            if (destination != null && destinationParent == oldDirectory) {
+                                operation.copy(
+                                    destination = FileRef.Direct(
+                                        "$targetRoot/$targetGroup/${destination.absolutePath.substringAfterLast('/')}",
+                                    ),
+                                )
+                            } else {
+                                operation
+                            }
+                        }
+
+                        else -> operation
+                    }
+                }
+
+                val sourceRoots = current.scopes
+                    .mapNotNull { it.root as? FileRef.Direct }
+                    .map { it.absolutePath.trimEnd('/') }
+                val extraRoots = transformed
+                    .filterIsInstance<PlannedOperation.CreateDirectory>()
+                    .mapNotNull { it.parent as? FileRef.Direct }
+                    .filterNot { parent ->
+                        parent.absolutePath.trimEnd('/') in sourceRoots
+                    }
+                    .distinctBy { it.absolutePath.trimEnd('/') }
+
+                val index = buildAuthorizedPlanIndex(
+                    scopes = current.scopes,
+                    destinationRoots = extraRoots,
+                    mode = StorageAccessMode.DIRECT,
+                )
+                val validated = PlanValidator.validate(transformed, index)
+                _preview.value = current.copy(
+                    accepted = validated.accepted,
+                    rejected = current.rejected + validated.rejected,
+                    acceptedScopeLabels = validated.accepted.map { operation ->
+                        scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
+                    },
+                    selectedIndices = PlanSelection.allSelected(validated.accepted),
+                    authorizedDestinationRoots = extraRoots,
+                )
+            } catch (t: Throwable) {
+                _error.value = t.message ?: t.javaClass.simpleName
+            }
+        }
+    }
+
     fun setPlanOperationSelected(index: Int, selected: Boolean) {
         val current = _preview.value ?: return
         _preview.value = current.copy(
