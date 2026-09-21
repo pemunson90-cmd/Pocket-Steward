@@ -86,7 +86,7 @@ class HistoryViewModel(
                 }
                 startForegroundTask(task.id)
                 _actionState.value = HistoryActionState.BackgroundStarted(
-                    "Task #${task.id} is continuing in the foreground service. Progress is shown in the notification.",
+                    "Task #${task.id} is continuing with the durable background runner. Progress is shown here and in the notification.",
                 )
             } catch (t: Throwable) {
                 _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
