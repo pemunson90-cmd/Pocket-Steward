@@ -11,6 +11,9 @@ interface ContentIndexDao {
     @Query("SELECT * FROM indexed_documents WHERE stableRef = :stableRef")
     suspend fun getDocument(stableRef: String): IndexedDocument?
 
+    @Query("SELECT * FROM indexed_documents WHERE sourceRoot IN (:sourceRoots) AND extractionStatus = 'INDEXED'")
+    suspend fun getIndexedDocumentsForRoots(sourceRoots: List<String>): List<IndexedDocument>
+
     @Query("SELECT stableRef FROM indexed_documents WHERE sourceRoot = :sourceRoot")
     suspend fun getStableRefsForRoot(sourceRoot: String): List<String>
 
