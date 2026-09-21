@@ -42,7 +42,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.content.index.ContentSearchFilters
-import com.pocketsteward.app.content.index.ContentSearchPresentation\nimport com.pocketsteward.app.content.index.ContentSearchProvenance
+import com.pocketsteward.app.content.index.ContentSearchPresentation
+import com.pocketsteward.app.content.index.ContentSearchProvenance
 import com.pocketsteward.app.content.index.ContentSearchSort
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
