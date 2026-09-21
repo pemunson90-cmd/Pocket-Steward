@@ -101,9 +101,13 @@ private fun NavHostController.navigateTopLevel(route: String) {
 
 internal object AdaptiveLayoutPolicy {
     const val EXPANDED_NAV_MIN_WIDTH_DP = 600f
+    const val TWO_PANE_MIN_WIDTH_DP = 520f
 
     fun useExpandedNavigation(widthDp: Float): Boolean =
         widthDp >= EXPANDED_NAV_MIN_WIDTH_DP
+
+    fun useTwoPane(widthDp: Float): Boolean =
+        widthDp >= TWO_PANE_MIN_WIDTH_DP
 }
 
 private fun AppDestination.matches(destination: NavDestination?): Boolean {
