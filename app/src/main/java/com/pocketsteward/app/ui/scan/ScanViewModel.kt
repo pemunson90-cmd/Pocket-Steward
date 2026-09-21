@@ -2472,6 +2472,51 @@ class ScanViewModel(
                                 }
                             }
 
+                            IntentAction.MOVE,
+                            IntentAction.COPY,
+                            -> {
+                                if (summary.mode != StorageAccessMode.DIRECT ||
+                                    summary.scopes.any { it.root !is FileRef.Direct }
+                                ) {
+                                    _uiState.value = ScanUiState.Error(
+                                        "Move and copy requests currently require full file-manager access.",
+                                    )
+                                    return@launch
+                                }
+
+                                val destinationText = intent.destinationFolder
+                                    ?: run {
+                                        _uiState.value = ScanUiState.Error("Choose a destination folder.")
+                                        return@launch
+                                    }
+                                val transfer = prepareExplicitTransfer(
+                                    summary = summary,
+                                    intent = intent,
+                                    destinationText = destinationText,
+                                )
+                                if (transfer.operations.isEmpty()) {
+                                    _uiState.value = ScanUiState.Error(
+                                        "The request was understood, but no matching files were found.",
+                                    )
+                                    return@launch
+                                }
+
+                                showPlanPreview(
+                                    goal = intent.rawRequest,
+                                    operations = transfer.operations,
+                                    scopes = summary.scopes,
+                                    scopeNotes = listOf(
+                                        "Explicit transfer destination: ${transfer.destinationDirectory.absolutePath}",
+                                        if (intent.action == IntentAction.COPY) {
+                                            "Copy keeps the original file in place. Undo moves the created copy to PocketSteward/Trash."
+                                        } else {
+                                            "Move removes the file from its current folder only after the approved operation succeeds."
+                                        },
+                                    ),
+                                    authorizedDestinationRoots = listOf(transfer.authorizedRoot),
+                                )
+                            }
+
                             IntentAction.RENAME -> {
                                 if (summary.mode != StorageAccessMode.DIRECT) {
                                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
@@ -2549,6 +2594,125 @@ class ScanViewModel(
             }
         }
     }
+    private data class PreparedTransfer(
+        val operations: List<PlannedOperation>,
+        val authorizedRoot: FileRef.Direct,
+        val destinationDirectory: FileRef.Direct,
+    )
+
+    private suspend fun prepareExplicitTransfer(
+        summary: ScanUiState.Summary,
+        intent: BoundedIntent,
+        destinationText: String,
+    ): PreparedTransfer {
+        val sharedRoot = java.io.File(Environment.getExternalStorageDirectory().absolutePath).canonicalFile
+        val requested = java.io.File(destinationText)
+        val destinationFile = if (requested.isAbsolute) {
+            requested.canonicalFile
+        } else {
+            java.io.File(sharedRoot, destinationText).canonicalFile
+        }
+
+        require(
+            destinationFile.path == sharedRoot.path ||
+                destinationFile.path.startsWith(sharedRoot.path.trimEnd(java.io.File.separatorChar) + java.io.File.separator),
+        ) {
+            "Destination must stay inside shared storage."
+        }
+
+        val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
+        if (withContext(Dispatchers.IO) { gateway.exists(FileRef.Direct(destinationFile.path)) }) {
+            val metadata = withContext(Dispatchers.IO) {
+                gateway.stat(FileRef.Direct(destinationFile.path))
+            }
+            require(metadata.isDirectory) { "Destination exists but is not a folder." }
+        }
+
+        var ancestor = destinationFile
+        while (
+            ancestor.path != sharedRoot.path &&
+            !withContext(Dispatchers.IO) { gateway.exists(FileRef.Direct(ancestor.path)) }
+        ) {
+            ancestor = ancestor.parentFile
+                ?: error("Could not resolve an existing destination ancestor.")
+        }
+        require(
+            withContext(Dispatchers.IO) {
+                val ref = FileRef.Direct(ancestor.path)
+                gateway.exists(ref) && gateway.stat(ref).isDirectory
+            },
+        ) {
+            "No existing destination ancestor is available."
+        }
+
+        val destinationRef = FileRef.Direct(destinationFile.path)
+        val ancestorRef = FileRef.Direct(ancestor.path)
+        val createOperations = mutableListOf<PlannedOperation>()
+        var parent = ancestorRef
+
+        if (ancestor.path != destinationFile.path) {
+            val relative = destinationFile.relativeTo(ancestor).invariantSeparatorsPath
+            relative.split('/').filter { it.isNotBlank() }.forEach { segment ->
+                require(segment != ".." && '/' !in segment && '\\' !in segment) {
+                    "Unsafe destination folder segment."
+                }
+                createOperations += PlannedOperation.CreateDirectory(
+                    parent = parent,
+                    name = segment,
+                    reason = "Explicit destination requested by the user",
+                )
+                parent = FileRef.Direct("${parent.absolutePath.trimEnd('/')}/$segment")
+            }
+        }
+
+        val directParents = summary.scopes
+            .mapNotNull { (it.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') }
+            .toSet()
+        val candidates = filesForScopes(summary.scopes)
+            .asSequence()
+            .filter { !it.isDirectory }
+            .filter { record ->
+                intent.includeSubfolders ||
+                    record.parentRef?.trimEnd('/') in directParents
+            }
+            .filter { record ->
+                intent.categories.isEmpty() ||
+                    classifyByExtension(record.extension) in intent.categories
+            }
+            .filter { record ->
+                intent.findTerm.isNullOrBlank() ||
+                    record.displayName.contains(intent.findTerm, ignoreCase = true)
+            }
+            .toList()
+
+        val matching = applyIntentCriteria(candidates, intent)
+        val transferOperations = matching.map { record ->
+            val source = parseFileRef(record.stableRef)
+            val destination = FileRef.Direct(
+                "${destinationRef.absolutePath.trimEnd('/')}/${record.displayName}",
+            )
+            when (intent.action) {
+                IntentAction.MOVE -> PlannedOperation.Move(
+                    source = source,
+                    destination = destination,
+                    reason = "Explicit natural-language move request",
+                )
+                IntentAction.COPY -> PlannedOperation.Copy(
+                    source = source,
+                    destination = destination,
+                    reason = "Explicit natural-language copy request",
+                )
+                else -> error("Transfer helper called for ${intent.action}.")
+            }
+        }
+
+        return PreparedTransfer(
+            operations = createOperations + transferOperations,
+            authorizedRoot = ancestorRef,
+            destinationDirectory = destinationRef,
+        )
+    }
+
     private fun applyIntentCriteria(
         records: List<FileRecord>,
         intent: BoundedIntent,
