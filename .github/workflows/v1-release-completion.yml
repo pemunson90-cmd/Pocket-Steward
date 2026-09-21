@@ -22,12 +22,22 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - name: Clean build and full unit suite
-        run: ./gradlew clean assembleDebug testDebugUnitTest --stacktrace
+      - name: Clean debug, release, instrumentation compile, unit tests, and lint
+        run: ./gradlew clean assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-steward-v1-release-completion-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-v1-release-completion-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-v1-release-completion-androidtest
+          path: app/build/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
       - name: Package local APK signer tooling
         run: |
