@@ -1,5 +1,17 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.Alignment
+import kotlin.math.abs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -221,6 +233,7 @@ private fun ContentMatchCard(match: ContentMatch) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun IndexedContentSearchReview(
     state: ScanUiState.IndexedContentSearchReview,
@@ -232,286 +245,124 @@ private fun IndexedContentSearchReview(
     modifier: Modifier,
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
-    var extensionMenuOpen by remember { mutableStateOf(false) }
-    var dateMenuOpen by remember { mutableStateOf(false) }
-    var sizeMenuOpen by remember { mutableStateOf(false) }
+    var moreMenuOpen by remember { mutableStateOf(false) }
+    var filterSheetOpen by remember { mutableStateOf(false) }
+    var saveDialogOpen by remember { mutableStateOf(false) }
     var expandedRefs by remember { mutableStateOf<Set<String>>(emptySet()) }
     var saveName by remember { mutableStateOf("") }
-    var savedConfirmation by remember { mutableStateOf(false) }
 
     val visible = state.visibleResults
     val refresh = state.refreshSummary
     val indexDetails = buildString {
         append("${visible.size} shown · ${state.allResults.size} matching file(s)")
-        append(" · ${refresh.reused} unchanged reused")
+        append(" · ${refresh.reused} reused")
         if (refresh.extracted > 0) append(" · ${refresh.extracted} refreshed")
-        if (refresh.unsupported > 0) append(" · ${refresh.unsupported} unsupported")
         if (refresh.failed > 0) append(" · ${refresh.failed} failed")
         if (!state.indexComplete) append(" · index incomplete")
     }
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        ScreenHeadline(
-            text = state.title,
-            supporting = "$indexDetails · local persistent index",
-        )
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = state.title,
+                supporting = "$indexDetails · local persistent index",
+            )
+        }
 
-        Card(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
-            Column(modifier = Modifier.padding(Spacing.base)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                ) {
-                    Column {
-                        OutlinedButton(onClick = { sortMenuOpen = true }) {
-                            Text("Sort: ${state.sort.label()}")
-                        }
-                        DropdownMenu(
-                            expanded = sortMenuOpen,
-                            onDismissRequest = { sortMenuOpen = false },
-                        ) {
-                            ContentSearchSort.entries.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option.label()) },
-                                    onClick = {
-                                        onSortChange(option)
-                                        sortMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    OutlinedButton(onClick = onRefresh) { Text("Refresh index") }
-                    if (state.filters.activeCount > 0) {
-                        TextButton(onClick = onResetFilters) {
-                            Text("Reset (${state.filters.activeCount})")
-                        }
-                    }
-                }
-
-                Text(
-                    "Source",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(top = Spacing.tight),
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
-                    if (state.availableRoots.size > 1) {
-                        item {
-                            FilterChip(
-                                selected = state.filters.sourceRoots.isEmpty(),
-                                onClick = { onFiltersChange(state.filters.copy(sourceRoots = emptySet())) },
-                                label = { Text("All folders") },
-                            )
-                        }
-                    }
-                    items(state.availableRoots) { root ->
-                        val selected = root in state.filters.sourceRoots
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                val next = state.filters.sourceRoots.toMutableSet().apply {
-                                    if (selected) remove(root) else add(root)
-                                }
-                                onFiltersChange(state.filters.copy(sourceRoots = next))
-                            },
-                            label = { Text(root.substringAfterLast('/').ifBlank { root }) },
-                        )
-                    }
-                }
-
-                Text(
-                    "Type",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(top = Spacing.tight),
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
-                    item {
-                        FilterChip(
-                            selected = state.filters.categories.isEmpty(),
-                            onClick = { onFiltersChange(state.filters.copy(categories = emptySet())) },
-                            label = { Text("All types") },
-                        )
-                    }
-                    items(state.availableCategories) { category ->
-                        val selected = category in state.filters.categories
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                val next = state.filters.categories.toMutableSet().apply {
-                                    if (selected) remove(category) else add(category)
-                                }
-                                onFiltersChange(state.filters.copy(categories = next))
-                            },
-                            label = { Text(category.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }) },
-                        )
-                    }
-                }
-
-                Text(
-                    "Content source",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(top = Spacing.tight),
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.tight)) {
-                    items(ContentSearchProvenance.entries) { provenance ->
-                        FilterChip(
-                            selected = state.filters.provenance == provenance,
-                            onClick = { onFiltersChange(state.filters.copy(provenance = provenance)) },
-                            label = { Text(provenance.label()) },
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                ) {
-                    Column {
-                        OutlinedButton(onClick = { extensionMenuOpen = true }) {
-                            Text(
-                                if (state.filters.extensions.isEmpty()) {
-                                    "Extensions"
-                                } else {
-                                    "Extensions (${state.filters.extensions.size})"
-                                },
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = extensionMenuOpen,
-                            onDismissRequest = { extensionMenuOpen = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Any extension") },
-                                onClick = {
-                                    onFiltersChange(state.filters.copy(extensions = emptySet()))
-                                    extensionMenuOpen = false
-                                },
-                            )
-                            state.availableExtensions.forEach { ext ->
-                                val selected = ext in state.filters.extensions
-                                DropdownMenuItem(
-                                    text = { Text("${if (selected) "✓ " else ""}.$ext") },
-                                    onClick = {
-                                        val next = state.filters.extensions.toMutableSet().apply {
-                                            if (selected) remove(ext) else add(ext)
-                                        }
-                                        onFiltersChange(state.filters.copy(extensions = next))
-                                    },
-                                )
-                            }
-                        }
-                    }
-
-                    Column {
-                        OutlinedButton(onClick = { dateMenuOpen = true }) {
-                            Text(if (state.filters.modifiedAfter == null && state.filters.modifiedBefore == null) "Date" else "Date ✓")
-                        }
-                        DropdownMenu(
-                            expanded = dateMenuOpen,
-                            onDismissRequest = { dateMenuOpen = false },
-                        ) {
-                            val now = System.currentTimeMillis()
-                            val choices = listOf(
-                                "Any date" to null,
-                                "Last 7 days" to now - TimeUnit.DAYS.toMillis(7),
-                                "Last 30 days" to now - TimeUnit.DAYS.toMillis(30),
-                                "Last 6 months" to now - TimeUnit.DAYS.toMillis(183),
-                                "Last year" to now - TimeUnit.DAYS.toMillis(365),
-                            )
-                            choices.forEach { (label, after) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        onFiltersChange(
-                                            state.filters.copy(
-                                                modifiedAfter = after,
-                                                modifiedBefore = null,
-                                            ),
-                                        )
-                                        dateMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-
-                    Column {
-                        OutlinedButton(onClick = { sizeMenuOpen = true }) {
-                            Text(if (state.filters.minSizeBytes == null && state.filters.maxSizeBytes == null) "Size" else "Size ✓")
-                        }
-                        DropdownMenu(
-                            expanded = sizeMenuOpen,
-                            onDismissRequest = { sizeMenuOpen = false },
-                        ) {
-                            val mib = 1024L * 1024L
-                            val choices = listOf(
-                                Triple("Any size", null, null),
-                                Triple("Under 1 MiB", null, mib),
-                                Triple("1–10 MiB", mib, 10 * mib),
-                                Triple("10–100 MiB", 10 * mib, 100 * mib),
-                                Triple("Over 100 MiB", 100 * mib, null),
-                            )
-                            choices.forEach { (label, min, max) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        onFiltersChange(
-                                            state.filters.copy(
-                                                minSizeBytes = min,
-                                                maxSizeBytes = max,
-                                            ),
-                                        )
-                                        sizeMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = state.filters.pathContains,
-                    onValueChange = { onFiltersChange(state.filters.copy(pathContains = it)) },
-                    label = { Text("Folder/path contains") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                )
-
-                Text(
-                    "Save this search",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(top = Spacing.base),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                ) {
-                    OutlinedTextField(
-                        value = saveName,
-                        onValueChange = {
-                            saveName = it
-                            savedConfirmation = false
-                        },
-                        placeholder = { Text("Pain documents") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(
-                        onClick = {
-                            onSaveSearch(saveName)
-                            savedConfirmation = true
-                            saveName = ""
-                        },
-                        enabled = saveName.isNotBlank(),
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Save")
+                        Column(modifier = Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = { sortMenuOpen = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Sort")
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuOpen,
+                                onDismissRequest = { sortMenuOpen = false },
+                            ) {
+                                ContentSearchSort.entries.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                RadioButton(
+                                                    selected = state.sort == option,
+                                                    onClick = null,
+                                                )
+                                                Text(option.label())
+                                            }
+                                        },
+                                        onClick = {
+                                            onSortChange(option)
+                                            sortMenuOpen = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = { filterSheetOpen = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                if (state.filters.activeCount == 0) {
+                                    "Filters"
+                                } else {
+                                    "Filters (${state.filters.activeCount})"
+                                },
+                            )
+                        }
+
+                        Column {
+                            TextButton(onClick = { moreMenuOpen = true }) {
+                                Text("More")
+                            }
+                            DropdownMenu(
+                                expanded = moreMenuOpen,
+                                onDismissRequest = { moreMenuOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Refresh index") },
+                                    onClick = {
+                                        moreMenuOpen = false
+                                        onRefresh()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Save search") },
+                                    onClick = {
+                                        moreMenuOpen = false
+                                        saveDialogOpen = true
+                                    },
+                                )
+                                if (state.filters.activeCount > 0) {
+                                    DropdownMenuItem(
+                                        text = { Text("Reset filters") },
+                                        onClick = {
+                                            moreMenuOpen = false
+                                            onResetFilters()
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
-                if (savedConfirmation) {
+
                     Text(
-                        "Saved on Home. Reopening it rescans metadata and reuses unchanged indexed content.",
+                        text = "Sorted by ${state.sort.label()}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Spacing.hairline),
                     )
                 }
@@ -519,20 +370,16 @@ private fun IndexedContentSearchReview(
         }
 
         if (visible.isEmpty()) {
-            EmptyState(
-                if (state.allResults.isEmpty()) {
-                    "No indexed file contents matched “${state.query}”."
-                } else {
-                    "No results match the current filters."
-                },
-            )
-            return@Column
-        }
-
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
-        ) {
+            item {
+                EmptyState(
+                    if (state.allResults.isEmpty()) {
+                        "No indexed file contents matched “${state.query}”."
+                    } else {
+                        "No results match the current filters."
+                    },
+                )
+            }
+        } else {
             items(visible, key = { it.stableRef }) { result ->
                 IndexedContentResultCard(
                     result = result,
@@ -545,6 +392,262 @@ private fun IndexedContentSearchReview(
                 )
             }
         }
+    }
+
+    if (filterSheetOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { filterSheetOpen = false },
+        ) {
+            SearchFilterSheet(
+                state = state,
+                onFiltersChange = onFiltersChange,
+                onResetFilters = onResetFilters,
+                onDone = { filterSheetOpen = false },
+            )
+        }
+    }
+
+    if (saveDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { saveDialogOpen = false },
+            title = { Text("Save search") },
+            text = {
+                OutlinedTextField(
+                    value = saveName,
+                    onValueChange = { saveName = it },
+                    label = { Text("Name") },
+                    placeholder = { Text("Pain documents") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSaveSearch(saveName)
+                        saveName = ""
+                        saveDialogOpen = false
+                    },
+                    enabled = saveName.isNotBlank(),
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { saveDialogOpen = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SearchFilterSheet(
+    state: ScanUiState.IndexedContentSearchReview,
+    onFiltersChange: (ContentSearchFilters) -> Unit,
+    onResetFilters: () -> Unit,
+    onDone: () -> Unit,
+) {
+    val scroll = rememberScrollState()
+    val filters = state.filters
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(scroll)
+            .padding(horizontal = Spacing.screen, vertical = Spacing.tight),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Filters", style = MaterialTheme.typography.headlineSmall)
+            TextButton(onClick = onDone) { Text("Done") }
+        }
+
+        SearchFilterSection("Source")
+        if (state.availableRoots.size <= 1) {
+            Text(
+                state.availableRoots.firstOrNull()?.substringAfterLast('/') ?: "Current search scope",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            state.availableRoots.forEach { root ->
+                val selected = root in filters.sourceRoots
+                CheckFilterRow(
+                    label = root.substringAfterLast('/').ifBlank { root },
+                    checked = selected,
+                    onToggle = {
+                        val next = filters.sourceRoots.toMutableSet().apply {
+                            if (selected) remove(root) else add(root)
+                        }
+                        onFiltersChange(filters.copy(sourceRoots = next))
+                    },
+                )
+            }
+            TextButton(
+                onClick = { onFiltersChange(filters.copy(sourceRoots = emptySet())) },
+            ) { Text("All source folders") }
+        }
+
+        SearchFilterSection("Type")
+        state.availableCategories.forEach { category ->
+            val selected = category in filters.categories
+            CheckFilterRow(
+                label = category.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() },
+                checked = selected,
+                onToggle = {
+                    val next = filters.categories.toMutableSet().apply {
+                        if (selected) remove(category) else add(category)
+                    }
+                    onFiltersChange(filters.copy(categories = next))
+                },
+            )
+        }
+        TextButton(
+            onClick = { onFiltersChange(filters.copy(categories = emptySet())) },
+        ) { Text("All types") }
+
+        SearchFilterSection("Content source")
+        ContentSearchProvenance.entries.forEach { provenance ->
+            RadioFilterRow(
+                label = provenance.label(),
+                selected = filters.provenance == provenance,
+                onSelect = { onFiltersChange(filters.copy(provenance = provenance)) },
+            )
+        }
+
+        SearchFilterSection("Extension")
+        if (state.availableExtensions.isEmpty()) {
+            Text("No extensions available.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            state.availableExtensions.forEach { ext ->
+                val selected = ext in filters.extensions
+                CheckFilterRow(
+                    label = ".$ext",
+                    checked = selected,
+                    onToggle = {
+                        val next = filters.extensions.toMutableSet().apply {
+                            if (selected) remove(ext) else add(ext)
+                        }
+                        onFiltersChange(filters.copy(extensions = next))
+                    },
+                )
+            }
+            TextButton(
+                onClick = { onFiltersChange(filters.copy(extensions = emptySet())) },
+            ) { Text("Any extension") }
+        }
+
+        SearchFilterSection("Modified")
+        val now = System.currentTimeMillis()
+        val dateChoices = listOf(
+            "Any date" to null,
+            "Last 7 days" to now - TimeUnit.DAYS.toMillis(7),
+            "Last 30 days" to now - TimeUnit.DAYS.toMillis(30),
+            "Last 6 months" to now - TimeUnit.DAYS.toMillis(183),
+            "Last year" to now - TimeUnit.DAYS.toMillis(365),
+        )
+        dateChoices.forEach { (label, after) ->
+            val selected = if (after == null) {
+                filters.modifiedAfter == null && filters.modifiedBefore == null
+            } else {
+                filters.modifiedAfter?.let { abs(it - after) < TimeUnit.MINUTES.toMillis(5) } == true
+            }
+            RadioFilterRow(
+                label = label,
+                selected = selected,
+                onSelect = {
+                    onFiltersChange(
+                        filters.copy(
+                            modifiedAfter = after,
+                            modifiedBefore = null,
+                        ),
+                    )
+                },
+            )
+        }
+
+        SearchFilterSection("Size")
+        val mib = 1024L * 1024L
+        val sizeChoices = listOf(
+            Triple("Any size", null, null),
+            Triple("Under 1 MiB", null, mib),
+            Triple("1–10 MiB", mib, 10 * mib),
+            Triple("10–100 MiB", 10 * mib, 100 * mib),
+            Triple("Over 100 MiB", 100 * mib, null),
+        )
+        sizeChoices.forEach { (label, min, max) ->
+            RadioFilterRow(
+                label = label,
+                selected = filters.minSizeBytes == min && filters.maxSizeBytes == max,
+                onSelect = {
+                    onFiltersChange(filters.copy(minSizeBytes = min, maxSizeBytes = max))
+                },
+            )
+        }
+
+        SearchFilterSection("Folder or path")
+        OutlinedTextField(
+            value = filters.pathContains,
+            onValueChange = { onFiltersChange(filters.copy(pathContains = it)) },
+            label = { Text("Path contains") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (filters.activeCount > 0) {
+            TextButton(
+                onClick = onResetFilters,
+                modifier = Modifier.padding(top = Spacing.base),
+            ) {
+                Text("Reset all filters (${filters.activeCount})")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchFilterSection(title: String) {
+    HorizontalDivider(modifier = Modifier.padding(top = Spacing.base, bottom = Spacing.tight))
+    Text(title, style = MaterialTheme.typography.titleSmall)
+}
+
+@Composable
+private fun CheckFilterRow(
+    label: String,
+    checked: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = Spacing.hairline),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Text(label, modifier = Modifier.padding(start = Spacing.tight))
+    }
+}
+
+@Composable
+private fun RadioFilterRow(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect)
+            .padding(vertical = Spacing.hairline),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(label, modifier = Modifier.padding(start = Spacing.tight))
     }
 }
 
@@ -604,7 +707,7 @@ private fun IndexedContentResultCard(
                     )
                 }
                 Text(
-                    text = snippet.text,
+                    text = "“${snippet.text}”",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = if (index == 0) Spacing.hairline else Spacing.tight),
                 )
@@ -650,21 +753,31 @@ private fun CoherenceAuditReview(
     modifier: Modifier,
 ) {
     var includeSubfolders by remember { mutableStateOf(false) }
-    Column(modifier = modifier.fillMaxWidth()) {
-        val model = state.modelName?.let { " · $it" } ?: ""
-        val limitNote = if (state.limited) " · bounded sample, not every readable file was analyzed" else ""
-        ScreenHeadline(
-            text = "Coherence audit · ${state.scopeLabel}",
-            supporting = "${state.rows.size} classified · ${state.skippedUnreadable} unreadable/skipped$model$limitNote · read-only",
-        )
-        if (state.rows.isEmpty()) {
-            EmptyState("The model returned no usable classifications.")
-            return@Column
+
+    val model = state.modelName?.let { " · $it" } ?: ""
+    val limitNote = if (state.limited) " · bounded sample, not every readable file was analyzed" else ""
+    val proposalCandidates = state.rows.count {
+        it.suggestedGroup?.isNotBlank() == true &&
+            it.classification in setOf(
+                com.pocketsteward.app.ai.CoherenceClass.QUESTIONABLE,
+                com.pocketsteward.app.ai.CoherenceClass.DOES_NOT_BELONG,
+            )
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = "Coherence audit · ${state.scopeLabel}",
+                supporting = "${state.rows.size} classified · ${state.skippedUnreadable} unreadable/skipped$model$limitNote · read-only",
+            )
         }
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
-        ) {
+
+        if (state.rows.isEmpty()) {
+            item { EmptyState("The model returned no usable classifications.") }
+        } else {
             items(state.rows, key = { it.record.stableRef }) { row ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
@@ -698,48 +811,48 @@ private fun CoherenceAuditReview(
             }
         }
 
-        val proposalCandidates = state.rows.count {
-            it.suggestedGroup?.isNotBlank() == true &&
-                it.classification in setOf(
-                    com.pocketsteward.app.ai.CoherenceClass.QUESTIONABLE,
-                    com.pocketsteward.app.ai.CoherenceClass.DOES_NOT_BELONG,
-                )
-        }
         if (proposalCandidates > 0) {
-            Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
-                Column(modifier = Modifier.padding(Spacing.base)) {
-                    Text(
-                        "Build a safe proposal",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        "Pocket Steward will re-check these findings against the current scan, keep destinations inside each source root, and open the normal checkbox preview. Nothing moves yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = Spacing.hairline),
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Include files already inside folders")
-                            Text(
-                                "Off by default to preserve existing human organization.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
+                    Column(modifier = Modifier.padding(Spacing.base)) {
+                        Text(
+                            "Build a safe proposal",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            "Pocket Steward will re-check these findings against the current scan, keep destinations inside each source root, and open the normal checkbox preview. Nothing moves yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Include files already inside folders")
+                                Text(
+                                    if (includeSubfolders) {
+                                        "On · nested files may be included in the proposal."
+                                    } else {
+                                        "Off · preserve existing human organization."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = includeSubfolders,
+                                onCheckedChange = { includeSubfolders = it },
                             )
                         }
-                        Switch(
-                            checked = includeSubfolders,
-                            onCheckedChange = { includeSubfolders = it },
-                        )
-                    }
-                    Button(
-                        onClick = { onBuildProposal(includeSubfolders) },
-                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                    ) {
-                        Text("Build organization proposal")
+                        Button(
+                            onClick = { onBuildProposal(includeSubfolders) },
+                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
+                        ) {
+                            Text("Build organization proposal")
+                        }
                     }
                 }
             }
