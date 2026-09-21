@@ -187,6 +187,12 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                                 newName = name,
                                             )
                                         },
+                                        onKeepOriginalChange = { keepOriginal ->
+                                            viewModel.editPlanOperation(
+                                                operationIndex = index,
+                                                keepOriginal = keepOriginal,
+                                            )
+                                        },
                                     )
                                 }
                             }
@@ -238,6 +244,7 @@ private fun PlanOperationEditControls(
     operation: PlannedOperation,
     onApplyMove: (String) -> Unit,
     onApplyRename: (String) -> Unit,
+    onKeepOriginalChange: (Boolean) -> Unit,
 ) {
     var editing by remember(operation) { mutableStateOf(false) }
 
@@ -245,6 +252,26 @@ private fun PlanOperationEditControls(
         is PlannedOperation.Move,
         is PlannedOperation.Copy,
         -> {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+            ) {
+                Checkbox(
+                    checked = operation is PlannedOperation.Copy,
+                    onCheckedChange = onKeepOriginalChange,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Keep original")
+                    Text(
+                        if (operation is PlannedOperation.Copy) {
+                            "This action copies the file; the source stays where it is."
+                        } else {
+                            "Off means move. Turn on to copy instead."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             TextButton(onClick = { editing = !editing }) {
                 Text(if (editing) "Hide editor" else "Edit destination")
             }
