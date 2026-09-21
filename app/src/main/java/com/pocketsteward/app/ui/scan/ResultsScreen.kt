@@ -238,12 +238,12 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     )
                 }
 
+                item { SectionHeader("Understand") }
                 if (canChangeFiles) {
-                    item { SectionHeader("Understand") }
                     item {
                         ActionCard(
                             title = "Rich metadata",
-                            supporting = "Read image dimensions, media duration, and APK package/version metadata without loading whole files.",
+                            supporting = "Read image dimensions, media duration, APK metadata, PDF page counts, EXIF, and ZIP listings locally.",
                             onClick = { viewModel.enrichMetadata(state) },
                         )
                     }
@@ -254,14 +254,20 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                             onClick = { viewModel.analyzeImages(state) },
                         )
                     }
-                    item {
-                        ActionCard(
-                            title = "Document organizer",
-                            supporting = "Analyze a representative sample, then build one-level document groups from project keywords, filenames, indexed content, and on-device intelligence. Nothing moves without preview.",
-                            onClick = { viewModel.runCoherenceAudit(state) },
-                        )
-                    }
+                }
+                item {
+                    ActionCard(
+                        title = "Document audit",
+                        supporting = if (canChangeFiles) {
+                            "Analyze a representative document sample with local extraction and on-device intelligence, then optionally build a reviewed organization proposal."
+                        } else {
+                            "Analyze a representative document sample locally. Findings are read-only in selected-folder mode."
+                        },
+                        onClick = { viewModel.runCoherenceAudit(state) },
+                    )
+                }
 
+                if (canChangeFiles) {
                     item { SectionHeader("Protect") }
                     item {
                         ActionCard(
