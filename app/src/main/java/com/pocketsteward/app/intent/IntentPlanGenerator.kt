@@ -38,6 +38,7 @@ object IntentPlanGenerator {
 
         for (record in records) {
             if (record.stableRef !in sortableRefs) continue
+            if (!matchesCriteria(record, intent)) continue
 
             val classification = RuleEngine.classify(record.displayName, record.extension, projectKeywords)
             if (classification.confidence < 1.0f) continue
@@ -77,6 +78,15 @@ object IntentPlanGenerator {
                 sortedCount = sorted,
             ),
         )
+    }
+
+    private fun matchesCriteria(record: FileRecord, intent: BoundedIntent): Boolean {
+        if (intent.minSizeBytes != null && record.sizeBytes < intent.minSizeBytes) return false
+        if (intent.maxSizeBytes != null && record.sizeBytes > intent.maxSizeBytes) return false
+        val modified = record.modifiedAt
+        if (intent.modifiedBefore != null && (modified == null || modified >= intent.modifiedBefore)) return false
+        if (intent.modifiedAfter != null && (modified == null || modified <= intent.modifiedAfter)) return false
+        return true
     }
 
     private fun ensureDirectoryTree(
