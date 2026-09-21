@@ -1934,14 +1934,6 @@ class ScanViewModel(
             _uiState.value = ScanUiState.Working("Finding duplicates", "Grouping by size")
             try {
                 val mode = summary.mode
-                // SAF's openRead is still TODO(), so hashing would throw a raw
-                // NotImplementedError rather than fail honestly. Guard here,
-                // with the same message every other mutation-needing action
-                // uses, instead of three different behaviors for one limit.
-                if (mode == StorageAccessMode.SAF) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
                 val records = filesForScopes(summary.scopes)
                 val detector = DuplicateDetector(container.gatewayFor(mode))
                 val groups = withContext(Dispatchers.IO) {
@@ -1972,6 +1964,12 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning", "Building the trash plan")
             try {
+                if (review.scopes.any { it.root !is FileRef.Direct }) {
+                    _uiState.value = ScanUiState.Error(
+                        "Duplicate review works with selected-folder access, but moving extra copies to Trash requires full file-manager access.",
+                    )
+                    return@launch
+                }
                 // `extras` is every copy except the keeper, and the keeper was
                 // chosen deterministically by KeeperSelector when the group was
                 // built — not "whichever one came back first", which used to
