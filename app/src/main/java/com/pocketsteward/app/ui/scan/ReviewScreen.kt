@@ -88,6 +88,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val state by viewModel.review.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val recentFolders by viewModel.recentFolders.collectAsState()
 
     val title = when (val current = state) {
         is ScanUiState.FileListReview -> current.title
@@ -121,6 +122,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
                 state = current,
+                recentFolders = recentFolders,
                 onBuildProposal = { includeSubfolders, destinationPolicy, explicitPath ->
                     viewModel.proposeSemanticOrganization(
                         review = current,
@@ -1041,6 +1043,7 @@ private fun ContentSearchProvenance.label(): String = when (this) {
 @Composable
 private fun CoherenceAuditReview(
     state: ScanUiState.CoherenceAuditReview,
+    recentFolders: List<String>,
     onBuildProposal: (Boolean, DestinationPolicy, String?) -> Unit,
     modifier: Modifier,
 ) {
@@ -1188,6 +1191,26 @@ private fun CoherenceAuditReview(
                             onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
                         )
                         if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
+                            if (recentFolders.isNotEmpty()) {
+                                Text(
+                                    "Recent folders",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(top = Spacing.tight),
+                                )
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                                ) {
+                                    items(recentFolders.take(8)) { path ->
+                                        FilterChip(
+                                            selected = explicitDestination.trimEnd('/') == path.trimEnd('/'),
+                                            onClick = { explicitDestination = path },
+                                            label = {
+                                                Text(path.substringAfterLast('/').ifBlank { path })
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                             OutlinedTextField(
                                 value = explicitDestination,
                                 onValueChange = { explicitDestination = it },
