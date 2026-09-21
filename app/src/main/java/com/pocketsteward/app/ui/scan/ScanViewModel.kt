@@ -20,11 +20,13 @@ import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.content.index.ContentIndexCandidate
 import com.pocketsteward.app.content.index.ContentIndexJobStatus
+import com.pocketsteward.app.content.index.ContentIndexPolicy
 import com.pocketsteward.app.content.index.ContentIndexRefreshSummary
 import com.pocketsteward.app.content.index.ContentIndexState
 import com.pocketsteward.app.content.index.ContentSearchFilters
 import com.pocketsteward.app.content.index.ContentSearchSort
 import com.pocketsteward.app.content.index.ContentSearchView
+import com.pocketsteward.app.content.index.IndexedExtractionStatus
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.data.settings.SettingsRepository
@@ -54,6 +56,7 @@ import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
 import com.pocketsteward.app.scan.ScanRootSet
 import com.pocketsteward.app.scan.classifyByExtension
+import com.pocketsteward.app.semantic.CoherenceCandidateSelector
 import com.pocketsteward.app.semantic.SemanticPlanAdapter
 import com.pocketsteward.app.semantic.SemanticSuggestion
 import com.pocketsteward.app.storage.FileRef
@@ -877,7 +880,10 @@ class ScanViewModel(
      */
     fun runCoherenceAudit(summary: ScanUiState.Summary) {
         viewModelScope.launch {
-            _uiState.value = ScanUiState.Working("Coherence audit", "Preparing local document excerpts")
+            _uiState.value = ScanUiState.Working(
+                "Coherence audit",
+                "Selecting a representative cross-section from the local index",
+            )
             try {
                 if (summary.mode != StorageAccessMode.DIRECT) {
                     _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
@@ -920,73 +926,146 @@ class ScanViewModel(
 
                 val records = filesForScopes(summary.scopes)
                     .filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
-                    .sortedBy { it.stableRef }
-                val inspector = container.contentInspector(summary.mode)
-                val documents = mutableListOf<SemanticDocument>()
-                val recordById = linkedMapOf<String, FileRecord>()
-                var skippedUnreadable = 0
-
-                for (record in records) {
-                    if (documents.size >= 20) break
-                    _uiState.value = ScanUiState.Working(
-                        label = "Coherence audit",
-                        detail = "Reading ${record.displayName}",
-                        processed = documents.size,
-                        total = minOf(records.size, 20),
-                    )
-                    when (val extraction = withContext(Dispatchers.IO) { inspector.extract(record) }) {
-                        is ContentExtraction.Text -> {
-                            val normalized = extraction.content
-                                .replace(Regex("""\s+"""), " ")
-                                .trim()
-                            if (normalized.isBlank()) {
-                                skippedUnreadable++
-                                continue
-                            }
-                            val id = record.stableRef
-                            documents += SemanticDocument(
-                                id = id,
-                                displayName = record.displayName,
-                                sourcePath = record.stableRef,
-                                excerpt = normalized.take(1_800),
-                            )
-                            recordById[id] = record
-                        }
-                        is ContentExtraction.Unsupported,
-                        is ContentExtraction.Failed,
-                        -> skippedUnreadable++
-                    }
-                }
-
-                if (documents.isEmpty()) {
+                val selected = CoherenceCandidateSelector.select(records)
+                if (selected.isEmpty()) {
                     _uiState.value = ScanUiState.Error(
                         "No readable text documents were available for the coherence audit.",
                     )
                     return@launch
                 }
 
-                _uiState.value = ScanUiState.Working(
-                    "Coherence audit",
-                    "Gemini Nano is classifying the prepared documents on device",
-                )
-                val audit = container.agentModel.coherenceAudit(summary.scopeLabel, documents)
-                val rows = audit.findings.mapNotNull { finding ->
-                    val record = recordById[finding.id] ?: return@mapNotNull null
-                    CoherenceAuditRow(
-                        record = record,
-                        classification = finding.classification,
-                        reason = finding.reason,
-                        suggestedGroup = finding.suggestedGroup,
+                val repository = container.contentIndexRepository(summary.mode)
+                val inspector = container.contentInspector(summary.mode)
+                val documents = mutableListOf<SemanticDocument>()
+                val recordById = linkedMapOf<String, FileRecord>()
+                var skippedUnreadable = 0
+                var indexedExcerpts = 0
+                var freshExtractions = 0
+
+                for ((index, record) in selected.withIndex()) {
+                    _uiState.value = ScanUiState.Working(
+                        label = "Coherence audit",
+                        detail = "Preparing representative document ${index + 1} of ${selected.size}: ${record.displayName}",
+                        processed = index,
+                        total = selected.size,
                     )
+
+                    val existing = withContext(Dispatchers.IO) {
+                        repository.indexedDocument(record.stableRef)
+                    }
+                    val canUseIndex = ContentIndexPolicy.canReuse(existing, record) &&
+                        existing?.extractionStatus == IndexedExtractionStatus.INDEXED.name
+
+                    val normalized = if (canUseIndex) {
+                        val segments = withContext(Dispatchers.IO) {
+                            repository.segments(record.stableRef)
+                        }
+                        val excerpt = buildString {
+                            for (segment in segments) {
+                                if (isNotEmpty()) append(' ')
+                                append(segment.body)
+                                if (length >= COHERENCE_EXCERPT_CHARS) break
+                            }
+                        }
+                            .replace(Regex("""\s+"""), " ")
+                            .trim()
+                            .take(COHERENCE_EXCERPT_CHARS)
+                        if (excerpt.isNotBlank()) indexedExcerpts++
+                        excerpt
+                    } else {
+                        when (val extraction = withContext(Dispatchers.IO) { inspector.extract(record) }) {
+                            is ContentExtraction.Text -> {
+                                freshExtractions++
+                                extraction.content
+                                    .replace(Regex("""\s+"""), " ")
+                                    .trim()
+                                    .take(COHERENCE_EXCERPT_CHARS)
+                            }
+                            is ContentExtraction.Unsupported,
+                            is ContentExtraction.Failed,
+                            -> ""
+                        }
+                    }
+
+                    if (normalized.isBlank()) {
+                        skippedUnreadable++
+                        continue
+                    }
+
+                    val id = record.stableRef
+                    documents += SemanticDocument(
+                        id = id,
+                        displayName = record.displayName,
+                        sourcePath = record.stableRef,
+                        excerpt = normalized,
+                    )
+                    recordById[id] = record
+                }
+
+                if (documents.isEmpty()) {
+                    _uiState.value = ScanUiState.Error(
+                        "The representative sample contained no readable document text.",
+                    )
+                    return@launch
+                }
+
+                val rows = mutableListOf<CoherenceAuditRow>()
+                var modelName: String? = null
+                var modelFailures = 0
+                val batches = documents.chunked(COHERENCE_BATCH_SIZE)
+
+                for ((batchIndex, batch) in batches.withIndex()) {
+                    _uiState.value = ScanUiState.Working(
+                        label = "Coherence audit",
+                        detail = "Analyzing representative batch ${batchIndex + 1} of ${batches.size} on device",
+                        processed = batchIndex,
+                        total = batches.size,
+                    )
+
+                    val audit = try {
+                        container.agentModel.coherenceAudit(summary.scopeLabel, batch)
+                    } catch (cancel: CancellationException) {
+                        throw cancel
+                    } catch (_: Throwable) {
+                        modelFailures += batch.size
+                        continue
+                    }
+                    if (modelName == null) modelName = audit.modelName
+
+                    audit.findings.forEach { finding ->
+                        val record = recordById[finding.id] ?: return@forEach
+                        val actionable = finding.classification in setOf(
+                            CoherenceClass.QUESTIONABLE,
+                            CoherenceClass.DOES_NOT_BELONG,
+                        )
+                        rows += CoherenceAuditRow(
+                            record = record,
+                            classification = finding.classification,
+                            reason = finding.reason,
+                            suggestedGroup = finding.suggestedGroup.takeIf { actionable },
+                        )
+                    }
+                }
+
+                if (rows.isEmpty()) {
+                    _uiState.value = ScanUiState.Error(
+                        "On-device intelligence could not classify the representative sample. No files were changed.",
+                    )
+                    return@launch
                 }
 
                 _uiState.value = ScanUiState.CoherenceAuditReview(
                     scopes = summary.scopes,
                     scopeLabel = summary.scopeLabel,
                     rows = rows,
-                    modelName = audit.modelName,
+                    modelName = modelName,
+                    eligibleDocuments = records.size,
+                    sampledDocuments = documents.size,
+                    indexedExcerpts = indexedExcerpts,
+                    freshExtractions = freshExtractions,
                     skippedUnreadable = skippedUnreadable,
-                    limited = audit.limited || records.size > documents.size,
+                    modelFailures = modelFailures,
+                    limited = records.size > documents.size || modelFailures > 0,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -2017,6 +2096,9 @@ class ScanViewModel(
         const val SAF_UNSUPPORTED =
             "This needs full file-manager access. In folder-only (SAF) mode Pocket Steward can scan and " +
                 "browse, but it can't move, trash, or read file contents. Change storage access in Settings."
+
+        const val COHERENCE_EXCERPT_CHARS = 1_800
+        const val COHERENCE_BATCH_SIZE = 12
     }
 
     private suspend fun resolveScopes(
