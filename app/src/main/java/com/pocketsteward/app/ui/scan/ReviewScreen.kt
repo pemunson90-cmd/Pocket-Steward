@@ -42,7 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.content.index.ContentSearchFilters
-import com.pocketsteward.app.content.index.ContentSearchProvenance
+import com.pocketsteward.app.content.index.ContentSearchPresentation\nimport com.pocketsteward.app.content.index.ContentSearchProvenance
 import com.pocketsteward.app.content.index.ContentSearchSort
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
@@ -315,13 +315,7 @@ private fun IndexedContentSearchReview(
                             onClick = { filterSheetOpen = true },
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text(
-                                if (state.filters.activeCount == 0) {
-                                    "Filters"
-                                } else {
-                                    "Filters (${state.filters.activeCount})"
-                                },
-                            )
+                            Text(ContentSearchPresentation.filtersLabel(state.filters.activeCount))
                         }
 
                         Column {
@@ -707,7 +701,7 @@ private fun IndexedContentResultCard(
                     )
                 }
                 Text(
-                    text = "“${snippet.text}”",
+                    text = ContentSearchPresentation.quotedSnippet(snippet.text),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = if (index == 0) Spacing.hairline else Spacing.tight),
                 )
