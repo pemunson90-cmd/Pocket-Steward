@@ -87,4 +87,22 @@ class PlanSelectionTest {
         )
         assertThat(selected).containsExactly(0)
     }
+    @Test
+    fun safeSelected_excludesRedTrashButKeepsSafeDependencies() {
+        val trash = PlannedOperation.Trash(
+            source = FileRef.Direct("/storage/emulated/0/Download/duplicate.jpg"),
+            reason = "duplicate",
+        )
+        val operations = listOf(destinationFolder, moveA, trash)
+
+        val selected = PlanSelection.safeSelected(operations)
+
+        assertThat(selected).containsExactly(0, 1)
+    }
+
+    @Test
+    fun noneSelected_isEmpty() {
+        assertThat(PlanSelection.noneSelected()).isEmpty()
+    }
+
 }
