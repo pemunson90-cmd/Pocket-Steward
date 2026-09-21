@@ -374,7 +374,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
             )
             SettingsSwitchRow(
                 label = "Image analysis",
-                supporting = "Reserved for future visual analysis.",
+                supporting = "Local image labels, screenshot hints, and perceptual similarity. Nothing leaves the device.",
                 checked = privacy.imageAnalysisEnabled,
                 onCheckedChange = viewModel::setImageAnalysisEnabled,
             )
