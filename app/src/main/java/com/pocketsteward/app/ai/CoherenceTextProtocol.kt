@@ -32,12 +32,7 @@ object CoherenceTextProtocol {
         output.lineSequence()
             .take(MAX_PROTOCOL_LINES)
             .forEach { rawLine ->
-                val line = rawLine.trimEnd()
-                if (!line.startsWith("$PREFIX\t")) return@forEach
-
-                val fields = line.split('\t', limit = 5)
-                if (fields.size != 5) return@forEach
-
+                val fields = protocolFields(rawLine) ?: return@forEach
                 val alias = fields[1].trim()
                 val documentId = aliasToDocumentId[alias] ?: return@forEach
 
@@ -67,5 +62,36 @@ object CoherenceTextProtocol {
         return parsedByAlias.values
             .filter { it.size == 1 }
             .map { it.single() }
+    }
+
+    /**
+     * Nano can preserve the requested record while normalizing literal tabs
+     * into printable pipes, especially when it formats the answer as Markdown.
+     * Both forms carry the same five typed fields, so accepting them remains
+     * deterministic rather than heuristic.
+     *
+     * Markdown table edge pipes are stripped first. Unknown prose, wrong field
+     * counts, unknown aliases, and conflicting duplicate records still fail
+     * closed.
+     */
+    private fun protocolFields(rawLine: String): List<String>? {
+        var line = rawLine.trim()
+        if (line.isBlank()) return null
+
+        if (line.startsWith("|") && line.endsWith("|") && line.length > 1) {
+            line = line.substring(1, line.length - 1).trim()
+        }
+
+        val tabFields = line.split('\t', limit = 5)
+        if (tabFields.size == 5 && tabFields[0].trim() == PREFIX) {
+            return tabFields
+        }
+
+        val pipeFields = line.split('|', limit = 5)
+        if (pipeFields.size == 5 && pipeFields[0].trim() == PREFIX) {
+            return pipeFields
+        }
+
+        return null
     }
 }
