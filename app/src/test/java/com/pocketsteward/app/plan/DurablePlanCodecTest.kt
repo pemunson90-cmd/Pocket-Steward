@@ -19,6 +19,11 @@ class DurablePlanCodecTest {
                 FileRef.Direct("/sd/Download/Café 📚/a.txt"),
                 "move reason",
             ),
+            PlannedOperation.Copy(
+                FileRef.Direct("/sd/Download/source.txt"),
+                FileRef.Direct("/sd/Download/Café 📚/source copy.txt"),
+                "copy reason",
+            ),
             PlannedOperation.Rename(
                 FileRef.Direct("/sd/Download/b.txt"),
                 "renamed b.txt",
