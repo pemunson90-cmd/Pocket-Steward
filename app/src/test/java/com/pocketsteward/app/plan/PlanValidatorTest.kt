@@ -214,6 +214,61 @@ class PlanValidatorTest {
         assertThat(result.rejected).isEmpty()
     }
 
+    @Test
+    fun `accepts a file copy to a free destination`() {
+        val source = direct("/sd/Download/report.pdf")
+        val targetDir = direct("/sd/Documents")
+        val op = PlannedOperation.Copy(
+            source = source,
+            destination = direct("/sd/Documents/report.pdf"),
+            reason = "keep original and place a copy",
+        )
+        val index = FakeFileIndex(
+            existing = setOf(source),
+            directories = setOf(direct("/sd/Download"), targetDir),
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).containsExactly(op)
+        assertThat(result.rejected).isEmpty()
+    }
+
+    @Test
+    fun `copy never overwrites an existing destination`() {
+        val source = direct("/sd/Download/report.pdf")
+        val destination = direct("/sd/Documents/report.pdf")
+        val op = PlannedOperation.Copy(source, destination, "copy")
+        val index = FakeFileIndex(
+            existing = setOf(source, destination),
+            directories = setOf(direct("/sd/Download"), direct("/sd/Documents")),
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("already exists")
+    }
+
+    @Test
+    fun `directory copy is rejected`() {
+        val source = direct("/sd/Download/Folder")
+        val op = PlannedOperation.Copy(
+            source,
+            direct("/sd/Documents/Folder"),
+            "copy folder",
+        )
+        val index = FakeFileIndex(
+            existing = emptySet(),
+            directories = setOf(source, direct("/sd/Download"), direct("/sd/Documents")),
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("Directory copy")
+    }
+
 }
 
 class WriteTextFileValidationTest {
