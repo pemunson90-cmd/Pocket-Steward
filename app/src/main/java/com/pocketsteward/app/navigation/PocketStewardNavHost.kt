@@ -36,7 +36,11 @@ object Routes {
 }
 
 @Composable
-fun PocketStewardNavHost(startDestination: String, navController: NavHostController = rememberNavController()) {
+fun PocketStewardNavHost(
+    startDestination: String,
+    postOnboardingDestination: String = Routes.HOME,
+    navController: NavHostController = rememberNavController(),
+) {
     PocketStewardShell(navController) { shellModifier ->
         NavHost(
             navController = navController,
@@ -46,7 +50,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
                 onAccessGranted = {
-                    navController.navigate(Routes.HOME) {
+                    navController.navigate(postOnboardingDestination) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
                 },
