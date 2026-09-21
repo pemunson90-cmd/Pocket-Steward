@@ -232,19 +232,19 @@ object DeterministicIntentParser {
         }
 
         val age = Regex(
-            """\b(older|newer)\s+than\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b""",
+            """\b(older|newer)\s+than\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks|month|months|year|years)\b""",
         ).find(lower)
         if (age != null) {
-            val duration = durationMillis(age.groupValues[2].toLong(), age.groupValues[3])
+            val duration = durationMillis(parseSmallNumber(age.groupValues[2]), age.groupValues[3])
             if (age.groupValues[1] == "older") before = nowMillis - duration
             else after = nowMillis - duration
         }
 
         val last = Regex(
-            """\b(?:from\s+)?(?:the\s+)?last\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b""",
+            """\b(?:from\s+)?(?:the\s+)?last\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks|month|months|year|years)\b""",
         ).find(lower)
         if (last != null) {
-            after = nowMillis - durationMillis(last.groupValues[1].toLong(), last.groupValues[2])
+            after = nowMillis - durationMillis(parseSmallNumber(last.groupValues[1]), last.groupValues[2])
         }
 
         if (Regex("""\bold\s+files?\b""").containsMatchIn(lower)) {
@@ -318,6 +318,23 @@ object DeterministicIntentParser {
         }
         return (number * multiplier).roundToLong().coerceAtLeast(0)
     }
+
+    private fun parseSmallNumber(value: String): Long =
+        value.toLongOrNull() ?: when (value.lowercase()) {
+            "one" -> 1L
+            "two" -> 2L
+            "three" -> 3L
+            "four" -> 4L
+            "five" -> 5L
+            "six" -> 6L
+            "seven" -> 7L
+            "eight" -> 8L
+            "nine" -> 9L
+            "ten" -> 10L
+            "eleven" -> 11L
+            "twelve" -> 12L
+            else -> error("Unsupported number word: $value")
+        }
 
     private fun durationMillis(value: Long, unit: String): Long {
         val days = when (unit.removeSuffix("s")) {
