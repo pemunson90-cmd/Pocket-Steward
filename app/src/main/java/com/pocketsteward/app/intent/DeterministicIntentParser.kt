@@ -1,41 +1,40 @@
 package com.pocketsteward.app.intent
 
 import com.pocketsteward.app.scan.FileCategory
+import java.time.LocalDate
+import java.time.ZoneId
+import kotlin.math.roundToLong
 
 /**
- * M9's offline request parser.
+ * Offline bounded request parser.
  *
- * It intentionally recognizes a bounded vocabulary and refuses requests it
- * cannot map deterministically. Unknown language is not permission to guess.
+ * Unknown language is never permission to guess. The parser supports the core
+ * V1 command vocabulary plus explicit size/date/order criteria and a narrow
+ * follow-up mode that can refine the previous request inside the same scan.
  */
 object DeterministicIntentParser {
-    fun parse(request: String): IntentParseResult {
+    fun parse(request: String): IntentParseResult =
+        parse(request, previous = null, nowMillis = System.currentTimeMillis())
+
+    fun parse(
+        request: String,
+        previous: BoundedIntent?,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): IntentParseResult {
         val raw = request.trim()
         if (raw.isBlank()) return IntentParseResult.Unsupported("Type a request first.")
 
         val lower = raw.lowercase()
-        val action = when {
-            "duplicate" in lower -> IntentAction.DUPLICATE_REVIEW
-            Regex("""\brename\b""").containsMatchIn(lower) -> IntentAction.RENAME
-            Regex("""\bfind\b|\bshow\b|\blocate\b""").containsMatchIn(lower) -> IntentAction.FIND
-            Regex("""\barchive\b""").containsMatchIn(lower) -> IntentAction.ARCHIVE
-            Regex("""\bgroup\b""").containsMatchIn(lower) -> IntentAction.GROUP
-            Regex("""\borganize\b|\bsort\b|\bclean\s*up\b|\bcleanup\b""").containsMatchIn(lower) ->
-                IntentAction.ORGANIZE
-            else -> return IntentParseResult.Unsupported(
-                "I can currently organize, group, find, rename, review duplicates, or group existing archive files.",
+        val explicitAction = actionFor(lower)
+        if (explicitAction == null && previous != null && looksLikeFollowUp(lower)) {
+            return IntentParseResult.Parsed(
+                refine(previous, raw, lower, nowMillis),
             )
         }
-
-        val unsupportedCriterion = Regex(
-            """\bolder\s+than\b|\bnewer\s+than\b|\bold\s+files?\b|\brecent\s+files?\b|\blargest\b|\bsmallest\b|\bbiggest\b|\bbefore\b|\bafter\b""",
-        ).find(lower)?.value
-        if (unsupportedCriterion != null && action != IntentAction.RENAME) {
-            return IntentParseResult.Unsupported(
-                "I understood the command, but M9 does not apply age, size, or date criteria inside text requests yet. " +
-                    "Use the existing quick action where available.",
-            )
-        }
+        val action = explicitAction ?: return IntentParseResult.Unsupported(
+            "I can organize, group, find, rename, review duplicates, or group existing archive files. " +
+                "Follow-up requests can refine the previous command.",
+        )
 
         val categories = parseCategories(lower).toMutableSet()
         if (action == IntentAction.ARCHIVE && categories.isEmpty()) {
@@ -43,32 +42,25 @@ object DeterministicIntentParser {
         }
 
         val groupingMode =
-            if (Regex("""\bproject|by\s+project|project\s+name""").containsMatchIn(lower)) {
+            if (Regex("""project|bys+project|projects+name""").containsMatchIn(lower)) {
                 GroupingMode.PROJECT
             } else {
                 GroupingMode.TYPE
             }
 
         val mainFolder = parseMainFolder(raw)
-        val includeSubfolders = listOf(
-            "include subfolders",
-            "inside subfolders",
-            "inside folders",
-            "nested files",
-            "recursively",
-            "recursive",
-        ).any { it in lower }
+        val includeSubfolders = includesSubfolders(lower)
 
         if (action == IntentAction.RENAME) {
             val match = Regex(
-                """(?i)\brename\s+["']?(.+?)["']?\s+to\s+["']?([^/"']+)["']?\s*$""",
+                """(?i)renames+["']?(.+?)["']?s+tos+["']?([^/"']+)["']?s*$""",
             ).find(raw)
                 ?: return IntentParseResult.Unsupported(
                     "Rename requests must use “rename <current name> to <new name>”.",
                 )
-            val from = match.groupValues[1].trim().trim('"', '\'')
-            val to = match.groupValues[2].trim().trim('"', '\'')
-            if (from.isBlank() || to.isBlank() || '/' in to || '\\' in to) {
+            val from = match.groupValues[1].trim().trim('"', ''')
+            val to = match.groupValues[2].trim().trim('"', ''')
+            if (from.isBlank() || to.isBlank() || '/' in to || '\' in to) {
                 return IntentParseResult.Unsupported("The rename target must be one plain file name.")
             }
             return IntentParseResult.Parsed(
@@ -87,13 +79,18 @@ object DeterministicIntentParser {
         } else {
             null
         }
+
+        val criteria = parseCriteria(lower, nowMillis)
+
         if (action == IntentAction.FIND &&
             categories.isEmpty() &&
             findTerm.isNullOrBlank() &&
-            contentTerm.isNullOrBlank()
+            contentTerm.isNullOrBlank() &&
+            !criteria.hasAny
         ) {
             return IntentParseResult.Unsupported(
-                "Tell me what to find, for example “find APKs”, “find files named invoice”, or “find documents containing Lilith”.",
+                "Tell me what to find, for example “find APKs”, “find files named invoice”, " +
+                    "“find documents containing Lilith”, or “find files larger than 500 MB”.",
             )
         }
 
@@ -108,54 +105,257 @@ object DeterministicIntentParser {
                 leaveUncertain = true,
                 findTerm = findTerm,
                 contentTerm = contentTerm,
+                minSizeBytes = criteria.minSizeBytes,
+                maxSizeBytes = criteria.maxSizeBytes,
+                modifiedBefore = criteria.modifiedBefore,
+                modifiedAfter = criteria.modifiedAfter,
+                order = criteria.order,
+                resultLimit = criteria.resultLimit,
             ),
         )
     }
 
+    private fun actionFor(lower: String): IntentAction? = when {
+        "duplicate" in lower -> IntentAction.DUPLICATE_REVIEW
+        Regex("""rename""").containsMatchIn(lower) -> IntentAction.RENAME
+        Regex("""find|show|locate""").containsMatchIn(lower) -> IntentAction.FIND
+        Regex("""archive""").containsMatchIn(lower) -> IntentAction.ARCHIVE
+        Regex("""group""").containsMatchIn(lower) -> IntentAction.GROUP
+        Regex("""organize|sort|cleans*up|cleanup""").containsMatchIn(lower) ->
+            IntentAction.ORGANIZE
+        else -> null
+    }
+
+    private fun looksLikeFollowUp(lower: String): Boolean =
+        lower.startsWith("same") ||
+            lower.startsWith("those") ||
+            lower.startsWith("that") ||
+            lower.startsWith("now") ||
+            lower.startsWith("also") ||
+            lower.startsWith("only") ||
+            "include subfolders" in lower ||
+            "by project" in lower ||
+            "by type" in lower
+
+    private fun refine(
+        previous: BoundedIntent,
+        raw: String,
+        lower: String,
+        nowMillis: Long,
+    ): BoundedIntent {
+        val categories = parseCategories(lower)
+        val criteria = parseCriteria(lower, nowMillis)
+        val grouping = when {
+            Regex("""bys+project|projects+name""").containsMatchIn(lower) -> GroupingMode.PROJECT
+            Regex("""bys+type""").containsMatchIn(lower) -> GroupingMode.TYPE
+            else -> previous.groupingMode
+        }
+        return previous.copy(
+            rawRequest = raw,
+            categories = if (categories.isEmpty()) previous.categories else categories,
+            groupingMode = grouping,
+            mainFolder = parseMainFolder(raw) ?: previous.mainFolder,
+            includeSubfolders = if (includesSubfolders(lower)) true else previous.includeSubfolders,
+            minSizeBytes = criteria.minSizeBytes ?: previous.minSizeBytes,
+            maxSizeBytes = criteria.maxSizeBytes ?: previous.maxSizeBytes,
+            modifiedBefore = criteria.modifiedBefore ?: previous.modifiedBefore,
+            modifiedAfter = criteria.modifiedAfter ?: previous.modifiedAfter,
+            order = if (criteria.order == IntentOrder.DEFAULT) previous.order else criteria.order,
+            resultLimit = criteria.resultLimit ?: previous.resultLimit,
+        )
+    }
+
+    private data class Criteria(
+        val minSizeBytes: Long? = null,
+        val maxSizeBytes: Long? = null,
+        val modifiedBefore: Long? = null,
+        val modifiedAfter: Long? = null,
+        val order: IntentOrder = IntentOrder.DEFAULT,
+        val resultLimit: Int? = null,
+    ) {
+        val hasAny: Boolean
+            get() = minSizeBytes != null || maxSizeBytes != null ||
+                modifiedBefore != null || modifiedAfter != null ||
+                order != IntentOrder.DEFAULT || resultLimit != null
+    }
+
+    private fun parseCriteria(lower: String, nowMillis: Long): Criteria {
+        var minSize: Long? = null
+        var maxSize: Long? = null
+        var before: Long? = null
+        var after: Long? = null
+        var order = IntentOrder.DEFAULT
+
+        val sizePattern = Regex(
+            """(?:(larger|bigger|over|above|smaller|under|below)s+than?s*)?(d+(?:.d+)?)s*(kb|mb|gb|kib|mib|gib)""",
+        )
+        sizePattern.findAll(lower).forEach { match ->
+            val comparator = match.groupValues[1]
+            val bytes = sizeToBytes(match.groupValues[2], match.groupValues[3])
+            when (comparator) {
+                "larger", "bigger", "over", "above" -> minSize = bytes
+                "smaller", "under", "below" -> maxSize = bytes
+            }
+        }
+
+        val age = Regex(
+            """(older|newer)s+thans+(d+)s+(day|days|week|weeks|month|months|year|years)""",
+        ).find(lower)
+        if (age != null) {
+            val duration = durationMillis(age.groupValues[2].toLong(), age.groupValues[3])
+            if (age.groupValues[1] == "older") before = nowMillis - duration
+            else after = nowMillis - duration
+        }
+
+        val last = Regex(
+            """(?:froms+)?(?:thes+)?lasts+(d+)s+(day|days|week|weeks|month|months|year|years)""",
+        ).find(lower)
+        if (last != null) {
+            after = nowMillis - durationMillis(last.groupValues[1].toLong(), last.groupValues[2])
+        }
+
+        if (Regex("""olds+files?""").containsMatchIn(lower)) {
+            before = nowMillis - durationMillis(6, "months")
+            order = IntentOrder.OLDEST_FIRST
+        }
+        if (Regex("""recents+files?""").containsMatchIn(lower)) {
+            after = nowMillis - durationMillis(30, "days")
+            order = IntentOrder.NEWEST_FIRST
+        }
+
+        parseAbsoluteDate(lower, "before")?.let { before = it }
+        parseAbsoluteDate(lower, "after")?.let { after = it }
+
+        order = when {
+            Regex("""largest|biggest""").containsMatchIn(lower) -> IntentOrder.LARGEST_FIRST
+            Regex("""smallest""").containsMatchIn(lower) -> IntentOrder.SMALLEST_FIRST
+            Regex("""newest|most recent""").containsMatchIn(lower) -> IntentOrder.NEWEST_FIRST
+            Regex("""oldest""").containsMatchIn(lower) -> IntentOrder.OLDEST_FIRST
+            else -> order
+        }
+
+        val limit = Regex("""(?:top|first|show)s+(d{1,4})""")
+            .find(lower)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?.coerceIn(1, 1000)
+            ?: if (order != IntentOrder.DEFAULT &&
+                Regex("""largest|biggest|smallest|newest|oldest""").containsMatchIn(lower)
+            ) {
+                50
+            } else {
+                null
+            }
+
+        return Criteria(
+            minSizeBytes = minSize,
+            maxSizeBytes = maxSize,
+            modifiedBefore = before,
+            modifiedAfter = after,
+            order = order,
+            resultLimit = limit,
+        )
+    }
+
+    private fun parseAbsoluteDate(lower: String, keyword: String): Long? {
+        val date = Regex("""$keywords+(d{4}-d{2}-d{2})""")
+            .find(lower)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: return null
+        return runCatching {
+            LocalDate.parse(date)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()
+    }
+
+    private fun sizeToBytes(value: String, unit: String): Long {
+        val number = value.toDouble()
+        val multiplier = when (unit) {
+            "kb" -> 1_000.0
+            "mb" -> 1_000_000.0
+            "gb" -> 1_000_000_000.0
+            "kib" -> 1024.0
+            "mib" -> 1024.0 * 1024.0
+            "gib" -> 1024.0 * 1024.0 * 1024.0
+            else -> 1.0
+        }
+        return (number * multiplier).roundToLong().coerceAtLeast(0)
+    }
+
+    private fun durationMillis(value: Long, unit: String): Long {
+        val days = when (unit.removeSuffix("s")) {
+            "day" -> value
+            "week" -> value * 7
+            "month" -> value * 30
+            "year" -> value * 365
+            else -> 0
+        }
+        return days * 24L * 60L * 60L * 1000L
+    }
+
     private fun parseCategories(lower: String): Set<FileCategory> = buildSet {
-        if (Regex("""\bapk|apks|installer|installers""").containsMatchIn(lower)) add(FileCategory.APK)
-        if (Regex("""\bimage|images|photo|photos|picture|pictures""").containsMatchIn(lower)) add(FileCategory.IMAGE)
-        if (Regex("""\bpdf|pdfs|document|documents|docs|text files?|spreadsheets?|presentations?""").containsMatchIn(lower)) {
+        if (Regex("""apk|apks|installer|installers""").containsMatchIn(lower)) add(FileCategory.APK)
+        if (Regex("""image|images|photo|photos|picture|pictures""").containsMatchIn(lower)) add(FileCategory.IMAGE)
+        if (Regex("""pdf|pdfs|document|documents|docs|text files?|spreadsheets?|presentations?""").containsMatchIn(lower)) {
             add(FileCategory.DOCUMENT)
         }
-        if (Regex("""\bzip|zips|archive files?|compressed files?""").containsMatchIn(lower)) add(FileCategory.ARCHIVE)
-        if (Regex("""\baudio|video|videos|music|media""").containsMatchIn(lower)) add(FileCategory.AUDIO_VIDEO)
+        if (Regex("""zip|zips|archive files?|compressed files?""").containsMatchIn(lower)) add(FileCategory.ARCHIVE)
+        if (Regex("""audio|video|videos|music|media""").containsMatchIn(lower)) add(FileCategory.AUDIO_VIDEO)
     }
 
     private fun parseMainFolder(raw: String): String? {
-        val quoted = Regex("""(?i)\b(?:under|inside|within)\s+["']([^/"']+)["']""")
+        val quoted = Regex("""(?i)(?:under|inside|within)s+["']([^/"']+)["']""")
             .find(raw)?.groupValues?.getOrNull(1)
         if (!quoted.isNullOrBlank()) return quoted.trim()
 
-        val called = Regex("""(?i)\b(?:main\s+)?folder\s+(?:called|named)\s+["']?([A-Za-z0-9 _-]{1,48})["']?""")
+        val called = Regex("""(?i)(?:mains+)?folders+(?:called|named)s+["']?([A-Za-z0-9 _-]{1,48})["']?""")
             .find(raw)?.groupValues?.getOrNull(1)
             ?.trim()
             ?.trimEnd('.', ',', ';')
         if (!called.isNullOrBlank()) return called
 
-        return if (Regex("""(?i)\bone\s+main\s+folder\b""").containsMatchIn(raw)) "Organized" else null
+        return if (Regex("""(?i)ones+mains+folder""").containsMatchIn(raw)) "Organized" else null
     }
+
+    private fun includesSubfolders(lower: String): Boolean = listOf(
+        "include subfolders",
+        "inside subfolders",
+        "inside folders",
+        "nested files",
+        "recursively",
+        "recursive",
+    ).any { it in lower }
 
     private fun parseContentTerm(raw: String): String? {
         val patterns = listOf(
-            Regex("""(?i)\b(?:containing|contains|mentioning|mentions)\s+["']?(.+?)["']?\s*$"""),
-            Regex("""(?i)\bwith\s+(?:the\s+)?(?:text|content)\s+["']?(.+?)["']?\s*$"""),
+            Regex("""(?i)(?:containing|contains|mentioning|mentions)s+["']?(.+?)["']?s*$"""),
+            Regex("""(?i)withs+(?:thes+)?(?:text|content)s+["']?(.+?)["']?s*$"""),
         )
         return patterns.firstNotNullOfOrNull { pattern ->
             pattern.find(raw)?.groupValues?.getOrNull(1)
                 ?.trim()
-                ?.trim('"', '\'')
+                ?.trim('"', ''')
                 ?.takeIf { it.isNotBlank() }
         }
     }
 
     private fun parseFindTerm(raw: String): String? {
         val match = Regex(
-            """(?i)\b(?:find|show|locate)\s+(?:files?\s+)?(?:named|matching|containing)?\s*["']?(.+?)["']?\s*$""",
+            """(?i)(?:find|show|locate)s+(?:files?s+)?(?:named|matching|containing)?s*["']?(.+?)["']?s*$""",
         ).find(raw) ?: return null
-        return match.groupValues[1]
+        val candidate = match.groupValues[1]
             .trim()
-            .trim('"', '\'')
-            .takeIf { it.isNotBlank() && it.lowercase() !in setOf("files", "file") }
+            .trim('"', ''')
+        val lower = candidate.lowercase()
+        return candidate.takeIf {
+            it.isNotBlank() &&
+                lower !in setOf("files", "file") &&
+                !Regex("""(larger|bigger|over|above|smaller|under|below|older|newer|largest|smallest|newest|oldest)""")
+                    .containsMatchIn(lower)
+        }
     }
 }
