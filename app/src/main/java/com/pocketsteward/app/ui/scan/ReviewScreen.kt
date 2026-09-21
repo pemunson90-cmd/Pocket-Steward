@@ -145,6 +145,10 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 state = current,
                 modifier = contentModifier,
             )
+            is ScanUiState.ArtifactExportReview -> ArtifactExportReview(
+                state = current,
+                modifier = contentModifier,
+            )
             is ScanUiState.ProtectFolders -> ProtectFolders(
                 state = current,
                 onToggleProtection = { folder -> viewModel.proposeToggleProtection(current, folder) },
@@ -1285,6 +1289,59 @@ private fun CoherenceAuditReview(
                             Text("Review proposed moves")
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtifactExportReview(
+    state: ScanUiState.ArtifactExportReview,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = state.title,
+                supporting = "${state.paths.size} verified artifact(s) · ${state.errors.size} failure(s)",
+            )
+        }
+        items(state.paths, key = { it }) { path ->
+            Card(
+                onClick = {
+                    openDirectFile(
+                        context = context,
+                        path = path,
+                        displayName = path.substringAfterLast('/'),
+                        extension = path.substringAfterLast('.', ""),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Text(path.substringAfterLast('/'), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        path.substringBeforeLast('/', missingDelimiterValue = path),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (state.errors.isNotEmpty()) {
+            item { SectionHeader("Failures") }
+            items(state.errors) { error ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        error,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(Spacing.base),
+                    )
                 }
             }
         }
