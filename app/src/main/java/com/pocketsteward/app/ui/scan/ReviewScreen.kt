@@ -72,6 +72,7 @@ import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.semantic.DestinationPolicy
+import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.ui.theme.Spacing
 import java.text.DateFormat
 import java.util.Date
@@ -1628,9 +1629,20 @@ private fun DuplicateReview(
             items(state.groups, key = { it.sha256 }) { group -> DuplicateGroupCard(group) }
         }
 
+        val canTrash = state.scopes.all { it.root is FileRef.Direct }
         ActionRow {
-            Button(onClick = onTrashDuplicates) { Text("Propose trashing extra copies") }
+            if (canTrash) {
+                Button(onClick = onTrashDuplicates) { Text("Propose trashing extra copies") }
+            }
             OutlinedButton(onClick = onBack) { Text("Back") }
+        }
+        if (!canTrash) {
+            Text(
+                "Read-only review: switch to full file-manager access if you want Pocket Steward to propose moving duplicate copies to Trash.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
         }
     }
 }
