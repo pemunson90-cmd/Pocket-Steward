@@ -26,7 +26,7 @@ class CoherencePromptPolicyTest {
         assertThat(compact).hasSize(20)
         assertThat(compact.first().id).isEqualTo(source.first().id)
         assertThat(compact.last().id).isEqualTo(source[19].id)
-        assertThat(compact).allMatch { it.excerpt.length == 700 }
+        assertThat(compact.map { it.excerpt.length }.distinct()).containsExactly(700)
     }
 
     @Test
@@ -43,7 +43,7 @@ class CoherencePromptPolicyTest {
         val compact = CoherencePromptPolicy.conservative(documents(20))
 
         assertThat(compact).hasSize(8)
-        assertThat(compact).allMatch { it.excerpt.length == 400 }
+        assertThat(compact.map { it.excerpt.length }.distinct()).containsExactly(400)
     }
 
     @Test
@@ -51,7 +51,7 @@ class CoherencePromptPolicyTest {
         val retry = CoherencePromptPolicy.retry(documents(20))
 
         assertThat(retry).hasSize(6)
-        assertThat(retry).allMatch { it.excerpt.length == 320 }
+        assertThat(retry.map { it.excerpt.length }.distinct()).containsExactly(320)
     }
 
     @Test
