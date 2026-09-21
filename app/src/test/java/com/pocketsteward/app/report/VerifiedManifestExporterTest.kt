@@ -103,6 +103,9 @@ class VerifiedManifestExporterTest {
             return MutationResult.Success(FileRef.Direct(path))
         }
 
+        override suspend fun copy(source: FileRef, destination: FileRef): MutationResult =
+            error("not used")
+
         override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
             error("not used")
 
