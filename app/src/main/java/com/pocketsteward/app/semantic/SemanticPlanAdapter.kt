@@ -22,6 +22,7 @@ data class SemanticPlanResult(
     val operations: List<PlannedOperation>,
     val plannedFileCount: Int,
     val skipped: List<SemanticSkip>,
+    val authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
 )
 
 /**
@@ -40,6 +41,8 @@ object SemanticPlanAdapter {
         records: List<FileRecord>,
         suggestions: List<SemanticSuggestion>,
         includeSubfolders: Boolean = false,
+        destinationChoice: SemanticDestinationChoice = SemanticDestinationChoice(DestinationPolicy.ROOT_LOCAL),
+        recommendedDocumentsRoot: FileRef.Direct? = null,
     ): SemanticPlanResult {
         require(scopeRoots.isNotEmpty()) { "Semantic planning needs at least one direct scope root." }
 
@@ -102,7 +105,18 @@ object SemanticPlanAdapter {
                 continue
             }
 
-            val destinationDirectory = "${root.absolutePath.trimEnd('/')}/$group"
+            val destinationRoot = when (destinationChoice.policy) {
+                DestinationPolicy.ROOT_LOCAL -> root
+                DestinationPolicy.RECOMMENDED_DOCUMENTS ->
+                    requireNotNull(recommendedDocumentsRoot) {
+                        "Recommended Documents policy needs the resolved public Documents root."
+                    }
+                DestinationPolicy.EXPLICIT_FOLDER ->
+                    requireNotNull(destinationChoice.explicitRoot) {
+                        "Explicit destination policy needs a chosen folder."
+                    }
+            }
+            val destinationDirectory = "${destinationRoot.absolutePath.trimEnd('/')}/$group"
             if (record.parentRef?.trimEnd('/') == destinationDirectory.trimEnd('/')) {
                 skipped += SemanticSkip(stableRef, "File is already in the suggested group.")
                 continue
@@ -110,9 +124,9 @@ object SemanticPlanAdapter {
 
             if (createdDirectories.add(destinationDirectory)) {
                 operations += PlannedOperation.CreateDirectory(
-                    parent = root,
+                    parent = destinationRoot,
                     name = group,
-                    reason = "Destination suggested by the read-only coherence audit.",
+                    reason = "Approved destination for semantic document grouping.",
                 )
             }
             operations += PlannedOperation.Move(
@@ -123,10 +137,17 @@ object SemanticPlanAdapter {
             plannedFiles++
         }
 
+        val destinationRoots = operations
+            .filterIsInstance<PlannedOperation.CreateDirectory>()
+            .mapNotNull { it.parent as? FileRef.Direct }
+            .filterNot { parent -> scopeRoots.any { it.absolutePath.trimEnd('/') == parent.absolutePath.trimEnd('/') } }
+            .distinctBy { it.absolutePath.trimEnd('/') }
+
         return SemanticPlanResult(
             operations = operations,
             plannedFileCount = plannedFiles,
             skipped = skipped,
+            authorizedDestinationRoots = destinationRoots,
         )
     }
 
