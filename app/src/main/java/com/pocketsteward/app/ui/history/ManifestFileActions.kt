@@ -20,8 +20,9 @@ internal object ManifestFileActions {
             "${context.packageName}.fileprovider",
             file,
         )
+        val mime = if (file.extension.equals("json", ignoreCase = true)) "application/json" else "text/markdown"
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "text/markdown")
+            setDataAndType(uri, mime)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         launch(context, Intent.createChooser(intent, "Open manifest"), "No app can open this manifest.")
@@ -38,8 +39,9 @@ internal object ManifestFileActions {
             "${context.packageName}.fileprovider",
             file,
         )
+        val mime = if (file.extension.equals("json", ignoreCase = true)) "application/json" else "text/markdown"
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/markdown"
+            type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, file.name)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
