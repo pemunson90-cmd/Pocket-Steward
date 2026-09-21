@@ -1,5 +1,14 @@
 package com.pocketsteward.app.ui.scan
 
+import android.content.Context
+import android.content.Intent
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
@@ -249,11 +258,15 @@ private fun IndexedContentSearchReview(
     var moreMenuOpen by remember { mutableStateOf(false) }
     var filterSheetOpen by remember { mutableStateOf(false) }
     var saveDialogOpen by remember { mutableStateOf(false) }
+    var previewSheetOpen by remember { mutableStateOf(false) }
     var expandedRefs by remember { mutableStateOf<Set<String>>(emptySet()) }
     var saveName by remember { mutableStateOf("") }
+    var selectedRef by rememberSaveable { mutableStateOf<String?>(null) }
 
     val visible = state.visibleResults
     val refresh = state.refreshSummary
+    val selected = visible.firstOrNull { it.stableRef == selectedRef } ?: visible.firstOrNull()
+
     val indexDetails = buildString {
         append("${visible.size} shown · ${state.allResults.size} matching file(s)")
         append(" · ${refresh.reused} reused")
@@ -262,129 +275,100 @@ private fun IndexedContentSearchReview(
         if (!state.indexComplete) append(" · index incomplete")
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
-    ) {
-        item {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val expanded = maxWidth >= 600.dp
+
+        Column(modifier = Modifier.fillMaxSize()) {
             ScreenHeadline(
                 text = state.title,
                 supporting = "$indexDetails · local persistent index",
             )
-        }
 
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(Spacing.base)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            OutlinedButton(
-                                onClick = { sortMenuOpen = true },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("Sort")
-                            }
-                            DropdownMenu(
-                                expanded = sortMenuOpen,
-                                onDismissRequest = { sortMenuOpen = false },
-                            ) {
-                                ContentSearchSort.entries.forEach { option ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                RadioButton(
-                                                    selected = state.sort == option,
-                                                    onClick = null,
-                                                )
-                                                Text(option.label())
-                                            }
-                                        },
-                                        onClick = {
-                                            onSortChange(option)
-                                            sortMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+            SearchToolbar(
+                state = state,
+                sortMenuOpen = sortMenuOpen,
+                onSortMenuOpenChange = { sortMenuOpen = it },
+                moreMenuOpen = moreMenuOpen,
+                onMoreMenuOpenChange = { moreMenuOpen = it },
+                onSortChange = onSortChange,
+                onOpenFilters = { filterSheetOpen = true },
+                onRefresh = onRefresh,
+                onSave = { saveDialogOpen = true },
+                onResetFilters = onResetFilters,
+            )
 
-                        OutlinedButton(
-                            onClick = { filterSheetOpen = true },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(ContentSearchPresentation.filtersLabel(state.filters.activeCount))
-                        }
-
-                        Column {
-                            TextButton(onClick = { moreMenuOpen = true }) {
-                                Text("More")
-                            }
-                            DropdownMenu(
-                                expanded = moreMenuOpen,
-                                onDismissRequest = { moreMenuOpen = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Refresh index") },
-                                    onClick = {
-                                        moreMenuOpen = false
-                                        onRefresh()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Save search") },
-                                    onClick = {
-                                        moreMenuOpen = false
-                                        saveDialogOpen = true
-                                    },
-                                )
-                                if (state.filters.activeCount > 0) {
-                                    DropdownMenuItem(
-                                        text = { Text("Reset filters") },
-                                        onClick = {
-                                            moreMenuOpen = false
-                                            onResetFilters()
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "Sorted by ${state.sort.label()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = Spacing.hairline),
-                    )
-                }
-            }
-        }
-
-        if (visible.isEmpty()) {
-            item {
+            if (visible.isEmpty()) {
                 EmptyState(
                     if (state.allResults.isEmpty()) {
                         "No indexed file contents matched “${state.query}”."
                     } else {
                         "No results match the current filters."
                     },
+                    Modifier.weight(1f),
                 )
-            }
-        } else {
-            items(visible, key = { it.stableRef }) { result ->
-                IndexedContentResultCard(
-                    result = result,
-                    expanded = result.stableRef in expandedRefs,
-                    onToggleExpanded = {
-                        expandedRefs = expandedRefs.toMutableSet().apply {
-                            if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+            } else if (expanded) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = Spacing.tight),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                ) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(0.52f)
+                            .fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+                    ) {
+                        items(visible, key = { it.stableRef }) { result ->
+                            IndexedContentResultCard(
+                                result = result,
+                                expanded = result.stableRef in expandedRefs,
+                                selected = selected?.stableRef == result.stableRef,
+                                onSelect = { selectedRef = result.stableRef },
+                                onToggleExpanded = {
+                                    expandedRefs = expandedRefs.toMutableSet().apply {
+                                        if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+                                    }
+                                },
+                            )
                         }
-                    },
-                )
+                    }
+
+                    selected?.let { result ->
+                        SearchResultPreview(
+                            result = result,
+                            modifier = Modifier
+                                .weight(0.48f)
+                                .fillMaxHeight(),
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = Spacing.tight),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+                ) {
+                    items(visible, key = { it.stableRef }) { result ->
+                        IndexedContentResultCard(
+                            result = result,
+                            expanded = result.stableRef in expandedRefs,
+                            selected = selectedRef == result.stableRef,
+                            onSelect = {
+                                selectedRef = result.stableRef
+                                previewSheetOpen = true
+                            },
+                            onToggleExpanded = {
+                                expandedRefs = expandedRefs.toMutableSet().apply {
+                                    if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+                                }
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -398,6 +382,19 @@ private fun IndexedContentSearchReview(
                 onFiltersChange = onFiltersChange,
                 onResetFilters = onResetFilters,
                 onDone = { filterSheetOpen = false },
+            )
+        }
+    }
+
+    if (previewSheetOpen && selected != null) {
+        ModalBottomSheet(
+            onDismissRequest = { previewSheetOpen = false },
+        ) {
+            SearchResultPreview(
+                result = selected,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.screen, vertical = Spacing.tight),
             )
         }
     }
@@ -437,6 +434,109 @@ private fun IndexedContentSearchReview(
 }
 
 @Composable
+private fun SearchToolbar(
+    state: ScanUiState.IndexedContentSearchReview,
+    sortMenuOpen: Boolean,
+    onSortMenuOpenChange: (Boolean) -> Unit,
+    moreMenuOpen: Boolean,
+    onMoreMenuOpenChange: (Boolean) -> Unit,
+    onSortChange: (ContentSearchSort) -> Unit,
+    onOpenFilters: () -> Unit,
+    onRefresh: () -> Unit,
+    onSave: () -> Unit,
+    onResetFilters: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { onSortMenuOpenChange(true) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Sort")
+                    }
+                    DropdownMenu(
+                        expanded = sortMenuOpen,
+                        onDismissRequest = { onSortMenuOpenChange(false) },
+                    ) {
+                        ContentSearchSort.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(
+                                            selected = state.sort == option,
+                                            onClick = null,
+                                        )
+                                        Text(option.label())
+                                    }
+                                },
+                                onClick = {
+                                    onSortChange(option)
+                                    onSortMenuOpenChange(false)
+                                },
+                            )
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onOpenFilters,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(ContentSearchPresentation.filtersLabel(state.filters.activeCount))
+                }
+
+                Column {
+                    TextButton(onClick = { onMoreMenuOpenChange(true) }) {
+                        Text("More")
+                    }
+                    DropdownMenu(
+                        expanded = moreMenuOpen,
+                        onDismissRequest = { onMoreMenuOpenChange(false) },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Refresh index") },
+                            onClick = {
+                                onMoreMenuOpenChange(false)
+                                onRefresh()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save search") },
+                            onClick = {
+                                onMoreMenuOpenChange(false)
+                                onSave()
+                            },
+                        )
+                        if (state.filters.activeCount > 0) {
+                            DropdownMenuItem(
+                                text = { Text("Reset filters") },
+                                onClick = {
+                                    onMoreMenuOpenChange(false)
+                                    onResetFilters()
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = "Sorted by ${state.sort.label()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SearchFilterSheet(
     state: ScanUiState.IndexedContentSearchReview,
     onFiltersChange: (ContentSearchFilters) -> Unit,
@@ -470,13 +570,13 @@ private fun SearchFilterSheet(
             )
         } else {
             state.availableRoots.forEach { root ->
-                val selected = root in filters.sourceRoots
+                val isSelected = root in filters.sourceRoots
                 CheckFilterRow(
                     label = root.substringAfterLast('/').ifBlank { root },
-                    checked = selected,
+                    checked = isSelected,
                     onToggle = {
                         val next = filters.sourceRoots.toMutableSet().apply {
-                            if (selected) remove(root) else add(root)
+                            if (isSelected) remove(root) else add(root)
                         }
                         onFiltersChange(filters.copy(sourceRoots = next))
                     },
@@ -489,13 +589,13 @@ private fun SearchFilterSheet(
 
         SearchFilterSection("Type")
         state.availableCategories.forEach { category ->
-            val selected = category in filters.categories
+            val isSelected = category in filters.categories
             CheckFilterRow(
                 label = category.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() },
-                checked = selected,
+                checked = isSelected,
                 onToggle = {
                     val next = filters.categories.toMutableSet().apply {
-                        if (selected) remove(category) else add(category)
+                        if (isSelected) remove(category) else add(category)
                     }
                     onFiltersChange(filters.copy(categories = next))
                 },
@@ -519,13 +619,13 @@ private fun SearchFilterSheet(
             Text("No extensions available.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             state.availableExtensions.forEach { ext ->
-                val selected = ext in filters.extensions
+                val isSelected = ext in filters.extensions
                 CheckFilterRow(
                     label = ".$ext",
-                    checked = selected,
+                    checked = isSelected,
                     onToggle = {
                         val next = filters.extensions.toMutableSet().apply {
-                            if (selected) remove(ext) else add(ext)
+                            if (isSelected) remove(ext) else add(ext)
                         }
                         onFiltersChange(filters.copy(extensions = next))
                     },
@@ -546,14 +646,14 @@ private fun SearchFilterSheet(
             "Last year" to now - TimeUnit.DAYS.toMillis(365),
         )
         dateChoices.forEach { (label, after) ->
-            val selected = if (after == null) {
+            val isSelected = if (after == null) {
                 filters.modifiedAfter == null && filters.modifiedBefore == null
             } else {
                 filters.modifiedAfter?.let { abs(it - after) < TimeUnit.MINUTES.toMillis(5) } == true
             }
             RadioFilterRow(
                 label = label,
-                selected = selected,
+                selected = isSelected,
                 onSelect = {
                     onFiltersChange(
                         filters.copy(
@@ -650,13 +750,19 @@ private fun RadioFilterRow(
 private fun IndexedContentResultCard(
     result: IndexedFileSearchResult,
     expanded: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
     onToggleExpanded: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onSelect,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
         Column(modifier = Modifier.padding(Spacing.base)) {
             Text(
                 text = result.displayName,
                 style = MaterialTheme.typography.titleSmall,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -687,25 +793,7 @@ private fun IndexedContentResultCard(
 
             val shown = if (expanded) result.snippets else result.snippets.take(1)
             shown.forEachIndexed { index, snippet ->
-                if (snippet.pageNumber != null || snippet.ocr) {
-                    Text(
-                        text = buildString {
-                            snippet.pageNumber?.let { append("Page $it") }
-                            if (snippet.ocr) {
-                                if (isNotEmpty()) append(" · ")
-                                append("OCR")
-                            }
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = Spacing.tight),
-                    )
-                }
-                Text(
-                    text = ContentSearchPresentation.quotedSnippet(snippet.text),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = if (index == 0) Spacing.hairline else Spacing.tight),
-                )
+                SearchSnippet(snippet, topPadding = if (index == 0) Spacing.hairline else Spacing.tight)
             }
 
             if (result.extraSnippetCount > 0) {
@@ -720,6 +808,108 @@ private fun IndexedContentResultCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SearchResultPreview(
+    result: IndexedFileSearchResult,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(Spacing.base),
+    ) {
+        Text(result.displayName, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = buildString {
+                append(result.extension.ifBlank { "file" }.uppercase())
+                append(" · ")
+                append(formatBytes(result.sizeBytes))
+                result.modifiedAt?.let {
+                    append(" · ")
+                    append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))
+                }
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = Spacing.hairline),
+        )
+        result.parentRef?.let { parent ->
+            Text(
+                parent,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+        }
+
+        Button(
+            onClick = { openIndexedFile(context, result) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = Spacing.base),
+        ) {
+            Text("Open file")
+        }
+
+        Text(
+            "Matches",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = Spacing.section, bottom = Spacing.hairline),
+        )
+        result.snippets.forEach { snippet ->
+            SearchSnippet(snippet, topPadding = Spacing.tight)
+        }
+    }
+}
+
+@Composable
+private fun SearchSnippet(
+    snippet: com.pocketsteward.app.content.index.IndexedSearchSnippet,
+    topPadding: androidx.compose.ui.unit.Dp,
+) {
+    if (snippet.pageNumber != null || snippet.ocr) {
+        Text(
+            text = buildString {
+                snippet.pageNumber?.let { append("Page $it") }
+                if (snippet.ocr) {
+                    if (isNotEmpty()) append(" · ")
+                    append("OCR")
+                }
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = topPadding),
+        )
+    }
+    Text(
+        text = ContentSearchPresentation.quotedSnippet(snippet.text),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = Spacing.hairline),
+    )
+}
+
+private fun openIndexedFile(
+    context: Context,
+    result: IndexedFileSearchResult,
+) {
+    val file = File(result.stableRef)
+    if (!file.exists()) return
+
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, ContentSearchPresentation.mimeType(result.extension))
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(intent, "Open ${result.displayName}"))
     }
 }
 
