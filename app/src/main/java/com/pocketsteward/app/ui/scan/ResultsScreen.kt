@@ -227,6 +227,15 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     )
                 }
 
+                item { SectionHeader("Export") }
+                item {
+                    ActionCard(
+                        title = "Export inventory",
+                        supporting = "Write verified JSON and CSV inventories into each selected scan root.",
+                        onClick = { viewModel.exportInventory(state) },
+                    )
+                }
+
                 if (canChangeFiles) {
                     item { SectionHeader("Understand") }
                     item {
