@@ -31,6 +31,7 @@ data class ExecutionSummary(
     val taskRunId: Long,
     val foldersCreated: Int,
     val filesMoved: Int,
+    val filesCopied: Int,
     val filesRenamed: Int,
     val filesTrashed: Int,
     val filesWritten: Int,
@@ -59,7 +60,8 @@ data class ExecutionSummary(
     val createdFolders: List<String> = emptyList(),
     val cancelled: Boolean = false,
 ) {
-    val succeededTotal: Int get() = foldersCreated + filesMoved + filesRenamed + filesTrashed + filesWritten
+    val succeededTotal: Int get() =
+        foldersCreated + filesMoved + filesCopied + filesRenamed + filesTrashed + filesWritten
 }
 
 /** One failed operation, in the shape the completion screen and Task history both need. */
@@ -167,6 +169,7 @@ class PlanExecutor(
 
         var foldersCreated = 0
         var filesMoved = 0
+        var filesCopied = 0
         var filesRenamed = 0
         var filesTrashed = 0
         var filesWritten = 0
@@ -249,6 +252,7 @@ class PlanExecutor(
                                 createdFolders += result.resultRef.rawValue()
                             }
                             is PlannedOperation.Move -> filesMoved++
+                            is PlannedOperation.Copy -> filesCopied++
                             is PlannedOperation.Rename -> filesRenamed++
                             is PlannedOperation.Trash -> filesTrashed++
                             is PlannedOperation.WriteTextFile -> filesWritten++
@@ -291,6 +295,7 @@ class PlanExecutor(
             taskRunId = taskRunId,
             foldersCreated = foldersCreated,
             filesMoved = filesMoved,
+            filesCopied = filesCopied,
             filesRenamed = filesRenamed,
             filesTrashed = filesTrashed,
             filesWritten = filesWritten,
@@ -314,7 +319,7 @@ class PlanExecutor(
                     else -> TaskRunStatus.FAILED
                 },
                 summary = "${summary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
-                    "$filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed, " +
+                    "$filesCopied copied, $filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed, " +
                     "${validated.rejected.size} left untouched",
             ),
         )
@@ -365,6 +370,7 @@ class PlanExecutor(
 
         var foldersCreated = 0
         var filesMoved = 0
+        var filesCopied = 0
         var filesRenamed = 0
         var filesTrashed = 0
         var filesWritten = 0
@@ -385,6 +391,7 @@ class PlanExecutor(
                         ?.let(createdFolders::add)
                 }
                 is PlannedOperation.Move -> filesMoved++
+                is PlannedOperation.Copy -> filesCopied++
                 is PlannedOperation.Rename -> filesRenamed++
                 is PlannedOperation.Trash -> filesTrashed++
                 is PlannedOperation.WriteTextFile -> filesWritten++
@@ -410,6 +417,7 @@ class PlanExecutor(
             taskRunId = taskRunId,
             foldersCreated = foldersCreated,
             filesMoved = filesMoved,
+            filesCopied = filesCopied,
             filesRenamed = filesRenamed,
             filesTrashed = filesTrashed,
             filesWritten = filesWritten,
@@ -515,6 +523,7 @@ class PlanExecutor(
                                 createdFolders += result.resultRef.rawValue()
                             }
                             is PlannedOperation.Move -> filesMoved++
+                            is PlannedOperation.Copy -> filesCopied++
                             is PlannedOperation.Rename -> filesRenamed++
                             is PlannedOperation.Trash -> filesTrashed++
                             is PlannedOperation.WriteTextFile -> filesWritten++
@@ -557,7 +566,7 @@ class PlanExecutor(
                     else -> TaskRunStatus.FAILED
                 },
                 summary = "${finishedSummary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
-                    "$filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed",
+                    "$filesCopied copied, $filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed",
             ),
         )
         onProgress(operations.size, operations.size)
@@ -612,6 +621,7 @@ class PlanExecutor(
     private suspend fun expectedDestination(operation: PlannedOperation): FileRef? = when (operation) {
         is PlannedOperation.CreateDirectory -> childRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
+        is PlannedOperation.Copy -> operation.destination
         is PlannedOperation.Rename -> renameDestination(operation.source, operation.newName)
         is PlannedOperation.Trash -> gateway.trashDestination(operation.source)
         is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
@@ -621,6 +631,7 @@ class PlanExecutor(
         when (operation) {
             is PlannedOperation.CreateDirectory -> gateway.createDirectory(operation.parent, operation.name)
             is PlannedOperation.Move -> gateway.move(operation.source, operation.destination)
+            is PlannedOperation.Copy -> gateway.copy(operation.source, operation.destination)
             is PlannedOperation.Rename -> gateway.rename(operation.source, operation.newName)
             is PlannedOperation.Trash -> gateway.trash(operation.source)
             is PlannedOperation.WriteTextFile ->
@@ -638,7 +649,11 @@ class PlanExecutor(
         // Both of these create a new entry and leave their source (the
         // parent directory) exactly where it was. Falling through to the
         // move/rename path below would delete the parent's index row.
-        if (operation is PlannedOperation.CreateDirectory || operation is PlannedOperation.WriteTextFile) {
+        if (
+            operation is PlannedOperation.CreateDirectory ||
+            operation is PlannedOperation.WriteTextFile ||
+            operation is PlannedOperation.Copy
+        ) {
             val record = gateway.stat(newRef).toFileRecord(newRef.parentRefOrNull())
             fileRecordDao.upsert(record)
             fileRecordDao.insertScopeTags(
@@ -706,6 +721,7 @@ class PlanExecutor(
 private fun PlannedOperation.sourceRef(): FileRef = when (this) {
     is PlannedOperation.CreateDirectory -> parent
     is PlannedOperation.Move -> source
+    is PlannedOperation.Copy -> source
     is PlannedOperation.Rename -> source
     is PlannedOperation.Trash -> source
     // The parent, same as CreateDirectory: the thing that existed before.
@@ -715,6 +731,7 @@ private fun PlannedOperation.sourceRef(): FileRef = when (this) {
 private fun PlannedOperation.toOperationType(): MutationOperationType = when (this) {
     is PlannedOperation.CreateDirectory -> MutationOperationType.CREATE_DIRECTORY
     is PlannedOperation.Move -> MutationOperationType.MOVE
+    is PlannedOperation.Copy -> MutationOperationType.COPY
     is PlannedOperation.Rename -> MutationOperationType.RENAME
     is PlannedOperation.Trash -> MutationOperationType.TRASH
     is PlannedOperation.WriteTextFile -> MutationOperationType.WRITE_TEXT_FILE
@@ -730,6 +747,7 @@ private fun PlannedOperation.toFailure(sequence: Int, reason: String): Operation
     subject = when (this) {
         is PlannedOperation.CreateDirectory -> "${parent.rawValue().trimEnd('/')}/$name"
         is PlannedOperation.Move -> source.rawValue()
+        is PlannedOperation.Copy -> source.rawValue()
         is PlannedOperation.Rename -> source.rawValue()
         is PlannedOperation.Trash -> source.rawValue()
         is PlannedOperation.WriteTextFile -> "${parent.rawValue().trimEnd('/')}/$name"
