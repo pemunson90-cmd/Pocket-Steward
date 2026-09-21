@@ -19,6 +19,7 @@ import com.pocketsteward.app.content.ContentExtractor
 import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentMatch
 import com.pocketsteward.app.content.index.ContentIndexCandidate
+import com.pocketsteward.app.content.index.ContentIndexJobStatus
 import com.pocketsteward.app.content.index.ContentIndexRefreshSummary
 import com.pocketsteward.app.content.index.ContentIndexState
 import com.pocketsteward.app.content.index.ContentSearchFilters
@@ -65,6 +66,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -400,6 +402,7 @@ class ScanViewModel(
     private var autoStarted = false
 
     private var scanJob: Job? = null
+    private var indexSearchWatchJob: Job? = null
     private var userScanCancellationRequested: Boolean = false
 
     init {
@@ -1602,27 +1605,23 @@ class ScanViewModel(
         }
         val repository = container.contentIndexRepository(summary.mode)
 
-        _uiState.value = ScanUiState.Working(
-            label = "Refreshing search index",
-            detail = "Checking what changed; unchanged documents are reused",
-            processed = 0,
-            total = candidates.size,
-        )
-
-        val refresh = withContext(Dispatchers.IO) {
-            repository.refresh(candidates, roots) { processed, total ->
-                _uiState.value = ScanUiState.Working(
-                    label = "Refreshing search index",
-                    detail = "Checking what changed; unchanged documents are reused",
-                    processed = processed,
-                    total = total,
+        // Queue a durable refresh, then search the already-built subset
+        // immediately. Indexing continues in its own read-only foreground
+        // service and this screen live-refreshes as more segments become
+        // searchable.
+        withContext(Dispatchers.IO) {
+            roots.forEach { root ->
+                repository.queueRoot(
+                    sourceRoot = root,
+                    eligibleCount = candidates.count { it.sourceRoot.trimEnd('/') == root },
                 )
             }
         }
+        container.startContentIndexing(roots)
 
         _uiState.value = ScanUiState.Working(
             label = "Searching indexed contents",
-            detail = "Local full-text search",
+            detail = "Results appear immediately while changed documents index in the background",
         )
 
         val rows = withContext(Dispatchers.IO) {
@@ -1633,6 +1632,9 @@ class ScanViewModel(
         }
         val states = withContext(Dispatchers.IO) {
             roots.mapNotNull { repository.state(it) }
+        }
+        val refresh = withContext(Dispatchers.IO) {
+            repository.jobSummary(roots)
         }
         val initialFilters = filters ?: ContentSearchFilters(
             categories = requestedCategories.mapTo(linkedSetOf()) { it.name },
@@ -1652,6 +1654,63 @@ class ScanViewModel(
         )
         if (savedSearchId != null) {
             settingsRepository.touchSavedSearch(savedSearchId, grouped.size)
+        }
+
+        watchIndexedSearch(
+            query = query,
+            roots = roots,
+            savedSearchId = savedSearchId,
+        )
+    }
+
+    private fun watchIndexedSearch(
+        query: String,
+        roots: List<String>,
+        savedSearchId: String?,
+    ) {
+        indexSearchWatchJob?.cancel()
+        indexSearchWatchJob = viewModelScope.launch {
+            val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+            while (true) {
+                delay(1_000)
+
+                val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: break
+                if (current.query != query) break
+
+                val jobs = withContext(Dispatchers.IO) { repository.jobs(roots) }
+                val rows = withContext(Dispatchers.IO) {
+                    repository.search(query = query, sourceRoots = roots)
+                }
+                val grouped = withContext(Dispatchers.Default) {
+                    ContentSearchView.group(rows, query)
+                }
+                val states = withContext(Dispatchers.IO) {
+                    roots.mapNotNull { repository.state(it) }
+                }
+                val refresh = withContext(Dispatchers.IO) {
+                    repository.jobSummary(roots)
+                }
+
+                _review.value = current.copy(
+                    allResults = grouped,
+                    refreshSummary = refresh,
+                    indexStates = states,
+                )
+
+                val terminal = jobs.isNotEmpty() && jobs.all { job ->
+                    job.status in setOf(
+                        ContentIndexJobStatus.COMPLETED.name,
+                        ContentIndexJobStatus.PAUSED.name,
+                        ContentIndexJobStatus.FAILED.name,
+                    )
+                }
+                if (terminal) {
+                    if (savedSearchId != null) {
+                        settingsRepository.touchSavedSearch(savedSearchId, grouped.size)
+                    }
+                    break
+                }
+            }
         }
     }
 
