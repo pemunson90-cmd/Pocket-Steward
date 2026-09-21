@@ -161,4 +161,16 @@ class DeterministicIntentParserTest {
         assertThat(result).isInstanceOf(IntentParseResult.Unsupported::class.java)
     }
 
+    @Test
+    fun `batch rename template parses`() {
+        val result = DeterministicIntentParser.parse(
+            "rename files matching \"IMG_\" to \"Vacation-{n}.{ext}\"",
+        ) as IntentParseResult.Parsed
+
+        assertThat(result.intent.action).isEqualTo(IntentAction.RENAME)
+        assertThat(result.intent.renameMatchTerm).isEqualTo("IMG_")
+        assertThat(result.intent.renameTemplate).isEqualTo("Vacation-{n}.{ext}")
+        assertThat(result.intent.renameFrom).isNull()
+    }
+
 }
