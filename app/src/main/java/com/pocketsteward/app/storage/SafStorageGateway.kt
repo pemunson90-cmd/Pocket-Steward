@@ -32,9 +32,10 @@ import java.io.InputStream
 // In SafStorageGateway.kt and ScanTarget.GrantedFolder
 
 /**
- * 2026-09-19 (M8 Spec): SAF mode and storage gateway are retained intact as a browser 
- * fallback only. It is not supported for file mutations. Do not route operations here 
- * and do not remove SAF_UNSUPPORTED UI fencing.
+ * 2026-09-19 (M8 Spec): SAF mode remains a browser/read-only fallback.
+ * Mutation methods fail closed with an ordinary MutationResult.Failure rather
+ * than TODO/NotImplementedError, so an accidental UI-fence regression cannot
+ * crash the app or create a second mutation path.
  */
 
 class SafStorageGateway(
@@ -100,22 +101,38 @@ class SafStorageGateway(
         return context.contentResolver.openInputStream(uri)
             ?: error("Could not open SAF document for reading: $uri")
     }
-    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult = TODO("SAF mutation support is deliberately deferred")
+    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult =
+        unsupportedMutation("create folders")
+
     override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult =
-        TODO("SAF mutation support is deliberately deferred")
+        unsupportedMutation("write files")
     override suspend fun copy(source: FileRef, destination: FileRef): MutationResult =
         MutationResult.Failure(
             "SAF copy needs destination-parent semantics that this plan operation does not yet encode.",
         )
 
-    override suspend fun move(source: FileRef, destination: FileRef): MutationResult = TODO("Milestone 2")
-    override suspend fun rename(source: FileRef, newName: String): MutationResult = TODO("Milestone 2")
-    override suspend fun trashDestination(source: FileRef): FileRef =
-        TODO("SAF mutation support is deliberately deferred")
+    override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
+        unsupportedMutation("move files")
 
-    override suspend fun trash(source: FileRef): MutationResult = TODO("Milestone 2/14")
+    override suspend fun rename(source: FileRef, newName: String): MutationResult =
+        unsupportedMutation("rename files")
+
+    override suspend fun trashDestination(source: FileRef): FileRef =
+        throw UnsupportedOperationException(
+            "Selected-folder access is read-only for mutations; Trash requires full file-manager access.",
+        )
+
+    override suspend fun trash(source: FileRef): MutationResult =
+        unsupportedMutation("move files to Trash")
+
     override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult =
-        TODO("SAF mutation support is deliberately deferred")
+        unsupportedMutation("remove directories")
+
+    private fun unsupportedMutation(action: String): MutationResult =
+        MutationResult.Failure(
+            "Selected-folder access is read-only for mutations and cannot $action. " +
+                "Use full file-manager access for organization tasks.",
+        )
 
 }
 
