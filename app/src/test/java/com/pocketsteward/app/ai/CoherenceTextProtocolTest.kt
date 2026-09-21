@@ -37,6 +37,37 @@ class CoherenceTextProtocolTest {
     }
 
     @Test
+    fun acceptsPipeDelimitedRecordsFromNanoFormatting() {
+        val result = CoherenceTextProtocol.parse(
+            "PSF|D0001|BELONGS|-|Matches the folder theme.",
+            ids,
+        ).single()
+
+        assertThat(result.documentId).isEqualTo(ids.getValue("D0001"))
+        assertThat(result.classification).isEqualTo(CoherenceClass.BELONGS)
+        assertThat(result.suggestedGroup).isNull()
+    }
+
+    @Test
+    fun acceptsMarkdownTableEdgePipesWithoutAcceptingArbitraryProse() {
+        val output = """
+            | PSF | D0002 | QUESTIONABLE | Receipts | Looks financial. |
+            explanation PSF | D0001 | BELONGS | - | should not parse
+        """.trimIndent()
+
+        val result = CoherenceTextProtocol.parse(output, ids)
+
+        assertThat(result).containsExactly(
+            CoherenceTextProtocol.ParsedFinding(
+                ids.getValue("D0002"),
+                CoherenceClass.QUESTIONABLE,
+                "Receipts",
+                "Looks financial.",
+            ),
+        )
+    }
+
+    @Test
     fun unknownAliasIsIgnored() {
         val result = CoherenceTextProtocol.parse(
             "PSF	D9999	BELONGS	-	Nope",
@@ -70,7 +101,7 @@ class CoherenceTextProtocolTest {
     fun malformedRecordIsIgnored() {
         val output = """
             PSF	D0001	BELONGS
-            PSF|D0001|BELONGS|-|wrong delimiter
+            PSF|D0001|BELONGS|missing reason
         """.trimIndent()
 
         assertThat(CoherenceTextProtocol.parse(output, ids)).isEmpty()
