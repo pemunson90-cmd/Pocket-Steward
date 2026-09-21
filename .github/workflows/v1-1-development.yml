@@ -1,0 +1,46 @@
+name: Gate V1.1 Development
+
+on:
+  push:
+    branches:
+      - build/v1.1-development
+  workflow_dispatch:
+
+concurrency:
+  group: v1-1-development
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Clean debug release Android-test compile unit suite and lint
+        run: ./gradlew clean assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-1-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-1-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-1-lint
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if-no-files-found: warn
