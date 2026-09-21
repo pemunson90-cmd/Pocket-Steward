@@ -139,6 +139,10 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 onBack = onBack,
                 modifier = contentModifier,
             )
+            is ScanUiState.SimilarReview -> SimilarReview(
+                state = current,
+                modifier = contentModifier,
+            )
             is ScanUiState.ProtectFolders -> ProtectFolders(
                 state = current,
                 onToggleProtection = { folder -> viewModel.proposeToggleProtection(current, folder) },
@@ -1259,6 +1263,79 @@ private fun CoherenceAuditReview(
                             modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
                         ) {
                             Text("Review proposed moves")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimilarReview(
+    state: ScanUiState.SimilarReview,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        item {
+            ScreenHeadline(
+                text = "Similar files · ${state.scopeLabel}",
+                supporting = "${state.groups.size} group(s) · ${state.imagesAnalyzed} images analyzed · ${state.documentsAnalyzed} indexed documents analyzed · review only",
+            )
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "These are perceptual/semantic near-duplicates, not byte-identical duplicates. Pocket Steward will not offer automatic trash actions from this screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(Spacing.base),
+                )
+            }
+        }
+        if (state.groups.isEmpty()) {
+            item { EmptyState("No near-duplicate groups were found in the analyzed files.") }
+        }
+        state.groups.forEachIndexed { index, group ->
+            item(key = "similar-$index") {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(Spacing.base)) {
+                        Text(
+                            text = "${group.kind.name.lowercase().replaceFirstChar { it.uppercase() }} · ${group.records.size} similar files",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        group.records.forEach { record ->
+                            Card(
+                                onClick = {
+                                    openDirectFile(
+                                        context = context,
+                                        path = record.stableRef,
+                                        displayName = record.displayName,
+                                        extension = record.extension,
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                            ) {
+                                Column(modifier = Modifier.padding(Spacing.tight)) {
+                                    Text(
+                                        record.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        record.parentRef.orEmpty(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
