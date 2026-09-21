@@ -7,6 +7,8 @@ enum class IntentAction {
     ORGANIZE,
     FIND,
     GROUP,
+    MOVE,
+    COPY,
     RENAME,
     ARCHIVE,
     DUPLICATE_REVIEW,
@@ -43,6 +45,8 @@ data class BoundedIntent(
     val contentTerm: String? = null,
     val renameFrom: String? = null,
     val renameTo: String? = null,
+    /** Explicit destination folder for bounded move/copy requests. */
+    val destinationFolder: String? = null,
     val minSizeBytes: Long? = null,
     val maxSizeBytes: Long? = null,
     val modifiedBefore: Long? = null,
