@@ -47,6 +47,26 @@ interface ContentIndexDao {
     @Query("SELECT COUNT(DISTINCT sourceRoot) FROM indexed_documents")
     suspend fun countRoots(): Int
 
+
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putJob(job: ContentIndexJob)
+
+    @Query("SELECT * FROM content_index_jobs WHERE sourceRoot = :sourceRoot")
+    suspend fun getJob(sourceRoot: String): ContentIndexJob?
+
+    @Query("SELECT * FROM content_index_jobs WHERE sourceRoot IN (:sourceRoots)")
+    suspend fun getJobs(sourceRoots: List<String>): List<ContentIndexJob>
+
+    @Query("SELECT * FROM content_index_jobs WHERE status IN ('QUEUED', 'RUNNING', 'PAUSED') ORDER BY updatedAt ASC")
+    suspend fun getResumableJobs(): List<ContentIndexJob>
+
+    @Query("DELETE FROM content_index_jobs WHERE sourceRoot = :sourceRoot")
+    suspend fun deleteJob(sourceRoot: String)
+
+    @Query("DELETE FROM content_index_jobs")
+    suspend fun clearJobs()
+
     @Query("DELETE FROM content_index_state WHERE sourceRoot = :sourceRoot")
     suspend fun clearState(sourceRoot: String)
 
@@ -97,6 +117,7 @@ interface ContentIndexDao {
         clearSegments()
         clearDocuments()
         clearStates()
+        clearJobs()
     }
 
     @Query(
