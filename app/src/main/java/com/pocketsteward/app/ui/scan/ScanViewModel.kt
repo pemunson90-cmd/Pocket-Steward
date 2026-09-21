@@ -2313,6 +2313,7 @@ class ScanViewModel(
         groupDirectory: String,
         newDestinationRootPath: String? = null,
         newGroupName: String? = null,
+        rememberForSimilarFiles: Boolean = false,
     ) {
         val current = _preview.value ?: return
         viewModelScope.launch {
@@ -2350,6 +2351,17 @@ class ScanViewModel(
                     _error.value = "The selected destination root does not exist."
                     return@launch
                 }
+
+                val affectedSourceNames = current.accepted
+                    .filterIsInstance<PlannedOperation.Move>()
+                    .filter { move ->
+                        (move.destination as? FileRef.Direct)
+                            ?.absolutePath
+                            ?.substringBeforeLast('/', missingDelimiterValue = "") == oldDirectory
+                    }
+                    .mapNotNull { move ->
+                        (move.source as? FileRef.Direct)?.absolutePath?.substringAfterLast('/')
+                    }
 
                 val transformed = current.accepted.map { operation ->
                     when (operation) {
@@ -2408,10 +2420,42 @@ class ScanViewModel(
                     selectedIndices = PlanSelection.allSelected(validated.accepted),
                     authorizedDestinationRoots = extraRoots,
                 )
+                if (rememberForSimilarFiles) {
+                    learnableFilenameTerm(affectedSourceNames)?.let { term ->
+                        settingsRepository.addCorrectionRule(term, targetGroup)
+                    }
+                }
             } catch (t: Throwable) {
                 _error.value = t.message ?: t.javaClass.simpleName
             }
         }
+    }
+
+    private fun learnableFilenameTerm(names: List<String>): String? {
+        if (names.isEmpty()) return null
+        val generic = setOf(
+            "final", "copy", "file", "document", "download", "notes", "note",
+            "image", "img", "screenshot", "scan", "new",
+        )
+        val tokenSets = names.map { name ->
+            name.substringBeforeLast('.', name)
+                .lowercase()
+                .split(Regex("""[^a-z0-9]+"""))
+                .filter { token ->
+                    token.length >= 3 &&
+                        token !in generic &&
+                        token.any { it.isLetter() }
+                }
+                .toSet()
+        }
+        val minimum = if (tokenSets.size == 1) 1 else (tokenSets.size + 1) / 2
+        return tokenSets
+            .flatten()
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it >= minimum }
+            .maxWithOrNull(compareBy<Map.Entry<String, Int>> { it.value }.thenBy { it.key.length })
+            ?.key
     }
 
     fun setPlanOperationSelected(index: Int, selected: Boolean) {
