@@ -219,6 +219,13 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         onClick = { viewModel.findUncategorized(state) },
                     )
                 }
+                item {
+                    ActionCard(
+                        title = "Similar files",
+                        supporting = "Find visually similar images and near-duplicate indexed documents. Review only; similarity never authorizes trash.",
+                        onClick = { viewModel.findSimilarFiles(state) },
+                    )
+                }
 
                 if (canChangeFiles) {
                     item { SectionHeader("Understand") }
