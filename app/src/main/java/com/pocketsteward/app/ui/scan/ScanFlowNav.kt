@@ -3,6 +3,7 @@ package com.pocketsteward.app.ui.scan
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -12,6 +13,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
 import com.pocketsteward.app.PocketStewardApplication
@@ -152,7 +154,10 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
 private fun scanViewModel(navController: NavHostController): ScanViewModel {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
-    val graphEntry = remember(navController) { navController.getBackStackEntry(ScanFlow.GRAPH) }
+    val currentEntry by navController.currentBackStackEntryAsState()
+    val graphEntry = remember(currentEntry) {
+        navController.getBackStackEntry(ScanFlow.GRAPH)
+    }
     return viewModel(
         viewModelStoreOwner = graphEntry,
         factory = viewModelFactory {
