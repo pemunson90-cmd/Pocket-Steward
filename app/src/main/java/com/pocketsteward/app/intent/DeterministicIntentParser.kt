@@ -42,7 +42,7 @@ object DeterministicIntentParser {
         }
 
         val groupingMode =
-            if (Regex("""project|bys+project|projects+name""").containsMatchIn(lower)) {
+            if (Regex("""\bproject|by\s+project|project\s+name""").containsMatchIn(lower)) {
                 GroupingMode.PROJECT
             } else {
                 GroupingMode.TYPE
@@ -53,14 +53,14 @@ object DeterministicIntentParser {
 
         if (action == IntentAction.RENAME) {
             val match = Regex(
-                """(?i)renames+["']?(.+?)["']?s+tos+["']?([^/"']+)["']?s*$""",
+                """(?i)\brename\s+["']?(.+?)["']?\s+to\s+["']?([^/"']+)["']?\s*$""",
             ).find(raw)
                 ?: return IntentParseResult.Unsupported(
                     "Rename requests must use “rename <current name> to <new name>”.",
                 )
-            val from = match.groupValues[1].trim().trim('"', ''')
-            val to = match.groupValues[2].trim().trim('"', ''')
-            if (from.isBlank() || to.isBlank() || '/' in to || '\' in to) {
+            val from = match.groupValues[1].trim().trim('"', '\'')
+            val to = match.groupValues[2].trim().trim('"', '\'')
+            if (from.isBlank() || to.isBlank() || '/' in to || '\\' in to) {
                 return IntentParseResult.Unsupported("The rename target must be one plain file name.")
             }
             return IntentParseResult.Parsed(
@@ -117,11 +117,11 @@ object DeterministicIntentParser {
 
     private fun actionFor(lower: String): IntentAction? = when {
         "duplicate" in lower -> IntentAction.DUPLICATE_REVIEW
-        Regex("""rename""").containsMatchIn(lower) -> IntentAction.RENAME
-        Regex("""find|show|locate""").containsMatchIn(lower) -> IntentAction.FIND
-        Regex("""archive""").containsMatchIn(lower) -> IntentAction.ARCHIVE
-        Regex("""group""").containsMatchIn(lower) -> IntentAction.GROUP
-        Regex("""organize|sort|cleans*up|cleanup""").containsMatchIn(lower) ->
+        Regex("""\brename\b""").containsMatchIn(lower) -> IntentAction.RENAME
+        Regex("""\bfind\b|\bshow\b|\blocate\b""").containsMatchIn(lower) -> IntentAction.FIND
+        Regex("""\barchive\b""").containsMatchIn(lower) -> IntentAction.ARCHIVE
+        Regex("""\bgroup\b""").containsMatchIn(lower) -> IntentAction.GROUP
+        Regex("""\borganize\b|\bsort\b|\bclean\s*up\b|\bcleanup\b""").containsMatchIn(lower) ->
             IntentAction.ORGANIZE
         else -> null
     }
@@ -146,8 +146,8 @@ object DeterministicIntentParser {
         val categories = parseCategories(lower)
         val criteria = parseCriteria(lower, nowMillis)
         val grouping = when {
-            Regex("""bys+project|projects+name""").containsMatchIn(lower) -> GroupingMode.PROJECT
-            Regex("""bys+type""").containsMatchIn(lower) -> GroupingMode.TYPE
+            Regex("""\bby\s+project\b|\bproject\s+name\b""").containsMatchIn(lower) -> GroupingMode.PROJECT
+            Regex("""\bby\s+type\b""").containsMatchIn(lower) -> GroupingMode.TYPE
             else -> previous.groupingMode
         }
         return previous.copy(
@@ -187,7 +187,7 @@ object DeterministicIntentParser {
         var order = IntentOrder.DEFAULT
 
         val sizePattern = Regex(
-            """(?:(larger|bigger|over|above|smaller|under|below)s+than?s*)?(d+(?:.d+)?)s*(kb|mb|gb|kib|mib|gib)""",
+            """(?:(larger|bigger|over|above|smaller|under|below)\s+than?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb|kib|mib|gib)\b""",
         )
         sizePattern.findAll(lower).forEach { match ->
             val comparator = match.groupValues[1]
@@ -199,7 +199,7 @@ object DeterministicIntentParser {
         }
 
         val age = Regex(
-            """(older|newer)s+thans+(d+)s+(day|days|week|weeks|month|months|year|years)""",
+            """\b(older|newer)\s+than\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b""",
         ).find(lower)
         if (age != null) {
             val duration = durationMillis(age.groupValues[2].toLong(), age.groupValues[3])
@@ -208,17 +208,17 @@ object DeterministicIntentParser {
         }
 
         val last = Regex(
-            """(?:froms+)?(?:thes+)?lasts+(d+)s+(day|days|week|weeks|month|months|year|years)""",
+            """\b(?:from\s+)?(?:the\s+)?last\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b""",
         ).find(lower)
         if (last != null) {
             after = nowMillis - durationMillis(last.groupValues[1].toLong(), last.groupValues[2])
         }
 
-        if (Regex("""olds+files?""").containsMatchIn(lower)) {
+        if (Regex("""\bold\s+files?\b""").containsMatchIn(lower)) {
             before = nowMillis - durationMillis(6, "months")
             order = IntentOrder.OLDEST_FIRST
         }
-        if (Regex("""recents+files?""").containsMatchIn(lower)) {
+        if (Regex("""\brecent\s+files?\b""").containsMatchIn(lower)) {
             after = nowMillis - durationMillis(30, "days")
             order = IntentOrder.NEWEST_FIRST
         }
@@ -227,21 +227,21 @@ object DeterministicIntentParser {
         parseAbsoluteDate(lower, "after")?.let { after = it }
 
         order = when {
-            Regex("""largest|biggest""").containsMatchIn(lower) -> IntentOrder.LARGEST_FIRST
-            Regex("""smallest""").containsMatchIn(lower) -> IntentOrder.SMALLEST_FIRST
-            Regex("""newest|most recent""").containsMatchIn(lower) -> IntentOrder.NEWEST_FIRST
-            Regex("""oldest""").containsMatchIn(lower) -> IntentOrder.OLDEST_FIRST
+            Regex("""\blargest\b|\bbiggest\b""").containsMatchIn(lower) -> IntentOrder.LARGEST_FIRST
+            Regex("""\bsmallest\b""").containsMatchIn(lower) -> IntentOrder.SMALLEST_FIRST
+            Regex("""\bnewest\b|\bmost recent\b""").containsMatchIn(lower) -> IntentOrder.NEWEST_FIRST
+            Regex("""\boldest\b""").containsMatchIn(lower) -> IntentOrder.OLDEST_FIRST
             else -> order
         }
 
-        val limit = Regex("""(?:top|first|show)s+(d{1,4})""")
+        val limit = Regex("""\b(?:top|first|show)\s+(\d{1,4})\b""")
             .find(lower)
             ?.groupValues
             ?.getOrNull(1)
             ?.toIntOrNull()
             ?.coerceIn(1, 1000)
             ?: if (order != IntentOrder.DEFAULT &&
-                Regex("""largest|biggest|smallest|newest|oldest""").containsMatchIn(lower)
+                Regex("""\blargest\b|\bbiggest\b|\bsmallest\b|\bnewest\b|\boldest\b""").containsMatchIn(lower)
             ) {
                 50
             } else {
@@ -259,7 +259,7 @@ object DeterministicIntentParser {
     }
 
     private fun parseAbsoluteDate(lower: String, keyword: String): Long? {
-        val date = Regex("""$keywords+(d{4}-d{2}-d{2})""")
+        val date = Regex("""\b$keyword\s+(\d{4}-\d{2}-\d{2})\b""")
             .find(lower)
             ?.groupValues
             ?.getOrNull(1)
@@ -298,27 +298,27 @@ object DeterministicIntentParser {
     }
 
     private fun parseCategories(lower: String): Set<FileCategory> = buildSet {
-        if (Regex("""apk|apks|installer|installers""").containsMatchIn(lower)) add(FileCategory.APK)
-        if (Regex("""image|images|photo|photos|picture|pictures""").containsMatchIn(lower)) add(FileCategory.IMAGE)
-        if (Regex("""pdf|pdfs|document|documents|docs|text files?|spreadsheets?|presentations?""").containsMatchIn(lower)) {
+        if (Regex("""\bapk|apks|installer|installers\b""").containsMatchIn(lower)) add(FileCategory.APK)
+        if (Regex("""\bimage|images|photo|photos|picture|pictures\b""").containsMatchIn(lower)) add(FileCategory.IMAGE)
+        if (Regex("""\bpdf|pdfs|document|documents|docs|text files?|spreadsheets?|presentations?\b""").containsMatchIn(lower)) {
             add(FileCategory.DOCUMENT)
         }
-        if (Regex("""zip|zips|archive files?|compressed files?""").containsMatchIn(lower)) add(FileCategory.ARCHIVE)
-        if (Regex("""audio|video|videos|music|media""").containsMatchIn(lower)) add(FileCategory.AUDIO_VIDEO)
+        if (Regex("""\bzip|zips|archive files?|compressed files?\b""").containsMatchIn(lower)) add(FileCategory.ARCHIVE)
+        if (Regex("""\baudio|video|videos|music|media\b""").containsMatchIn(lower)) add(FileCategory.AUDIO_VIDEO)
     }
 
     private fun parseMainFolder(raw: String): String? {
-        val quoted = Regex("""(?i)(?:under|inside|within)s+["']([^/"']+)["']""")
+        val quoted = Regex("""(?i)\b(?:under|inside|within)\s+["']([^/"']+)["']""")
             .find(raw)?.groupValues?.getOrNull(1)
         if (!quoted.isNullOrBlank()) return quoted.trim()
 
-        val called = Regex("""(?i)(?:mains+)?folders+(?:called|named)s+["']?([A-Za-z0-9 _-]{1,48})["']?""")
+        val called = Regex("""(?i)\b(?:main\s+)?folder\s+(?:called|named)\s+["']?([A-Za-z0-9 _-]{1,48})["']?""")
             .find(raw)?.groupValues?.getOrNull(1)
             ?.trim()
             ?.trimEnd('.', ',', ';')
         if (!called.isNullOrBlank()) return called
 
-        return if (Regex("""(?i)ones+mains+folder""").containsMatchIn(raw)) "Organized" else null
+        return if (Regex("""(?i)\bone\s+main\s+folder\b""").containsMatchIn(raw)) "Organized" else null
     }
 
     private fun includesSubfolders(lower: String): Boolean = listOf(
@@ -332,29 +332,29 @@ object DeterministicIntentParser {
 
     private fun parseContentTerm(raw: String): String? {
         val patterns = listOf(
-            Regex("""(?i)(?:containing|contains|mentioning|mentions)s+["']?(.+?)["']?s*$"""),
-            Regex("""(?i)withs+(?:thes+)?(?:text|content)s+["']?(.+?)["']?s*$"""),
+            Regex("""(?i)\b(?:containing|contains|mentioning|mentions)\s+["']?(.+?)["']?\s*$"""),
+            Regex("""(?i)\bwith\s+(?:the\s+)?(?:text|content)\s+["']?(.+?)["']?\s*$"""),
         )
         return patterns.firstNotNullOfOrNull { pattern ->
             pattern.find(raw)?.groupValues?.getOrNull(1)
                 ?.trim()
-                ?.trim('"', ''')
+                ?.trim('"', '\'')
                 ?.takeIf { it.isNotBlank() }
         }
     }
 
     private fun parseFindTerm(raw: String): String? {
         val match = Regex(
-            """(?i)(?:find|show|locate)s+(?:files?s+)?(?:named|matching|containing)?s*["']?(.+?)["']?s*$""",
+            """(?i)\b(?:find|show|locate)\s+(?:files?\s+)?(?:named|matching|containing)?\s*["']?(.+?)["']?\s*$""",
         ).find(raw) ?: return null
         val candidate = match.groupValues[1]
             .trim()
-            .trim('"', ''')
+            .trim('"', '\'')
         val lower = candidate.lowercase()
         return candidate.takeIf {
             it.isNotBlank() &&
                 lower !in setOf("files", "file") &&
-                !Regex("""(larger|bigger|over|above|smaller|under|below|older|newer|largest|smallest|newest|oldest)""")
+                !Regex("""\b(larger|bigger|over|above|smaller|under|below|older|newer|largest|smallest|newest|oldest)\b""")
                     .containsMatchIn(lower)
         }
     }
