@@ -95,10 +95,19 @@ class SafStorageGateway(
         return DocumentFile.fromTreeUri(context, uri)?.exists() == true
     }
 
-    override suspend fun openRead(ref: FileRef): InputStream = TODO("Milestone 2")
+    override suspend fun openRead(ref: FileRef): InputStream {
+        val uri = Uri.parse(ref.requireUri())
+        return context.contentResolver.openInputStream(uri)
+            ?: error("Could not open SAF document for reading: $uri")
+    }
     override suspend fun createDirectory(parent: FileRef, name: String): MutationResult = TODO("SAF mutation support is deliberately deferred")
     override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult =
         TODO("SAF mutation support is deliberately deferred")
+    override suspend fun copy(source: FileRef, destination: FileRef): MutationResult =
+        MutationResult.Failure(
+            "SAF copy needs destination-parent semantics that this plan operation does not yet encode.",
+        )
+
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult = TODO("Milestone 2")
     override suspend fun rename(source: FileRef, newName: String): MutationResult = TODO("Milestone 2")
     override suspend fun trashDestination(source: FileRef): FileRef =
