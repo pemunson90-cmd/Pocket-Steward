@@ -112,7 +112,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                 Text(
                     text = when (storageAccess.mode) {
                         StorageAccessMode.DIRECT -> "Pocket Steward can scan and organize shared storage."
-                        StorageAccessMode.SAF -> "Pocket Steward can browse the selected folder but file-changing actions are limited."
+                        StorageAccessMode.SAF -> "Pocket Steward can scan, search, hash, inspect metadata/content, and run local read-only analysis in the selected folder. File-changing actions remain disabled."
                         null -> "Choose how Pocket Steward can reach your files."
                     },
                     style = MaterialTheme.typography.bodySmall,
