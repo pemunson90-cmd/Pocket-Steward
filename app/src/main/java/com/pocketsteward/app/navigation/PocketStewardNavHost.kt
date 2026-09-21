@@ -32,6 +32,7 @@ object Routes {
     fun scanFlowWithRequest(request: String): String = ScanFlow.entryWithRequest(request)
     fun scanFlowWithWorkflow(workflowId: String): String = ScanFlow.entryWithWorkflow(workflowId)
     fun scanFlowWithSavedSearch(searchId: String): String = ScanFlow.entryWithSavedSearch(searchId)
+    fun scanFlowWithImportedPlan(cachePath: String): String = ScanFlow.entryWithImportedPlan(cachePath)
 }
 
 @Composable
@@ -58,6 +59,7 @@ fun PocketStewardNavHost(startDestination: String, navController: NavHostControl
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
                 onSavedWorkflow = { workflowId -> navController.navigate(Routes.scanFlowWithWorkflow(workflowId)) },
                 onSavedSearch = { searchId -> navController.navigate(Routes.scanFlowWithSavedSearch(searchId)) },
+                onImportedPlan = { cachePath -> navController.navigate(Routes.scanFlowWithImportedPlan(cachePath)) },
             )
         }
         composable(Routes.SETTINGS) {
