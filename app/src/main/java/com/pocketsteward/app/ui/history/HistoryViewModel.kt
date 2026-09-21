@@ -10,6 +10,7 @@ import com.pocketsteward.app.data.db.UndoState
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.report.ExportResult
+import com.pocketsteward.app.report.ManifestFormat
 import com.pocketsteward.app.report.TaskManifestDocument
 import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -155,7 +156,10 @@ class HistoryViewModel(
         }
     }
 
-    fun exportManifest(document: TaskManifestDocument) {
+    fun exportManifest(
+        document: TaskManifestDocument,
+        format: ManifestFormat = ManifestFormat.MARKDOWN,
+    ) {
         viewModelScope.launch {
             try {
                 val task = withContext(Dispatchers.IO) { taskRunDao.getById(document.taskRunId) }
@@ -164,7 +168,12 @@ class HistoryViewModel(
                     return@launch
                 }
                 val result = withContext(Dispatchers.IO) {
-                    manifestService.export(document, gatewayFor(task.storageAccessMode), task.scopeRootRef)
+                    manifestService.export(
+                        document = document,
+                        gateway = gatewayFor(task.storageAccessMode),
+                        scopeRootRef = task.scopeRootRef,
+                        format = format,
+                    )
                 }
                 _actionState.value = when (result) {
                     is ExportResult.Written -> HistoryActionState.Manifest(document, exportedTo = result.path)
