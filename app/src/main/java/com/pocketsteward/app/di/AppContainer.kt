@@ -3,6 +3,11 @@ package com.pocketsteward.app.di
 import android.content.Context
 import android.media.MediaScannerConnection
 import androidx.core.content.ContextCompat
+import com.pocketsteward.app.service.ContentIndexWorker
+import androidx.work.workDataOf
+import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.Constraints
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.GeminiNanoAgentModel
@@ -129,13 +134,47 @@ class AppContainer(context: Context) {
     fun startContentIndexing(sourceRoots: List<String>) {
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         if (roots.isEmpty()) return
-        ContextCompat.startForegroundService(
-            appContext,
-            ContentIndexForegroundService.runIntent(appContext, roots),
-        )
+
+        try {
+            ContextCompat.startForegroundService(
+                appContext,
+                ContentIndexForegroundService.runIntent(appContext, roots),
+            )
+        } catch (_: IllegalStateException) {
+            // Android 12+ can reject a foreground-service launch when the app
+            // crossed into the background between the user's action and this
+            // call. Queue the same resumable work instead of surfacing the
+            // platform exception to the user.
+            enqueueContentIndexFallback(roots)
+        }
+    }
+
+    private fun enqueueContentIndexFallback(roots: List<String>) {
+        val request = OneTimeWorkRequestBuilder<ContentIndexWorker>()
+            .setInputData(
+                workDataOf(ContentIndexWorker.KEY_ROOTS to roots.toTypedArray()),
+            )
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresStorageNotLow(true)
+                    .build(),
+            )
+            .addTag(ContentIndexWorker.WORK_TAG)
+            .build()
+
+        WorkManager.getInstance(appContext).enqueue(request)
     }
 
     fun pauseContentIndexing() {
-        appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
+        WorkManager.getInstance(appContext)
+            .cancelAllWorkByTag(ContentIndexWorker.WORK_TAG)
+
+        // The service may not exist, and Android can reject service starts
+        // from the background. Pause is best-effort because the durable job
+        // cursor makes either runner safely resumable.
+        runCatching {
+            appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
+        }
     }
 }
