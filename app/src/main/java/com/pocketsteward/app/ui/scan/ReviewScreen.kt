@@ -46,6 +46,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -114,6 +115,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 onFiltersChange = viewModel::setIndexedSearchFilters,
                 onResetFilters = viewModel::resetIndexedSearchFilters,
                 onRefresh = { viewModel.refreshIndexedSearch(current) },
+                onPauseIndex = viewModel::pauseContentIndexing,
                 onSaveSearch = { name -> viewModel.saveIndexedSearch(current, name) },
                 modifier = contentModifier,
             )
@@ -269,6 +271,7 @@ private fun IndexedContentSearchReview(
     onFiltersChange: (ContentSearchFilters) -> Unit,
     onResetFilters: () -> Unit,
     onRefresh: () -> Unit,
+    onPauseIndex: () -> Unit,
     onSaveSearch: (String) -> Unit,
     modifier: Modifier,
 ) {
@@ -314,6 +317,7 @@ private fun IndexedContentSearchReview(
                 onSortChange = onSortChange,
                 onOpenFilters = { filterSheetOpen = true },
                 onRefresh = onRefresh,
+                onPauseIndex = onPauseIndex,
                 onSave = { saveDialogOpen = true },
                 onResetFilters = onResetFilters,
             )
@@ -466,6 +470,7 @@ private fun SearchToolbar(
     onSortChange: (ContentSearchSort) -> Unit,
     onOpenFilters: () -> Unit,
     onRefresh: () -> Unit,
+    onPauseIndex: () -> Unit,
     onSave: () -> Unit,
     onResetFilters: () -> Unit,
 ) {
@@ -540,6 +545,15 @@ private fun SearchToolbar(
                                 onSave()
                             },
                         )
+                        if (!state.indexComplete && state.indexEligible > 0) {
+                            DropdownMenuItem(
+                                text = { Text("Pause indexing") },
+                                onClick = {
+                                    onMoreMenuOpenChange(false)
+                                    onPauseIndex()
+                                },
+                            )
+                        }
                         if (state.filters.activeCount > 0) {
                             DropdownMenuItem(
                                 text = { Text("Reset filters") },
@@ -559,6 +573,21 @@ private fun SearchToolbar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
+            if (!state.indexComplete && state.indexEligible > 0) {
+                LinearProgressIndicator(
+                    progress = {
+                        state.indexProcessed.toFloat() /
+                            state.indexEligible.coerceAtLeast(1).toFloat()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                )
+                Text(
+                    text = "Indexing in background · ${state.indexProcessed} of ${state.indexEligible} files processed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
         }
     }
 }
