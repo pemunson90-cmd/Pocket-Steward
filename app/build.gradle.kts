@@ -119,6 +119,7 @@ dependencies {
     // M10B: bundled Latin OCR keeps scanned-PDF support available without a
     // second user-visible model download ceremony.
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 
     // M10B: Gemini Nano remains behind AgentModel; this dependency is the
     // Android implementation, not part of the planner/executor safety spine.
