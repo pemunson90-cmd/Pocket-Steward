@@ -22,8 +22,8 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - name: Clean debug, release, instrumentation compile, unit tests, and lint
-        run: ./gradlew clean assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - name: Clean debug, release, instrumentation compile, and unit tests
+        run: ./gradlew clean assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-steward-v1-release-completion-debug
@@ -39,6 +39,21 @@ jobs:
           name: pocket-steward-v1-release-completion-androidtest
           path: app/build/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
+      - name: Android lint
+        id: lint
+        continue-on-error: true
+        run: ./gradlew lintDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-release-completion-lint
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if-no-files-found: warn
+      - name: Enforce lint result
+        if: steps.lint.outcome == 'failure'
+        run: exit 1
       - name: Package local APK signer tooling
         run: |
           APK_SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
