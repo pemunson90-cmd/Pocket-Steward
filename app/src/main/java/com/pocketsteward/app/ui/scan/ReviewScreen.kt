@@ -1155,13 +1155,13 @@ private fun CoherenceAuditReview(
             }
         }
 
-        if (proposalCandidates > 0) {
+        if (state.eligibleDocuments > 0) {
             item {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
                         Text("Build organization proposal", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "$proposalCandidates actionable finding(s). Choose where one-level semantic groups should live; nothing moves until the next preview is approved.",
+                            "Model outliers: $proposalCandidates. The proposal also evaluates all readable documents using project keywords, repeated filename/title signals, and indexed content before model advice. Choose where one-level groups should live; nothing moves until the next preview is approved.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = Spacing.hairline),
@@ -1238,16 +1238,6 @@ private fun CoherenceAuditReview(
                             Text("Review proposed moves")
                         }
                     }
-                }
-            }
-        } else {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        "No sampled document produced an actionable outlier/group suggestion. Nothing is proposed from this audit.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(Spacing.base),
-                    )
                 }
             }
         }
