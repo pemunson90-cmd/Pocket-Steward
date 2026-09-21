@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -35,6 +36,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.plan.DurablePlanCodec
+import com.pocketsteward.app.data.db.TaskRunStatus
 
 @Composable
 fun HomeScreen(
@@ -52,12 +55,14 @@ fun HomeScreen(
             initializer {
                 HomeViewModel(
                     taskRunDao = container.database.taskRunDao(),
+                    mutationRecordDao = container.database.mutationRecordDao(),
                     settingsRepository = container.settingsRepository,
                 )
             }
         },
     )
     val recentTasks by viewModel.recentTasks.collectAsState()
+    val taskProgress by viewModel.taskProgress.collectAsState()
     val savedWorkflows by viewModel.savedWorkflows.collectAsState()
     val savedSearches by viewModel.savedSearches.collectAsState()
     var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
@@ -99,6 +104,53 @@ fun HomeScreen(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        val activeTask = recentTasks.firstOrNull {
+            it.status == TaskRunStatus.RUNNING || it.status == TaskRunStatus.CANCELLED
+        }
+        if (activeTask != null) {
+            val total = DurablePlanCodec.decodeOrNull(activeTask.planJson)?.operations?.size ?: 0
+            val journal = taskProgress[activeTask.id]
+            val completed = if (total > 0 && journal != null) {
+                journal.journaledCount.coerceAtMost(total.toLong()).toInt()
+            } else {
+                0
+            }
+
+            Card(onClick = onOpenTasks, modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        if (activeTask.status == TaskRunStatus.RUNNING) "Task running" else "Task paused",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        activeTask.requestText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (total > 0) {
+                        LinearProgressIndicator(
+                            progress = { completed.toFloat() / total.toFloat() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "$completed of $total operations recorded",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "Open Tasks to review, pause, resume, inspect the manifest, or undo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
