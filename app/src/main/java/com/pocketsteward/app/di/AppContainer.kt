@@ -3,6 +3,11 @@ package com.pocketsteward.app.di
 import android.content.Context
 import android.media.MediaScannerConnection
 import androidx.core.content.ContextCompat
+import com.pocketsteward.app.service.ContentIndexWorker
+import androidx.work.workDataOf
+import androidx.work.WorkManager
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.Constraints
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.ai.AgentModel
 import com.pocketsteward.app.ai.GeminiNanoAgentModel
@@ -129,13 +134,35 @@ class AppContainer(context: Context) {
     fun startContentIndexing(sourceRoots: List<String>) {
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         if (roots.isEmpty()) return
-        ContextCompat.startForegroundService(
-            appContext,
-            ContentIndexForegroundService.runIntent(appContext, roots),
-        )
+
+        try {
+            ContextCompat.startForegroundService(
+                appContext,
+                ContentIndexForegroundService.runIntent(appContext, roots),
+            )
+        } catch (_: IllegalStateException) {
+            enqueueContentIndexFallback(roots)
+        }
+    }
+
+    private fun enqueueContentIndexFallback(roots: List<String>) {
+        val request = OneTimeWorkRequestBuilder<ContentIndexWorker>()
+            .setInputData(workDataOf(ContentIndexWorker.KEY_ROOTS to roots.toTypedArray()))
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiresBatteryNotLow(true)
+                    .setRequiresStorageNotLow(true)
+                    .build(),
+            )
+            .addTag(ContentIndexWorker.WORK_TAG)
+            .build()
+        WorkManager.getInstance(appContext).enqueue(request)
     }
 
     fun pauseContentIndexing() {
-        appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
+        WorkManager.getInstance(appContext).cancelAllWorkByTag(ContentIndexWorker.WORK_TAG)
+        runCatching {
+            appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
+        }
     }
 }
