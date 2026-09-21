@@ -67,6 +67,11 @@ import com.pocketsteward.app.semantic.SemanticDestinationChoice
 import com.pocketsteward.app.semantic.SemanticGroupingEngine
 import com.pocketsteward.app.semantic.SemanticPlanAdapter
 import com.pocketsteward.app.semantic.SemanticSuggestion
+import com.pocketsteward.app.similarity.DocumentSimHash
+import com.pocketsteward.app.similarity.ImageDHash
+import com.pocketsteward.app.similarity.SimilarityEngine
+import com.pocketsteward.app.similarity.SimilarityKind
+import com.pocketsteward.app.similarity.SimilaritySignature
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
@@ -123,6 +128,11 @@ data class CoherenceAuditRow(
     val classification: CoherenceClass,
     val reason: String,
     val suggestedGroup: String?,
+)
+
+data class SimilarFileGroup(
+    val kind: SimilarityKind,
+    val records: List<FileRecord>,
 )
 
 
@@ -203,6 +213,13 @@ sealed interface ScanUiState {
         val scopeLabel: String
             get() = if (scopes.size == 1) scopes.single().label else "${scopes.size} selected folders"
     }
+    data class SimilarReview(
+        val groups: List<SimilarFileGroup>,
+        val scopeLabel: String,
+        val imagesAnalyzed: Int,
+        val documentsAnalyzed: Int,
+    ) : ScanUiState
+
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
     data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
     /** M10A on-demand local content search. Read-only and never persisted to Room. */
@@ -485,6 +502,7 @@ class ScanViewModel(
             }
 
             is ScanUiState.DuplicateReview,
+            is ScanUiState.SimilarReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
             is ScanUiState.IndexedContentSearchReview,
@@ -1769,6 +1787,96 @@ class ScanViewModel(
         }
     }
 
+    fun findSimilarFiles(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                if (summary.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+                val privacy = settingsRepository.privacySettings.first()
+                if (!privacy.imageAnalysisEnabled && !privacy.contentInspectionEnabled) {
+                    _uiState.value = ScanUiState.Error(
+                        "Enable Image analysis and/or Document content inspection in Settings to find near-duplicates.",
+                    )
+                    return@launch
+                }
+
+                val records = filesForScopes(summary.scopes)
+                val byRef = records.associateBy { it.stableRef }
+                val signatures = mutableListOf<SimilaritySignature>()
+                var imagesAnalyzed = 0
+                var documentsAnalyzed = 0
+
+                if (privacy.imageAnalysisEnabled) {
+                    val images = records.filter {
+                        !it.isDirectory && classifyByExtension(it.extension) == FileCategory.IMAGE
+                    }.take(MAX_SIMILARITY_FILES_PER_KIND)
+                    for ((index, record) in images.withIndex()) {
+                        _uiState.value = ScanUiState.Working(
+                            label = "Comparing similar images",
+                            detail = record.displayName,
+                            processed = index,
+                            total = images.size,
+                        )
+                        val hash = withContext(Dispatchers.IO) {
+                            ImageDHash.fromPath(record.stableRef)
+                        }
+                        if (hash != null) {
+                            signatures += SimilaritySignature(record.stableRef, SimilarityKind.IMAGE, hash)
+                            imagesAnalyzed++
+                        }
+                    }
+                }
+
+                if (privacy.contentInspectionEnabled) {
+                    val roots = summary.scopes.map { it.root.rawValue().trimEnd('/') }
+                    val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+                    val indexed = withContext(Dispatchers.IO) {
+                        repository.indexedDocuments(roots)
+                    }
+                        .filter { it.category == FileCategory.DOCUMENT.name }
+                        .take(MAX_SIMILARITY_FILES_PER_KIND)
+
+                    for ((index, document) in indexed.withIndex()) {
+                        _uiState.value = ScanUiState.Working(
+                            label = "Comparing similar documents",
+                            detail = document.displayName,
+                            processed = index,
+                            total = indexed.size,
+                        )
+                        val text = withContext(Dispatchers.IO) {
+                            repository.segments(document.stableRef)
+                                .joinToString(" ") { it.body }
+                                .take(MAX_SIMHASH_TEXT_CHARS)
+                        }
+                        val hash = withContext(Dispatchers.Default) { DocumentSimHash.of(text) }
+                        if (hash != null) {
+                            signatures += SimilaritySignature(document.stableRef, SimilarityKind.DOCUMENT, hash)
+                            documentsAnalyzed++
+                        }
+                    }
+                }
+
+                val groups = withContext(Dispatchers.Default) {
+                    SimilarityEngine.group(signatures)
+                }.mapNotNull { group ->
+                    val members = group.stableRefs.mapNotNull(byRef::get)
+                    if (members.size < 2) null else SimilarFileGroup(group.kind, members)
+                }
+
+                _uiState.value = ScanUiState.SimilarReview(
+                    groups = groups,
+                    scopeLabel = summary.scopeLabel,
+                    imagesAnalyzed = imagesAnalyzed,
+                    documentsAnalyzed = documentsAnalyzed,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     /** Plan Section 16's "find the 50 largest files" quick action — browse only, nothing planned yet. */
     fun findLargestFiles(summary: ScanUiState.Summary, limit: Int = 50) {
         viewModelScope.launch {
@@ -2449,6 +2557,8 @@ class ScanViewModel(
 
         const val COHERENCE_EXCERPT_CHARS = 1_800
         const val COHERENCE_BATCH_SIZE = 12
+        const val MAX_SIMILARITY_FILES_PER_KIND = 1_000
+        const val MAX_SIMHASH_TEXT_CHARS = 100_000
     }
 
     private suspend fun resolveScopes(
