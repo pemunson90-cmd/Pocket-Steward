@@ -173,6 +173,47 @@ class ContentIndexRepository(
         )
     }
 
+    suspend fun queueRoot(sourceRoot: String, eligibleCount: Int): ContentIndexJob {
+        val root = sourceRoot.trimEnd('/')
+        require(root.isNotBlank()) { "Content index queue needs a source root." }
+        val now = System.currentTimeMillis()
+        val current = dao.getJob(root)
+        val resumable = current != null &&
+            current.extractorVersion == ContentIndexPolicy.EXTRACTOR_VERSION &&
+            current.status in setOf(
+                ContentIndexJobStatus.QUEUED.name,
+                ContentIndexJobStatus.RUNNING.name,
+                ContentIndexJobStatus.PAUSED.name,
+            )
+
+        val job = if (resumable) {
+            current!!.copy(
+                eligibleCount = eligibleCount,
+                updatedAt = now,
+                error = null,
+            )
+        } else {
+            ContentIndexJob(
+                sourceRoot = root,
+                status = ContentIndexJobStatus.QUEUED.name,
+                cursorRef = null,
+                eligibleCount = eligibleCount,
+                processedCount = 0,
+                reused = 0,
+                extracted = 0,
+                unsupported = 0,
+                failed = 0,
+                removedStale = 0,
+                startedAt = now,
+                updatedAt = now,
+                extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+                error = null,
+            )
+        }
+        dao.putJob(job)
+        return job
+    }
+
     suspend fun refreshRootResumable(
         candidates: List<ContentIndexCandidate>,
         sourceRoot: String,
