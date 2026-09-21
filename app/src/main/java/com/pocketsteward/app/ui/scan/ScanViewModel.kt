@@ -1962,6 +1962,10 @@ class ScanViewModel(
         )
     }
 
+    fun pauseContentIndexing() {
+        container.pauseContentIndexing()
+    }
+
     fun refreshIndexedSearch(review: ScanUiState.IndexedContentSearchReview) {
         viewModelScope.launch {
             try {
