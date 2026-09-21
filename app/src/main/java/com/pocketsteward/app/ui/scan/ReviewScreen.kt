@@ -1,5 +1,15 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import com.pocketsteward.app.navigation.AdaptiveLayoutPolicy
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -276,12 +286,14 @@ private fun IndexedContentSearchReview(
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val expanded = maxWidth >= 600.dp
+        val expanded = AdaptiveLayoutPolicy.useTwoPane(maxWidth.value)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            ScreenHeadline(
-                text = state.title,
-                supporting = "$indexDetails · local persistent index",
+            Text(
+                text = "$indexDetails · local persistent index",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = Spacing.tight),
             )
 
             SearchToolbar(
@@ -488,12 +500,16 @@ private fun SearchToolbar(
                     onClick = onOpenFilters,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(ContentSearchPresentation.filtersLabel(state.filters.activeCount))
+                    Text(
+                        ContentSearchPresentation.filtersLabel(state.filters.activeCount),
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
 
                 Column {
-                    TextButton(onClick = { onMoreMenuOpenChange(true) }) {
-                        Text("More")
+                    IconButton(onClick = { onMoreMenuOpenChange(true) }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More search actions")
                     }
                     DropdownMenu(
                         expanded = moreMenuOpen,
@@ -886,10 +902,42 @@ private fun SearchSnippet(
         )
     }
     Text(
-        text = ContentSearchPresentation.quotedSnippet(snippet.text),
+        text = highlightedSearchSnippet(snippet.text),
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = Spacing.hairline),
     )
+}
+
+@Composable
+private fun highlightedSearchSnippet(raw: String): AnnotatedString {
+    val primary = MaterialTheme.colorScheme.primary
+    return buildAnnotatedString {
+        append("“")
+        var cursor = 0
+        while (cursor < raw.length) {
+            val start = raw.indexOf('⟦', cursor)
+            if (start < 0) {
+                append(raw.substring(cursor))
+                break
+            }
+            append(raw.substring(cursor, start))
+            val end = raw.indexOf('⟧', start + 1)
+            if (end < 0) {
+                append(raw.substring(start + 1))
+                break
+            }
+            withStyle(
+                SpanStyle(
+                    color = primary,
+                    fontWeight = FontWeight.Bold,
+                ),
+            ) {
+                append(raw.substring(start + 1, end))
+            }
+            cursor = end + 1
+        }
+        append("”")
+    }
 }
 
 private fun openIndexedFile(
