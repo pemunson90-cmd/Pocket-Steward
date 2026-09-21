@@ -40,6 +40,7 @@ import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.image.ImageInsight
+import com.pocketsteward.app.metadata.MetadataEnrichment
 import com.pocketsteward.app.intent.BoundedIntent
 import com.pocketsteward.app.intent.DeterministicIntentParser
 import com.pocketsteward.app.intent.IntentAction
@@ -230,6 +231,12 @@ sealed interface ScanUiState {
         val insights: List<ImageInsight>,
         val attempted: Int,
         val limited: Boolean,
+    ) : ScanUiState
+
+    data class RichMetadataReview(
+        val scopeLabel: String,
+        val entries: List<MetadataEnrichment>,
+        val attempted: Int,
     ) : ScanUiState
 
     data class ArtifactExportReview(
@@ -525,6 +532,7 @@ class ScanViewModel(
             is ScanUiState.DuplicateReview,
             is ScanUiState.SimilarReview,
             is ScanUiState.ImageAnalysisReview,
+            is ScanUiState.RichMetadataReview,
             is ScanUiState.ArtifactExportReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
@@ -2182,7 +2190,7 @@ class ScanViewModel(
 
                 val records = filesForScopes(summary.scopes)
                 val eligible = records.filter(container.metadataEnricher::supports)
-                val changed = mutableListOf<FileRecord>()
+                val entries = mutableListOf<MetadataEnrichment>()
                 for ((index, record) in eligible.withIndex()) {
                     _uiState.value = ScanUiState.Working(
                         label = "Reading rich metadata",
@@ -2197,13 +2205,14 @@ class ScanViewModel(
                         withContext(Dispatchers.IO) {
                             container.database.fileRecordDao().upsert(enrichment.record)
                         }
-                        changed += enrichment.record
                     }
+                    entries += enrichment
                 }
 
-                _uiState.value = ScanUiState.FileListReview(
-                    title = "Rich metadata updated for ${changed.size} file(s)",
-                    records = changed,
+                _uiState.value = ScanUiState.RichMetadataReview(
+                    scopeLabel = summary.scopeLabel,
+                    entries = entries,
+                    attempted = eligible.size,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
