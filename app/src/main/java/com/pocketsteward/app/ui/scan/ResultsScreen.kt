@@ -247,6 +247,13 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     }
                     item {
                         ActionCard(
+                            title = "Image understanding",
+                            supporting = "Label a bounded set of recent images locally and identify likely screenshots. Nothing leaves the device.",
+                            onClick = { viewModel.analyzeImages(state) },
+                        )
+                    }
+                    item {
+                        ActionCard(
                             title = "Document organizer",
                             supporting = "Analyze a representative sample, then build one-level document groups from project keywords, filenames, indexed content, and on-device intelligence. Nothing moves without preview.",
                             onClick = { viewModel.runCoherenceAudit(state) },
