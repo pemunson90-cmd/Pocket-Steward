@@ -34,6 +34,45 @@ class SemanticPlanAdapterTest {
     }
 
     @Test
+    fun recommendedDocumentsPolicyMovesDownloadsDocumentsCrossRoot() {
+        val file = record("/storage/emulated/0/Download/a.txt", "a.txt", downloads.absolutePath)
+
+        val result = SemanticPlanAdapter.build(
+            scopeRoots = listOf(downloads),
+            records = listOf(file),
+            suggestions = listOf(suggestion(file, "Project Notes")),
+            destinationChoice = SemanticDestinationChoice(DestinationPolicy.RECOMMENDED_DOCUMENTS),
+            recommendedDocumentsRoot = documents,
+        )
+
+        val move = result.operations.filterIsInstance<PlannedOperation.Move>().single()
+        assertThat((move.destination as FileRef.Direct).absolutePath)
+            .isEqualTo("/storage/emulated/0/Documents/Project Notes/a.txt")
+        assertThat(result.authorizedDestinationRoots).containsExactly(documents)
+    }
+
+    @Test
+    fun explicitPolicyUsesOnlyTheUserApprovedRoot() {
+        val file = record("/storage/emulated/0/Download/a.txt", "a.txt", downloads.absolutePath)
+        val explicit = FileRef.Direct("/storage/emulated/0/MyWriting")
+
+        val result = SemanticPlanAdapter.build(
+            scopeRoots = listOf(downloads),
+            records = listOf(file),
+            suggestions = listOf(suggestion(file, "Drafts")),
+            destinationChoice = SemanticDestinationChoice(
+                policy = DestinationPolicy.EXPLICIT_FOLDER,
+                explicitRoot = explicit,
+            ),
+            recommendedDocumentsRoot = documents,
+        )
+
+        val create = result.operations.filterIsInstance<PlannedOperation.CreateDirectory>().single()
+        assertThat(create.parent).isEqualTo(explicit)
+        assertThat(result.authorizedDestinationRoots).containsExactly(explicit)
+    }
+
+    @Test
     fun traversalLikeGroupIsRejectedRatherThanInterpretedAsPath() {
         val file = record("/storage/emulated/0/Download/a.txt", "a.txt", downloads.absolutePath)
 
