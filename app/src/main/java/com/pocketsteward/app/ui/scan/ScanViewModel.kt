@@ -1860,6 +1860,9 @@ class ScanViewModel(
         val refresh = withContext(Dispatchers.IO) {
             repository.jobSummary(roots)
         }
+        val jobs = withContext(Dispatchers.IO) {
+            repository.jobs(roots)
+        }
         val initialFilters = filters ?: ContentSearchFilters(
             categories = requestedCategories.mapTo(linkedSetOf()) { it.name },
         )
@@ -1872,6 +1875,7 @@ class ScanViewModel(
             allResults = grouped,
             refreshSummary = refresh,
             indexStates = states,
+            indexJobs = jobs,
             sort = sort,
             filters = initialFilters,
             savedSearchId = savedSearchId,
@@ -1919,6 +1923,7 @@ class ScanViewModel(
                     allResults = grouped,
                     refreshSummary = refresh,
                     indexStates = states,
+                    indexJobs = jobs,
                 )
 
                 val terminal = jobs.isNotEmpty() && jobs.all { job ->
