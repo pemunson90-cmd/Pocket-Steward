@@ -1074,53 +1074,6 @@ class ScanViewModel(
     }
 
     /**
-     * Milestone 2's own exercise of the executor: a hard-coded plan (plan
-     * Section 2's own example — "put APK installers under Downloads/APKs")
-     * built from what's already indexed, not from natural language or a
-     * rule engine. Real request-driven planning is Milestone 4/5.
-     */
-    fun proposeOrganizeApks(summary: ScanUiState.Summary) {
-        viewModelScope.launch {
-            _uiState.value = ScanUiState.Working("Planning", "Collecting APKs under ${summary.scopeLabel}")
-            try {
-                if (summary.scopes.any { it.root !is FileRef.Direct }) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
-
-                val operations = buildList {
-                    for (scope in summary.scopes) {
-                        val root = scope.root as FileRef.Direct
-                        val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
-                        val apkRecords = records.filter { classifyByExtension(it.extension) == FileCategory.APK }
-                        if (apkRecords.isEmpty()) continue
-
-                        val apksFolder = FileRef.Direct("${root.absolutePath.trimEnd('/')}/APKs")
-                        add(PlannedOperation.CreateDirectory(root, "APKs", "Destination for Android package installers"))
-                        for (record in apkRecords) {
-                            add(
-                                PlannedOperation.Move(
-                                    source = FileRef.Direct(record.stableRef),
-                                    destination = FileRef.Direct("${apksFolder.absolutePath}/${record.displayName}"),
-                                    reason = "APK file",
-                                ),
-                            )
-                        }
-                    }
-                }
-                if (operations.isEmpty()) {
-                    _uiState.value = ScanUiState.Error("No APKs found under ${summary.scopeLabel}.")
-                    return@launch
-                }
-
-                showPlanPreview("Organize APKs under ${summary.scopeLabel}", operations, summary.scopes)
-            } catch (t: Throwable) {
-                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
-            }
-        }
-    }
-
-    /**
      * Plan Section 4/9: the rule engine plans, no model involved. Pulls
      * [SettingsRepository.projectKeywords] so a user-configured term like
      * "Leaseworld" groups by project before falling back to a plain
