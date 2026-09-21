@@ -232,7 +232,12 @@ sealed interface ScanUiState {
         val scopeLabel: String,
         val rows: List<CoherenceAuditRow>,
         val modelName: String?,
+        val eligibleDocuments: Int,
+        val sampledDocuments: Int,
+        val indexedExcerpts: Int,
+        val freshExtractions: Int,
         val skippedUnreadable: Int,
+        val modelFailures: Int,
         val limited: Boolean,
     ) : ScanUiState
 
