@@ -97,11 +97,25 @@ class MutationRecovery(
                             error = "Interrupted mutation is ambiguous (source/destination state cannot prove outcome).",
                         )
                     }
-                    MutationOperationType.COPY -> record.copy(
-                        status = MutationStatus.NEEDS_REVIEW,
-                        undoState = UndoState.BLOCKED,
-                        error = "Interrupted COPY requires manual review.",
-                    )
+                    MutationOperationType.COPY -> when {
+                        sourceExists && destinationExists -> record.copy(
+                            status = MutationStatus.COMMITTED,
+                            executedAt = record.executedAt ?: System.currentTimeMillis(),
+                            undoState = UndoState.AVAILABLE,
+                            error = "Recovered after interruption: copied destination exists and source remains.",
+                        )
+                        sourceExists && !destinationExists -> record.copy(
+                            status = MutationStatus.FAILED,
+                            executedAt = record.executedAt ?: System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                            error = "Recovered after interruption: source remains and copied destination is absent.",
+                        )
+                        else -> record.copy(
+                            status = MutationStatus.NEEDS_REVIEW,
+                            undoState = UndoState.BLOCKED,
+                            error = "Interrupted copy is ambiguous because the source no longer exists.",
+                        )
+                    }
                 }
             }
             mutationRecordDao.update(recovered)
@@ -168,10 +182,16 @@ class MutationRecovery(
                         )
                     }
                 }
-                MutationOperationType.COPY -> record.copy(
-                    undoState = UndoState.BLOCKED,
-                    undoError = "COPY undo recovery is not implemented.",
-                )
+                MutationOperationType.COPY -> {
+                    if (!gateway.exists(destinationAfter)) {
+                        record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE, undoError = null)
+                    } else {
+                        record.copy(
+                            undoState = UndoState.AVAILABLE,
+                            undoError = "Undo was interrupted before the copied file was moved to Trash; safe to retry.",
+                        )
+                    }
+                }
             }
             mutationRecordDao.update(recovered)
         }
