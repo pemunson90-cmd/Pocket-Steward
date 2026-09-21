@@ -2882,6 +2882,27 @@ class ScanViewModel(
         )
     }
 
+    fun selectAllPlanOperations() {
+        val current = _preview.value ?: return
+        _preview.value = current.copy(
+            selectedIndices = PlanSelection.allSelected(current.accepted),
+        )
+    }
+
+    fun selectSafePlanOperations() {
+        val current = _preview.value ?: return
+        _preview.value = current.copy(
+            selectedIndices = PlanSelection.safeSelected(current.accepted),
+        )
+    }
+
+    fun clearPlanSelection() {
+        val current = _preview.value ?: return
+        _preview.value = current.copy(
+            selectedIndices = PlanSelection.noneSelected(),
+        )
+    }
+
     fun approvePlan(preview: ScanUiState.PlanPreview) {
         viewModelScope.launch {
             val selectedOperations = PlanSelection.selectedOperations(
