@@ -14,6 +14,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.plan.PlannedOperation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -60,6 +67,26 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
+                val destinationGroups = preview.accepted
+                    .mapNotNull(::destinationEditGroup)
+                    .distinctBy { it.directory }
+
+                if (destinationGroups.isNotEmpty()) {
+                    item { SectionHeader("Destinations") }
+                    items(destinationGroups, key = { it.directory }) { group ->
+                        DestinationEditCard(
+                            group = group,
+                            onApply = { root, name ->
+                                viewModel.editPlanDestinationGroup(
+                                    groupDirectory = group.directory,
+                                    newDestinationRootPath = root,
+                                    newGroupName = name,
+                                )
+                            },
+                        )
+                    }
+                }
+
                 // Spec 6b: a protection that applies silently is
                 // indistinguishable from a bug. Whatever the plan source
                 // declined to touch is stated above the row list, because a
@@ -89,10 +116,14 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 itemsIndexed(preview.accepted) { index, operation ->
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
                     val selected = index in preview.selectedIndices
-                    val scopeLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
+                    val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
+                    val groupLabel = destinationLabel(operation) ?: fallbackLabel
+                    val previousLabel = preview.accepted.getOrNull(index - 1)
+                        ?.let(::destinationLabel)
+                        ?: preview.acceptedScopeLabels.getOrNull(index - 1)
                     Column {
-                        if (index == 0 || preview.acceptedScopeLabels.getOrNull(index - 1) != scopeLabel) {
-                            SectionHeader(scopeLabel)
+                        if (index == 0 || previousLabel != groupLabel) {
+                            SectionHeader(groupLabel)
                         }
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -154,3 +185,73 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         }
     }
 }
+
+private data class DestinationEditGroup(
+    val directory: String,
+    val root: String,
+    val groupName: String,
+)
+
+@Composable
+private fun DestinationEditCard(
+    group: DestinationEditGroup,
+    onApply: (root: String, groupName: String) -> Unit,
+) {
+    var root by remember(group.directory) { mutableStateOf(group.root) }
+    var groupName by remember(group.directory) { mutableStateOf(group.groupName) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text(
+                text = group.directory,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            OutlinedTextField(
+                value = groupName,
+                onValueChange = { groupName = it },
+                label = { Text("Group folder name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            )
+            OutlinedTextField(
+                value = root,
+                onValueChange = { root = it },
+                label = { Text("Destination root") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            )
+            Button(
+                onClick = { onApply(root, groupName) },
+                enabled = root.isNotBlank() && groupName.isNotBlank(),
+                modifier = Modifier.padding(top = Spacing.tight),
+            ) {
+                Text("Apply destination")
+            }
+        }
+    }
+}
+
+private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGroup? {
+    val directory = when (operation) {
+        is PlannedOperation.CreateDirectory -> {
+            val parent = operation.parent as? FileRef.Direct ?: return null
+            "${parent.absolutePath.trimEnd('/')}/${operation.name}"
+        }
+        is PlannedOperation.Move -> {
+            val destination = operation.destination as? FileRef.Direct ?: return null
+            destination.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
+        }
+        else -> return null
+    }.trimEnd('/')
+
+    val root = directory.substringBeforeLast('/', missingDelimiterValue = "")
+    val groupName = directory.substringAfterLast('/')
+    if (root.isBlank() || groupName.isBlank()) return null
+    return DestinationEditGroup(directory, root, groupName)
+}
+
+private fun destinationLabel(operation: PlannedOperation): String? =
+    destinationEditGroup(operation)?.directory
+
