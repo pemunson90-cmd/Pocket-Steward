@@ -434,6 +434,12 @@ class ContentIndexRepository(
         return dao.getJobs(roots)
     }
 
+    suspend fun indexedDocuments(sourceRoots: List<String>): List<IndexedDocument> {
+        val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
+        if (roots.isEmpty()) return emptyList()
+        return dao.getIndexedDocumentsForRoots(roots)
+    }
+
     suspend fun indexedDocument(stableRef: String): IndexedDocument? =
         dao.getDocument(stableRef)
 
