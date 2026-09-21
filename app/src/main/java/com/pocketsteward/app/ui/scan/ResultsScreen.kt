@@ -224,8 +224,8 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     item { SectionHeader("Understand") }
                     item {
                         ActionCard(
-                            title = "Coherence audit",
-                            supporting = "On-device intelligence reviews readable documents, flags questionable files, and suggests where they may belong. Nothing moves.",
+                            title = "Document organizer",
+                            supporting = "Analyze a representative sample, then build one-level document groups from project keywords, filenames, indexed content, and on-device intelligence. Nothing moves without preview.",
                             onClick = { viewModel.runCoherenceAudit(state) },
                         )
                     }
