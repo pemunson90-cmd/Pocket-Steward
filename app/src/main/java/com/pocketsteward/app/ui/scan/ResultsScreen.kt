@@ -239,21 +239,19 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
                 item { SectionHeader("Understand") }
-                if (canChangeFiles) {
-                    item {
-                        ActionCard(
-                            title = "Rich metadata",
-                            supporting = "Read image dimensions, media duration, APK metadata, PDF page counts, EXIF, and ZIP listings locally.",
-                            onClick = { viewModel.enrichMetadata(state) },
-                        )
-                    }
-                    item {
-                        ActionCard(
-                            title = "Image understanding",
-                            supporting = "Label a bounded set of recent images locally and identify likely screenshots. Nothing leaves the device.",
-                            onClick = { viewModel.analyzeImages(state) },
-                        )
-                    }
+                item {
+                    ActionCard(
+                        title = "Rich metadata",
+                        supporting = "Read image dimensions, media duration, APK metadata, PDF page counts, EXIF, and ZIP listings locally.",
+                        onClick = { viewModel.enrichMetadata(state) },
+                    )
+                }
+                item {
+                    ActionCard(
+                        title = "Image understanding",
+                        supporting = "Label a bounded set of recent images locally and identify likely screenshots. Nothing leaves the device.",
+                        onClick = { viewModel.analyzeImages(state) },
+                    )
                 }
                 item {
                     ActionCard(
