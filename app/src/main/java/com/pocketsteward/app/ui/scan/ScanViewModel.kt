@@ -2207,10 +2207,6 @@ class ScanViewModel(
                     )
                     return@launch
                 }
-                if (summary.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
 
                 val records = filesForScopes(summary.scopes)
                 val eligible = records.filter(container.metadataEnricher::supports)
