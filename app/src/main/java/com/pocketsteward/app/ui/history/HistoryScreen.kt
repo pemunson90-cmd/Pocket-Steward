@@ -36,6 +36,7 @@ import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.plan.DurablePlanCodec
+import com.pocketsteward.app.report.ManifestFormat
 import com.pocketsteward.app.report.TaskManifestDocument
 import java.text.DateFormat
 import java.util.Date
@@ -131,7 +132,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                     ManifestCard(
                         document = action.document,
                         exportedTo = action.exportedTo,
-                        onExport = { viewModel.exportManifest(action.document) },
+                        onExport = { format -> viewModel.exportManifest(action.document, format) },
                         onOpen = action.exportedTo?.let { path -> { ManifestFileActions.open(context, path) } },
                         onShowFolder = action.exportedTo?.let { path -> { ManifestFileActions.showContainingFolder(context, path) } },
                         onShare = action.exportedTo?.let { path -> { ManifestFileActions.share(context, path) } },
@@ -201,7 +202,7 @@ private fun ConfirmUndoCard(
 private fun ManifestCard(
     document: TaskManifestDocument,
     exportedTo: String?,
-    onExport: () -> Unit,
+    onExport: (ManifestFormat) -> Unit,
     onOpen: (() -> Unit)?,
     onShowFolder: (() -> Unit)?,
     onShare: (() -> Unit)?,
@@ -259,13 +260,21 @@ private fun ManifestCard(
                             Text("Share", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                         }
                     }
-                    Card(onClick = onExport) {
-                        Text("Export again", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    Card(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
+                        Text("Export Markdown", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                    Card(onClick = { onExport(ManifestFormat.JSON) }) {
+                        Text("Export JSON", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                     }
                 }
             } else {
-                Card(onClick = onExport) {
-                    Text("Export to a file", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Card(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
+                        Text("Export Markdown", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                    Card(onClick = { onExport(ManifestFormat.JSON) }) {
+                        Text("Export JSON", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
                 }
             }
             Card(onClick = onDismiss) {
