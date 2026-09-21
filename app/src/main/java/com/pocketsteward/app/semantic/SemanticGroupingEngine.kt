@@ -3,8 +3,10 @@ package com.pocketsteward.app.semantic
 import com.pocketsteward.app.ai.CoherenceClass
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.rules.ProjectKeyword
+import com.pocketsteward.app.saved.CorrectionRule
 
 enum class SemanticEvidence {
+    USER_CORRECTION,
     PROJECT_KEYWORD_FILENAME,
     REPEATED_FILENAME_TITLE,
     PROJECT_KEYWORD_CONTENT,
@@ -33,6 +35,7 @@ object SemanticGroupingEngine {
     fun decide(
         records: List<FileRecord>,
         projectKeywords: List<ProjectKeyword>,
+        correctionRules: List<CorrectionRule> = emptyList(),
         indexedTextByRef: Map<String, String>,
         modelSuggestions: List<SemanticSuggestion>,
     ): List<SemanticGroupingDecision> {
@@ -53,6 +56,17 @@ object SemanticGroupingEngine {
             .eachCount()
 
         return records.mapNotNull { record ->
+            val learnedCorrection = correctionRules.firstOrNull { rule ->
+                record.displayName.contains(rule.term, ignoreCase = true)
+            }
+            if (learnedCorrection != null) {
+                return@mapNotNull decision(
+                    record,
+                    learnedCorrection.destinationFolder,
+                    SemanticEvidence.USER_CORRECTION,
+                )
+            }
+
             val filenameKeyword = projectKeywords.firstOrNull { keyword ->
                 record.displayName.contains(keyword.term, ignoreCase = true)
             }
