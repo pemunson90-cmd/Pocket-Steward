@@ -28,6 +28,12 @@ sealed interface PlannedOperation {
         override val reason: String,
     ) : PlannedOperation
 
+    data class Copy(
+        val source: FileRef,
+        val destination: FileRef,
+        override val reason: String,
+    ) : PlannedOperation
+
     data class Rename(
         val source: FileRef,
         val newName: String,
@@ -93,6 +99,7 @@ enum class MutationSafetyClass { GREEN, YELLOW, RED }
 fun PlannedOperation.safetyClass(): MutationSafetyClass = when (this) {
     is PlannedOperation.CreateDirectory -> MutationSafetyClass.GREEN
     is PlannedOperation.Move -> MutationSafetyClass.GREEN
+    is PlannedOperation.Copy -> MutationSafetyClass.GREEN
     is PlannedOperation.Rename -> MutationSafetyClass.GREEN
     // Section 13 lists trash as Red (individual confirmation) even though
     // it's non-destructive here — removing a file from where the user
