@@ -2238,14 +2238,39 @@ class ScanViewModel(
         filters: ContentSearchFilters? = null,
         savedSearchId: String? = null,
     ) {
-        if (summary.mode != StorageAccessMode.DIRECT) {
-            _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-            return
-        }
         val privacy = settingsRepository.privacySettings.first()
         if (!privacy.contentInspectionEnabled) {
             _uiState.value = ScanUiState.Error(
                 "Document content inspection is off. Enable it in Settings to search inside files.",
+            )
+            return
+        }
+
+        if (summary.mode == StorageAccessMode.SAF) {
+            val records = filesForScopes(summary.scopes).filter { record ->
+                !record.isDirectory &&
+                    (requestedCategories.isEmpty() ||
+                        classifyByExtension(record.extension) in requestedCategories)
+            }
+            val inspector = container.contentInspector(StorageAccessMode.SAF)
+            val result = withContext(Dispatchers.IO) {
+                inspector.search(records, query) { processed, total ->
+                    _uiState.value = ScanUiState.Working(
+                        label = "Searching selected-folder contents",
+                        detail = "Read-only local inspection",
+                        processed = processed,
+                        total = total,
+                    )
+                }
+            }
+            _uiState.value = ScanUiState.ContentSearchReview(
+                title = "Content matches for “$query”",
+                query = query,
+                matches = result.matches,
+                inspectedFiles = result.inspectedFiles,
+                unsupportedFiles = result.unsupportedFiles,
+                failedFiles = result.failedFiles,
+                truncatedResults = result.truncatedResults,
             )
             return
         }
