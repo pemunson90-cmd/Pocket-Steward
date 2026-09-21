@@ -69,6 +69,7 @@ import com.pocketsteward.app.content.index.ContentSearchSort
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
+import com.pocketsteward.app.semantic.DestinationPolicy
 import com.pocketsteward.app.ui.theme.Spacing
 import java.text.DateFormat
 import java.util.Date
@@ -118,8 +119,13 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
                 state = current,
-                onBuildProposal = { includeSubfolders ->
-                    viewModel.proposeSemanticOrganization(current, includeSubfolders)
+                onBuildProposal = { includeSubfolders, destinationPolicy, explicitPath ->
+                    viewModel.proposeSemanticOrganization(
+                        review = current,
+                        includeSubfolders = includeSubfolders,
+                        destinationPolicy = destinationPolicy,
+                        explicitDestinationPath = explicitPath,
+                    )
                 },
                 modifier = contentModifier,
             )
@@ -945,16 +951,17 @@ private fun highlightedSearchSnippet(raw: String): AnnotatedString {
     }
 }
 
-private fun openIndexedFile(
+private fun openDirectFile(
     context: Context,
-    result: IndexedFileSearchResult,
+    path: String,
+    displayName: String,
+    extension: String,
 ) {
-    val file = File(result.stableRef)
+    val file = File(path)
     if (!file.exists()) {
         Toast.makeText(context, "That file is no longer at this path.", Toast.LENGTH_SHORT).show()
         return
     }
-
     val opened = runCatching {
         val uri = FileProvider.getUriForFile(
             context,
@@ -962,15 +969,26 @@ private fun openIndexedFile(
             file,
         )
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, ContentSearchPresentation.mimeType(result.extension))
+            setDataAndType(uri, ContentSearchPresentation.mimeType(extension))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "Open ${result.displayName}"))
+        context.startActivity(Intent.createChooser(intent, "Open $displayName"))
     }.isSuccess
-
     if (!opened) {
         Toast.makeText(context, "No installed app could open this file.", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun openIndexedFile(
+    context: Context,
+    result: IndexedFileSearchResult,
+) {
+    openDirectFile(
+        context = context,
+        path = result.stableRef,
+        displayName = result.displayName,
+        extension = result.extension,
+    )
 }
 
 private fun ContentSearchSort.label(): String = when (this) {
@@ -994,19 +1012,27 @@ private fun ContentSearchProvenance.label(): String = when (this) {
 @Composable
 private fun CoherenceAuditReview(
     state: ScanUiState.CoherenceAuditReview,
-    onBuildProposal: (Boolean) -> Unit,
+    onBuildProposal: (Boolean, DestinationPolicy, String?) -> Unit,
     modifier: Modifier,
 ) {
     var includeSubfolders by remember { mutableStateOf(false) }
+    var destinationPolicy by remember { mutableStateOf(DestinationPolicy.RECOMMENDED_DOCUMENTS) }
+    var explicitDestination by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     val model = state.modelName?.let { " · $it" } ?: ""
-    val limitNote = if (state.limited) " · bounded sample, not every readable file was analyzed" else ""
     val proposalCandidates = state.rows.count {
         it.suggestedGroup?.isNotBlank() == true &&
             it.classification in setOf(
                 com.pocketsteward.app.ai.CoherenceClass.QUESTIONABLE,
                 com.pocketsteward.app.ai.CoherenceClass.DOES_NOT_BELONG,
             )
+    }
+    val questionable = state.rows.count {
+        it.classification == com.pocketsteward.app.ai.CoherenceClass.QUESTIONABLE
+    }
+    val outliers = state.rows.count {
+        it.classification == com.pocketsteward.app.ai.CoherenceClass.DOES_NOT_BELONG
     }
 
     LazyColumn(
@@ -1016,20 +1042,56 @@ private fun CoherenceAuditReview(
         item {
             ScreenHeadline(
                 text = "Coherence audit · ${state.scopeLabel}",
-                supporting = "${state.rows.size} classified · ${state.skippedUnreadable} unreadable/skipped$model$limitNote · read-only",
+                supporting = buildString {
+                    append("${state.sampledDocuments} representative document(s) sampled from ${state.eligibleDocuments} readable")
+                    append(" · ${state.indexedExcerpts} from index")
+                    if (state.freshExtractions > 0) append(" · ${state.freshExtractions} freshly read")
+                    if (state.modelFailures > 0) append(" · ${state.modelFailures} model misses")
+                    append(model)
+                    append(" · read-only")
+                },
             )
+        }
+
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(Spacing.base)) {
+                    Text("Audit summary", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${state.rows.size} classified · $questionable questionable · $outliers outlier(s)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                    Text(
+                        "The sample is stratified across folders and file types instead of taking the first paths. Tap any result to open the source file.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                }
+            }
         }
 
         if (state.rows.isEmpty()) {
             item { EmptyState("The model returned no usable classifications.") }
         } else {
             items(state.rows, key = { it.record.stableRef }) { row ->
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    onClick = {
+                        openDirectFile(
+                            context = context,
+                            path = row.record.stableRef,
+                            displayName = row.record.displayName,
+                            extension = row.record.extension,
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
                         Text(
                             text = row.record.displayName,
                             style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
@@ -1039,7 +1101,7 @@ private fun CoherenceAuditReview(
                             modifier = Modifier.padding(top = Spacing.hairline),
                         )
                         Text(
-                            text = row.reason,
+                            text = row.reason.ifBlank { "No explanation returned." },
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = Spacing.hairline),
                         )
@@ -1051,6 +1113,14 @@ private fun CoherenceAuditReview(
                                 modifier = Modifier.padding(top = Spacing.hairline),
                             )
                         }
+                        Text(
+                            text = row.record.parentRef.orEmpty(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
                     }
                 }
             }
@@ -1060,18 +1130,47 @@ private fun CoherenceAuditReview(
             item {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
+                        Text("Build organization proposal", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Build a safe proposal",
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            "Pocket Steward will re-check these findings against the current scan, keep destinations inside each source root, and open the normal checkbox preview. Nothing moves yet.",
+                            "$proposalCandidates actionable finding(s). Choose where one-level semantic groups should live; nothing moves until the next preview is approved.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = Spacing.hairline),
                         )
+
+                        Text(
+                            "Destination",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(top = Spacing.base),
+                        )
+                        RadioFilterRow(
+                            label = "Recommended Documents",
+                            selected = destinationPolicy == DestinationPolicy.RECOMMENDED_DOCUMENTS,
+                            onSelect = { destinationPolicy = DestinationPolicy.RECOMMENDED_DOCUMENTS },
+                        )
+                        RadioFilterRow(
+                            label = "Keep inside current scan root",
+                            selected = destinationPolicy == DestinationPolicy.ROOT_LOCAL,
+                            onSelect = { destinationPolicy = DestinationPolicy.ROOT_LOCAL },
+                        )
+                        RadioFilterRow(
+                            label = "Choose explicit existing folder",
+                            selected = destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER,
+                            onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
+                        )
+                        if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
+                            OutlinedTextField(
+                                value = explicitDestination,
+                                onValueChange = { explicitDestination = it },
+                                label = { Text("Destination folder path") },
+                                placeholder = { Text("/storage/emulated/0/Documents") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                            )
+                        }
+
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1079,9 +1178,9 @@ private fun CoherenceAuditReview(
                                 Text("Include files already inside folders")
                                 Text(
                                     if (includeSubfolders) {
-                                        "On · nested files may be included in the proposal."
+                                        "On · nested files may be proposed."
                                     } else {
-                                        "Off · preserve existing human organization."
+                                        "Off · existing human folder structure is preserved."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1092,13 +1191,34 @@ private fun CoherenceAuditReview(
                                 onCheckedChange = { includeSubfolders = it },
                             )
                         }
+
                         Button(
-                            onClick = { onBuildProposal(includeSubfolders) },
+                            onClick = {
+                                onBuildProposal(
+                                    includeSubfolders,
+                                    destinationPolicy,
+                                    explicitDestination.takeIf {
+                                        destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER
+                                    },
+                                )
+                            },
+                            enabled = destinationPolicy != DestinationPolicy.EXPLICIT_FOLDER ||
+                                explicitDestination.isNotBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
                         ) {
-                            Text("Build organization proposal")
+                            Text("Review proposed moves")
                         }
                     }
+                }
+            }
+        } else {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "No sampled document produced an actionable outlier/group suggestion. Nothing is proposed from this audit.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(Spacing.base),
+                    )
                 }
             }
         }
