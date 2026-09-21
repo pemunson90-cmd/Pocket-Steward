@@ -32,7 +32,7 @@ object DeterministicIntentParser {
             )
         }
         val action = explicitAction ?: return IntentParseResult.Unsupported(
-            "I can organize, group, find, rename, review duplicates, or group existing archive files. " +
+            "I can organize, group, find, move, copy, rename, review duplicates, or group existing archive files. " +
                 "Follow-up requests can refine the previous command.",
         )
 
@@ -69,6 +69,36 @@ object DeterministicIntentParser {
                     rawRequest = raw,
                     renameFrom = from,
                     renameTo = to,
+                ),
+            )
+        }
+
+        if (action == IntentAction.MOVE || action == IntentAction.COPY) {
+            val destination = parseTransferDestination(raw)
+                ?: return IntentParseResult.Unsupported(
+                    "${if (action == IntentAction.MOVE) "Move" else "Copy"} requests must end with “to <folder>” or “into <folder>”.",
+                )
+            val criteria = parseCriteria(lower, nowMillis)
+            val transferTerm = parseTransferTerm(raw)
+            if (categories.isEmpty() && transferTerm.isNullOrBlank() && !criteria.hasAny) {
+                return IntentParseResult.Unsupported(
+                    "Tell me which files to ${if (action == IntentAction.MOVE) "move" else "copy"}, for example “${action.name.lowercase()} PDFs older than 6 months to Documents/Archive”.",
+                )
+            }
+            return IntentParseResult.Parsed(
+                BoundedIntent(
+                    action = action,
+                    rawRequest = raw,
+                    categories = categories,
+                    includeSubfolders = includeSubfolders,
+                    findTerm = transferTerm,
+                    destinationFolder = destination,
+                    minSizeBytes = criteria.minSizeBytes,
+                    maxSizeBytes = criteria.maxSizeBytes,
+                    modifiedBefore = criteria.modifiedBefore,
+                    modifiedAfter = criteria.modifiedAfter,
+                    order = criteria.order,
+                    resultLimit = criteria.resultLimit,
                 ),
             )
         }
@@ -118,6 +148,8 @@ object DeterministicIntentParser {
     private fun actionFor(lower: String): IntentAction? = when {
         "duplicate" in lower -> IntentAction.DUPLICATE_REVIEW
         Regex("""\brename\b""").containsMatchIn(lower) -> IntentAction.RENAME
+        Regex("""\bcopy\b""").containsMatchIn(lower) -> IntentAction.COPY
+        Regex("""\bmove\b""").containsMatchIn(lower) -> IntentAction.MOVE
         Regex("""\bfind\b|\bshow\b|\blocate\b""").containsMatchIn(lower) -> IntentAction.FIND
         Regex("""\barchive\b""").containsMatchIn(lower) -> IntentAction.ARCHIVE
         Regex("""\bgroup\b""").containsMatchIn(lower) -> IntentAction.GROUP
@@ -155,6 +187,7 @@ object DeterministicIntentParser {
             categories = if (categories.isEmpty()) previous.categories else categories,
             groupingMode = grouping,
             mainFolder = parseMainFolder(raw) ?: previous.mainFolder,
+            destinationFolder = parseTransferDestination(raw) ?: previous.destinationFolder,
             includeSubfolders = if (includesSubfolders(lower)) true else previous.includeSubfolders,
             minSizeBytes = criteria.minSizeBytes ?: previous.minSizeBytes,
             maxSizeBytes = criteria.maxSizeBytes ?: previous.maxSizeBytes,
@@ -329,6 +362,41 @@ object DeterministicIntentParser {
         "recursively",
         "recursive",
     ).any { it in lower }
+
+    private fun parseTransferDestination(raw: String): String? {
+        val match = Regex("""(?i)\b(?:to|into)\s+["']?(.+?)["']?\s*$""").find(raw) ?: return null
+        return match.groupValues[1]
+            .trim()
+            .trim('"', '\'')
+            .trimEnd('.', ',', ';')
+            .takeIf { it.isNotBlank() && it != ".." }
+    }
+
+    private fun parseTransferTerm(raw: String): String? {
+        val destination = Regex("""(?i)\b(?:to|into)\s+["']?.+?["']?\s*$""").find(raw)
+        val beforeDestination = if (destination == null) raw else raw.substring(0, destination.range.first)
+        val withoutAction = beforeDestination.replaceFirst(
+            Regex("""(?i)^\s*(?:move|copy)\s+"""),
+            "",
+        ).trim()
+        val named = Regex("""(?i)^(?:files?\s+)?(?:named|matching)\s+["']?(.+?)["']?$""")
+            .find(withoutAction)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.trim('"', '\'')
+        if (!named.isNullOrBlank()) return named
+
+        val lower = withoutAction.lowercase()
+        val looksLikeCriteria = parseCategories(lower).isNotEmpty() ||
+            Regex("""\b(?:older|newer|largest|biggest|smallest|newest|oldest|over|under|above|below)\b""")
+                .containsMatchIn(lower)
+        return withoutAction.takeIf {
+            it.isNotBlank() &&
+                !looksLikeCriteria &&
+                !it.equals("files", ignoreCase = true)
+        }
+    }
 
     private fun parseContentTerm(raw: String): String? {
         val patterns = listOf(
