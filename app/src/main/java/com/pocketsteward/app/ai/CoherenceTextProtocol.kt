@@ -64,6 +64,58 @@ object CoherenceTextProtocol {
             .map { it.single() }
     }
 
+
+    /**
+     * Last-resort parser for a single-document prompt. With only one known
+     * document there is no alias ambiguity: we still require one of the
+     * closed classification enum values, but tolerate harmless prose or
+     * Markdown formatting around it.
+     */
+    fun parseSingle(
+        output: String,
+        documentId: String,
+    ): ParsedFinding? {
+        output.lineSequence()
+            .take(32)
+            .map { it.trim().trim('|', '*', '-', ' ', '#', '>') }
+            .filter { it.isNotBlank() }
+            .forEach { line ->
+                val pipe = line.split('|', limit = 3).map { it.trim() }
+                if (pipe.size >= 1) {
+                    parseClassification(pipe[0])?.let { classification ->
+                        val group = pipe.getOrNull(1)
+                            ?.take(MAX_GROUP_CHARS)
+                            ?.takeUnless { it.isBlank() || it == "-" }
+                        val reason = pipe.getOrNull(2).orEmpty().take(MAX_REASON_CHARS)
+                        return ParsedFinding(documentId, classification, group, reason)
+                    }
+                }
+
+                val normalized = line.uppercase().replace(' ', '_')
+                CoherenceClass.entries.firstOrNull { classification ->
+                    Regex("""(^|[^A-Z_])${classification.name}([^A-Z_]|$)""")
+                        .containsMatchIn(normalized)
+                }?.let { classification ->
+                    return ParsedFinding(
+                        documentId = documentId,
+                        classification = classification,
+                        suggestedGroup = null,
+                        reason = line.take(MAX_REASON_CHARS),
+                    )
+                }
+            }
+        return null
+    }
+
+    private fun parseClassification(raw: String): CoherenceClass? {
+        val normalized = raw
+            .trim()
+            .uppercase()
+            .replace(' ', '_')
+            .replace('-', '_')
+        return CoherenceClass.entries.firstOrNull { it.name == normalized }
+    }
+
     /**
      * Nano can preserve the requested record while normalizing literal tabs
      * into printable pipes, especially when it formats the answer as Markdown.
