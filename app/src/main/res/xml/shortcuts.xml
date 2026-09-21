@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="explore"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="Explore files"
+        android:shortcutLongLabel="Explore with Pocket Steward">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pocketsteward.app"
+            android:targetClass="com.pocketsteward.app.MainActivity"
+            android:data="pocketsteward://explore" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="tasks"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="Tasks"
+        android:shortcutLongLabel="Pocket Steward task history">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pocketsteward.app"
+            android:targetClass="com.pocketsteward.app.MainActivity"
+            android:data="pocketsteward://tasks" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="search"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="Search"
+        android:shortcutLongLabel="Search files with Pocket Steward">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pocketsteward.app"
+            android:targetClass="com.pocketsteward.app.MainActivity"
+            android:data="pocketsteward://search" />
+    </shortcut>
+</shortcuts>
