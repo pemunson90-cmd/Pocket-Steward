@@ -31,6 +31,7 @@ interface StorageGateway {
      */
     suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult
 
+    suspend fun copy(source: FileRef, destination: FileRef): MutationResult
     suspend fun move(source: FileRef, destination: FileRef): MutationResult
     suspend fun rename(source: FileRef, newName: String): MutationResult
 
