@@ -64,6 +64,30 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 },
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+            ) {
+                OutlinedButton(
+                    onClick = viewModel::selectSafePlanOperations,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Safe only")
+                }
+                OutlinedButton(
+                    onClick = viewModel::selectAllPlanOperations,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("All")
+                }
+                OutlinedButton(
+                    onClick = viewModel::clearPlanSelection,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Clear")
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
