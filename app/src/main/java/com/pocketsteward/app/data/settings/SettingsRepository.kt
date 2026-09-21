@@ -11,6 +11,9 @@ import com.pocketsteward.app.content.index.ContentSearchFilters
 import com.pocketsteward.app.content.index.ContentSearchSort
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
+import com.pocketsteward.app.saved.CorrectionRule
+import com.pocketsteward.app.saved.FavoriteDestination
+import com.pocketsteward.app.saved.OrganizationPreferenceCodec
 import com.pocketsteward.app.saved.SavedWorkflow
 import com.pocketsteward.app.saved.SavedWorkflowCodec
 import com.pocketsteward.app.saved.SavedSearch
@@ -61,6 +64,8 @@ class SettingsRepository(private val context: Context) {
         val ADVANCED_MODE = booleanPreferencesKey("advanced_mode_enabled")
         val SAVED_WORKFLOWS = stringPreferencesKey("saved_workflows")
         val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
+        val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
+        val CORRECTION_RULES = stringPreferencesKey("correction_rules")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -105,6 +110,56 @@ class SettingsRepository(private val context: Context) {
 
     val savedWorkflows: Flow<List<SavedWorkflow>> = context.dataStore.data.map { prefs ->
         SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
+    }
+
+
+    val favoriteDestinations: Flow<List<FavoriteDestination>> = context.dataStore.data.map { prefs ->
+        OrganizationPreferenceCodec.decodeDestinations(prefs[Keys.FAVORITE_DESTINATIONS])
+    }
+
+    val correctionRules: Flow<List<CorrectionRule>> = context.dataStore.data.map { prefs ->
+        OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+    }
+
+    suspend fun setFavoriteDestinations(values: List<FavoriteDestination>) {
+        val cleaned = values
+            .map {
+                it.copy(
+                    name = it.name.trim().take(60),
+                    path = it.path.trim().trimEnd('/'),
+                )
+            }
+            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .take(20)
+        context.dataStore.edit {
+            it[Keys.FAVORITE_DESTINATIONS] = OrganizationPreferenceCodec.encodeDestinations(cleaned)
+        }
+    }
+
+    suspend fun addCorrectionRule(term: String, destinationFolder: String) {
+        val cleanedTerm = term.trim().take(80)
+        val cleanedFolder = destinationFolder.trim().take(80)
+        if (cleanedTerm.isBlank() || cleanedFolder.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+            val updated = (
+                listOf(CorrectionRule(cleanedTerm, cleanedFolder)) +
+                    current.filterNot { it.term.equals(cleanedTerm, ignoreCase = true) }
+                ).take(100)
+            prefs[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(updated)
+        }
+    }
+
+    suspend fun setCorrectionRules(values: List<CorrectionRule>) {
+        val cleaned = values
+            .map { CorrectionRule(it.term.trim().take(80), it.destinationFolder.trim().take(80)) }
+            .filter { it.term.isNotBlank() && it.destinationFolder.isNotBlank() }
+            .distinctBy { it.term.lowercase() }
+            .take(100)
+        context.dataStore.edit {
+            it[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(cleaned)
+        }
     }
 
 
