@@ -61,6 +61,7 @@ import com.pocketsteward.app.scan.classifyByExtension
 import com.pocketsteward.app.semantic.CoherenceCandidateSelector
 import com.pocketsteward.app.semantic.DestinationPolicy
 import com.pocketsteward.app.semantic.SemanticDestinationChoice
+import com.pocketsteward.app.semantic.SemanticGroupingEngine
 import com.pocketsteward.app.semantic.SemanticPlanAdapter
 import com.pocketsteward.app.semantic.SemanticSuggestion
 import com.pocketsteward.app.storage.FileRef
@@ -1135,17 +1136,51 @@ class ScanViewModel(
                 )
 
                 val records = allRecordsForScopes(review.scopes)
+                val documentRecords = records.filter {
+                    !it.isDirectory && ContentExtractor.supports(it.extension)
+                }
+                val projectKeywords = settingsRepository.projectKeywords.first()
+                val indexedEvidence = linkedMapOf<String, String>()
+                if (projectKeywords.isNotEmpty()) {
+                    val roots = review.scopes.map { it.root.rawValue().trimEnd('/') }
+                    val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+                    for (keyword in projectKeywords) {
+                        val hits = withContext(Dispatchers.IO) {
+                            runCatching {
+                                repository.search(
+                                    query = keyword.term,
+                                    sourceRoots = roots,
+                                    limit = 20_000,
+                                )
+                            }.getOrDefault(emptyList())
+                        }
+                        hits.forEach { hit ->
+                            indexedEvidence[hit.stableRef] =
+                                indexedEvidence[hit.stableRef].orEmpty() + " " + keyword.term
+                        }
+                    }
+                }
+
+                val modelSuggestions = review.rows.map { row ->
+                    SemanticSuggestion(
+                        stableRef = row.record.stableRef,
+                        classification = row.classification,
+                        suggestedGroup = row.suggestedGroup,
+                    )
+                }
+                val groupingDecisions = withContext(Dispatchers.Default) {
+                    SemanticGroupingEngine.decide(
+                        records = documentRecords,
+                        projectKeywords = projectKeywords,
+                        indexedTextByRef = indexedEvidence,
+                        modelSuggestions = modelSuggestions,
+                    )
+                }
                 val result = withContext(Dispatchers.Default) {
                     SemanticPlanAdapter.build(
                         scopeRoots = review.scopes.map { it.root as FileRef.Direct },
                         records = records,
-                        suggestions = review.rows.map { row ->
-                            SemanticSuggestion(
-                                stableRef = row.record.stableRef,
-                                classification = row.classification,
-                                suggestedGroup = row.suggestedGroup,
-                            )
-                        },
+                        suggestions = groupingDecisions.map { it.suggestion },
                         includeSubfolders = includeSubfolders,
                         destinationChoice = destinationChoice,
                         recommendedDocumentsRoot = documentsRoot,
@@ -1175,7 +1210,19 @@ class ScanViewModel(
 
                 val notes = buildList {
                     add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
+                    add("Grouping evidence priority: project keywords → repeated filename/title signals → indexed content → model advice.")
                     add("Approved destination: $destinationLabel.")
+                    if (groupingDecisions.isNotEmpty()) {
+                        val evidenceSummary = groupingDecisions
+                            .groupingBy { it.evidence.name }
+                            .eachCount()
+                            .entries
+                            .sortedByDescending { it.value }
+                            .joinToString(" · ") { (evidence, count) ->
+                                "${evidence.lowercase().replace('_', ' ')}: $count"
+                            }
+                        add("Strong grouping candidates: ${groupingDecisions.size} · $evidenceSummary")
+                    }
                     if (!includeSubfolders) {
                         add("Files already inside folders were left alone unless nested moves were explicitly enabled.")
                     }
