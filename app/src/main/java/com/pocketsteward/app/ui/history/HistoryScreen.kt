@@ -132,6 +132,9 @@ fun HistoryScreen(onBack: () -> Unit) {
                         document = action.document,
                         exportedTo = action.exportedTo,
                         onExport = { viewModel.exportManifest(action.document) },
+                        onOpen = action.exportedTo?.let { path -> { ManifestFileActions.open(context, path) } },
+                        onShowFolder = action.exportedTo?.let { path -> { ManifestFileActions.showContainingFolder(context, path) } },
+                        onShare = action.exportedTo?.let { path -> { ManifestFileActions.share(context, path) } },
                         onDismiss = viewModel::dismissAction,
                         modifier = Modifier.weight(1f),
                     )
@@ -199,6 +202,9 @@ private fun ManifestCard(
     document: TaskManifestDocument,
     exportedTo: String?,
     onExport: () -> Unit,
+    onOpen: (() -> Unit)?,
+    onShowFolder: (() -> Unit)?,
+    onShare: (() -> Unit)?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -230,12 +236,37 @@ private fun ManifestCard(
             Text("Exported to $it", modifier = Modifier.padding(top = 8.dp))
         }
 
-        Row(modifier = Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Card(onClick = onExport) {
-                Text(
-                    if (exportedTo == null) "Export to a file" else "Export again",
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                )
+        Column(
+            modifier = Modifier.padding(top = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (exportedTo != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    onOpen?.let { action ->
+                        Card(onClick = action) {
+                            Text("Open manifest", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        }
+                    }
+                    onShowFolder?.let { action ->
+                        Card(onClick = action) {
+                            Text("Show folder", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    onShare?.let { action ->
+                        Card(onClick = action) {
+                            Text("Share", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        }
+                    }
+                    Card(onClick = onExport) {
+                        Text("Export again", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    }
+                }
+            } else {
+                Card(onClick = onExport) {
+                    Text("Export to a file", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                }
             }
             Card(onClick = onDismiss) {
                 Text("Back", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
