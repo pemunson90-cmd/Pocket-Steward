@@ -77,6 +77,12 @@ object DurablePlanCodec {
                     out.writeString(FileRefJournalCodec.encode(operation.destination))
                     out.writeString(operation.reason)
                 }
+                is PlannedOperation.Copy -> {
+                    out.writeByte(6)
+                    out.writeString(FileRefJournalCodec.encode(operation.source))
+                    out.writeString(FileRefJournalCodec.encode(operation.destination))
+                    out.writeString(operation.reason)
+                }
                 is PlannedOperation.Rename -> {
                     out.writeByte(3)
                     out.writeString(FileRefJournalCodec.encode(operation.source))
@@ -132,6 +138,11 @@ object DurablePlanCodec {
                     content = input.readString(),
                     reason = input.readString(),
                 )
+                6 -> PlannedOperation.Copy(
+                    source = FileRefJournalCodec.decode(input.readString()),
+                    destination = FileRefJournalCodec.decode(input.readString()),
+                    reason = input.readString(),
+                )
                 else -> error("Unknown durable operation type.")
             }
         }
@@ -140,6 +151,7 @@ object DurablePlanCodec {
     private fun PlannedOperation.typeLabel(): String = when (this) {
         is PlannedOperation.CreateDirectory -> "CREATE_DIRECTORY"
         is PlannedOperation.Move -> "MOVE"
+        is PlannedOperation.Copy -> "COPY"
         is PlannedOperation.Rename -> "RENAME"
         is PlannedOperation.Trash -> "TRASH"
         is PlannedOperation.WriteTextFile -> "WRITE_TEXT_FILE"
