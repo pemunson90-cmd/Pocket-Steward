@@ -33,4 +33,11 @@
     <string name="trash_title">Trash</string>
     <string name="trash_empty">Nothing has been trashed yet.</string>
     <string name="trash_policy">Pocket Steward never deletes files. Trashed files are moved to PocketSteward/Trash and stay there until you remove them yourself with a file manager.</string>
+
+    <string name="shortcut_explore_short">Explore files</string>
+    <string name="shortcut_explore_long">Explore with Pocket Steward</string>
+    <string name="shortcut_tasks_short">Tasks</string>
+    <string name="shortcut_tasks_long">Pocket Steward task history</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search files with Pocket Steward</string>
 </resources>
