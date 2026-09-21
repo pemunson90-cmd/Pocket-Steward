@@ -148,14 +148,63 @@ class GeminiNanoAgentModel : AgentModel {
             )
         }
 
-        if (retry.findings.isEmpty()) {
+        if (retry.findings.isNotEmpty()) {
+            return retry
+        }
+
+        // Some Nano builds intermittently ignore batch-format instructions
+        // even though inference itself succeeds. Fall back to tiny one-file
+        // prompts instead of making the user rerun the entire audit.
+        val individual = individualFallbackAudit(scopeLabel, retryDocuments)
+        if (individual.findings.isEmpty()) {
             throw IllegalStateException(
                 "On-device intelligence answered, but Pocket Steward could not safely parse any classifications. " +
                     "No files were changed.",
             )
         }
+        return individual
+    }
 
-        return retry
+    private suspend fun individualFallbackAudit(
+        scopeLabel: String,
+        documents: List<SemanticDocument>,
+    ): AuditAttempt {
+        val findings = mutableListOf<CoherenceFinding>()
+
+        for (document in documents) {
+            val prompt = buildString {
+                appendLine("Pocket Steward is doing a read-only coherence audit.")
+                appendLine("Folder/scope: $scopeLabel")
+                appendLine("Classify this one document relative to the folder theme.")
+                appendLine("Allowed: BELONGS, QUESTIONABLE, DOES_NOT_BELONG, UNCERTAIN.")
+                appendLine("Return exactly CLASSIFICATION|GROUP|REASON.")
+                appendLine("Use - for GROUP if none. Keep REASON under 18 words.")
+                appendLine("NAME: ${document.displayName}")
+                appendLine("EXCERPT:")
+                appendLine(document.excerpt)
+            }
+
+            val parsed = try {
+                val response = model.generateContent(auditRequest(prompt))
+                val output = response.candidates.firstOrNull()?.text.orEmpty()
+                CoherenceTextProtocol.parseSingle(output, document.id)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                null
+            }
+
+            parsed?.let {
+                findings += CoherenceFinding(
+                    id = it.documentId,
+                    classification = it.classification,
+                    reason = it.reason,
+                    suggestedGroup = it.suggestedGroup,
+                )
+            }
+        }
+
+        return AuditAttempt(findings, documents.size)
     }
 
     private suspend fun runTextFallback(
