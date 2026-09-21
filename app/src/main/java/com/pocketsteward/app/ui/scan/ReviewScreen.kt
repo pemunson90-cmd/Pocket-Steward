@@ -73,6 +73,7 @@ import com.pocketsteward.app.dedupe.DuplicateGroup
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.semantic.DestinationPolicy
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.ui.history.ManifestFileActions
 import com.pocketsteward.app.ui.theme.Spacing
 import java.text.DateFormat
 import java.util.Date
@@ -1520,6 +1521,20 @@ private fun ArtifactExportReview(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                    ) {
+                        TextButton(onClick = { ManifestFileActions.open(context, path) }) {
+                            Text("Open")
+                        }
+                        TextButton(onClick = { ManifestFileActions.share(context, path) }) {
+                            Text("Share")
+                        }
+                        TextButton(onClick = { ManifestFileActions.showContainingFolder(context, path) }) {
+                            Text("Show folder")
+                        }
+                    }
                 }
             }
         }
