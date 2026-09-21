@@ -45,6 +45,9 @@ data class BoundedIntent(
     val contentTerm: String? = null,
     val renameFrom: String? = null,
     val renameTo: String? = null,
+    /** Batch rename: filename substring to match and a deterministic template. */
+    val renameMatchTerm: String? = null,
+    val renameTemplate: String? = null,
     /** Explicit destination folder for bounded move/copy requests. */
     val destinationFolder: String? = null,
     val minSizeBytes: Long? = null,
