@@ -55,6 +55,7 @@ import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
+import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
@@ -444,6 +445,9 @@ class ScanViewModel(
     val storageAccessState = settingsRepository.storageAccessState
 
     val recentFolders: StateFlow<List<String>> = settingsRepository.recentFolders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val favoriteDestinations: StateFlow<List<FavoriteDestination>> = settingsRepository.favoriteDestinations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _selectedTargets = MutableStateFlow<List<ScanTarget>>(emptyList())
