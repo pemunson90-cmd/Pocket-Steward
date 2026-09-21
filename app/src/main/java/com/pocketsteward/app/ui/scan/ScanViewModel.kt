@@ -39,6 +39,7 @@ import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
+import com.pocketsteward.app.image.ImageInsight
 import com.pocketsteward.app.intent.BoundedIntent
 import com.pocketsteward.app.intent.DeterministicIntentParser
 import com.pocketsteward.app.intent.IntentAction
@@ -222,6 +223,13 @@ sealed interface ScanUiState {
         val scopeLabel: String,
         val imagesAnalyzed: Int,
         val documentsAnalyzed: Int,
+    ) : ScanUiState
+
+    data class ImageAnalysisReview(
+        val scopeLabel: String,
+        val insights: List<ImageInsight>,
+        val attempted: Int,
+        val limited: Boolean,
     ) : ScanUiState
 
     data class ArtifactExportReview(
@@ -516,6 +524,7 @@ class ScanViewModel(
 
             is ScanUiState.DuplicateReview,
             is ScanUiState.SimilarReview,
+            is ScanUiState.ImageAnalysisReview,
             is ScanUiState.ArtifactExportReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
@@ -2002,6 +2011,55 @@ class ScanViewModel(
         }
     }
 
+    fun analyzeImages(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                if (summary.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+                val privacy = settingsRepository.privacySettings.first()
+                if (!privacy.imageAnalysisEnabled) {
+                    _uiState.value = ScanUiState.Error(
+                        "Image analysis is off. Enable it in Settings before running local image understanding.",
+                    )
+                    return@launch
+                }
+
+                val records = filesForScopes(summary.scopes)
+                    .filter {
+                        !it.isDirectory &&
+                            classifyByExtension(it.extension) == FileCategory.IMAGE
+                    }
+                    .sortedByDescending { it.modifiedAt ?: Long.MIN_VALUE }
+
+                val selected = records.take(MAX_IMAGE_ANALYSIS_FILES)
+                val insights = mutableListOf<ImageInsight>()
+                for ((index, record) in selected.withIndex()) {
+                    _uiState.value = ScanUiState.Working(
+                        label = "Understanding images",
+                        detail = record.displayName,
+                        processed = index,
+                        total = selected.size,
+                    )
+                    val insight = withContext(Dispatchers.IO) {
+                        container.imageUnderstanding.analyze(record)
+                    }
+                    if (insight != null) insights += insight
+                }
+
+                _uiState.value = ScanUiState.ImageAnalysisReview(
+                    scopeLabel = summary.scopeLabel,
+                    insights = insights,
+                    attempted = selected.size,
+                    limited = records.size > selected.size,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
     fun findSimilarFiles(summary: ScanUiState.Summary) {
         viewModelScope.launch {
             try {
@@ -2818,6 +2876,7 @@ class ScanViewModel(
         const val COHERENCE_BATCH_SIZE = 12
         const val MAX_SIMILARITY_FILES_PER_KIND = 1_000
         const val MAX_SIMHASH_TEXT_CHARS = 100_000
+        const val MAX_IMAGE_ANALYSIS_FILES = 250
     }
 
     private suspend fun resolveScopes(
