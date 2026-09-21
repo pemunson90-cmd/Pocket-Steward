@@ -84,16 +84,23 @@ class AppContainer(context: Context) {
         )
     }
 
+    fun notifyExternalFileCreated(path: String, mimeType: String? = null) {
+        MediaScannerConnection.scanFile(
+            appContext,
+            arrayOf(path),
+            arrayOf(mimeType),
+            null,
+        )
+    }
+
     val taskManifestService: TaskManifestService by lazy {
         TaskManifestService(
             taskRunDao = database.taskRunDao(),
             mutationRecordDao = database.mutationRecordDao(),
             onVerifiedExport = { path ->
-                MediaScannerConnection.scanFile(
-                    appContext,
-                    arrayOf(path),
-                    arrayOf("text/markdown"),
-                    null,
+                notifyExternalFileCreated(
+                    path,
+                    if (path.endsWith(".json", ignoreCase = true)) "application/json" else "text/markdown",
                 )
             },
         )
