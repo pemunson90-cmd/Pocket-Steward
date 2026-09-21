@@ -43,6 +43,7 @@ import com.pocketsteward.app.intent.IntentAction
 import com.pocketsteward.app.intent.IntentParseResult
 import com.pocketsteward.app.intent.IntentPlanGenerator
 import com.pocketsteward.app.plan.AgentPlan
+import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
@@ -1497,8 +1498,13 @@ class ScanViewModel(
         operations: List<PlannedOperation>,
         scopes: List<ScanScope>,
         scopeNotes: List<String> = emptyList(),
+        authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
     ) {
-        val index = InMemoryFileIndex(allRecordsForScopes(scopes))
+        val index = buildAuthorizedPlanIndex(
+            scopes = scopes,
+            destinationRoots = authorizedDestinationRoots,
+            mode = StorageAccessMode.DIRECT,
+        )
         val validated = PlanValidator.validate(operations, index)
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
@@ -1509,7 +1515,31 @@ class ScanViewModel(
                 scopeForOperation(operation, scopes)?.label ?: scopes.first().label
             },
             scopeNotes = scopeNotes,
+            authorizedDestinationRoots = authorizedDestinationRoots,
         )
+    }
+
+    private suspend fun buildAuthorizedPlanIndex(
+        scopes: List<ScanScope>,
+        destinationRoots: List<FileRef.Direct>,
+        mode: StorageAccessMode,
+    ): FileIndex {
+        val delegates = mutableListOf<FileIndex>(
+            InMemoryFileIndex(allRecordsForScopes(scopes)),
+        )
+        if (destinationRoots.isNotEmpty()) {
+            require(mode == StorageAccessMode.DIRECT) {
+                "Cross-root destination authorization currently requires direct storage access."
+            }
+            val gateway = container.gatewayFor(mode)
+            destinationRoots
+                .distinctBy { it.absolutePath.trimEnd('/') }
+                .forEach { root ->
+                    val children = withContext(Dispatchers.IO) { gateway.listChildren(root) }
+                    delegates += SingleFolderIndex(root, children)
+                }
+        }
+        return if (delegates.size == 1) delegates.single() else CompositeFileIndex(delegates)
     }
 
     private suspend fun showPlanPreview(
@@ -2006,7 +2036,11 @@ class ScanViewModel(
                 val plan = AgentPlan(preview.goal, selectedOperations)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
-                    InMemoryFileIndex(allRecordsForScopes(preview.scopes))
+                    buildAuthorizedPlanIndex(
+                        scopes = preview.scopes,
+                        destinationRoots = preview.authorizedDestinationRoots,
+                        mode = mode,
+                    )
                 } else {
                     SingleFolderIndex(
                         unindexed,
