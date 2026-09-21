@@ -239,10 +239,17 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         )
                     }
                 }
-            }
 
-            ActionRow {
-                OutlinedButton(onClick = onScanAgain) { Text("Choose different folders") }
+                item {
+                    OutlinedButton(
+                        onClick = onScanAgain,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = Spacing.base, bottom = Spacing.section),
+                    ) {
+                        Text("Choose different folders")
+                    }
+                }
             }
         }
     }
