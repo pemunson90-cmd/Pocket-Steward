@@ -93,7 +93,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         is ScanUiState.FileListReview -> current.title
         is ScanUiState.ContentSearchReview -> current.title
         is ScanUiState.IndexedContentSearchReview -> current.title
-        is ScanUiState.CoherenceAuditReview -> "Coherence audit"
+        is ScanUiState.CoherenceAuditReview -> "Document organizer"
         is ScanUiState.DuplicateReview -> "Duplicates"
         is ScanUiState.ProtectFolders -> "Protect folders"
         else -> "Review"
@@ -1070,7 +1070,7 @@ private fun CoherenceAuditReview(
     ) {
         item {
             ScreenHeadline(
-                text = "Coherence audit · ${state.scopeLabel}",
+                text = "Document audit · ${state.scopeLabel}",
                 supporting = buildString {
                     append("${state.sampledDocuments} representative document(s) sampled from ${state.eligibleDocuments} readable")
                     append(" · ${state.indexedExcerpts} from index")
