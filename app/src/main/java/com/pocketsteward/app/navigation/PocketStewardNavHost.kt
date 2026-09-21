@@ -61,6 +61,7 @@ fun PocketStewardNavHost(
                 onExplore = { navController.navigate(Routes.SCAN_FLOW) },
                 onOpenTasks = { navController.navigate(Routes.HISTORY) },
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
+                onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
                 onSavedWorkflow = { workflowId -> navController.navigate(Routes.scanFlowWithWorkflow(workflowId)) },
                 onSavedSearch = { searchId -> navController.navigate(Routes.scanFlowWithSavedSearch(searchId)) },
                 onImportedPlan = { cachePath -> navController.navigate(Routes.scanFlowWithImportedPlan(cachePath)) },
