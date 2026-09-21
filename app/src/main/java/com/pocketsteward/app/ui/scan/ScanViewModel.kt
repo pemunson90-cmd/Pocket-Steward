@@ -50,6 +50,9 @@ import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
+import com.pocketsteward.app.report.ExportResult
+import com.pocketsteward.app.report.InventoryExport
+import com.pocketsteward.app.report.VerifiedTextExporter
 import com.pocketsteward.app.report.duplicateTrashReason
 import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
@@ -219,6 +222,12 @@ sealed interface ScanUiState {
         val scopeLabel: String,
         val imagesAnalyzed: Int,
         val documentsAnalyzed: Int,
+    ) : ScanUiState
+
+    data class ArtifactExportReview(
+        val title: String,
+        val paths: List<String>,
+        val errors: List<String> = emptyList(),
     ) : ScanUiState
 
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
@@ -507,6 +516,7 @@ class ScanViewModel(
 
             is ScanUiState.DuplicateReview,
             is ScanUiState.SimilarReview,
+            is ScanUiState.ArtifactExportReview,
             is ScanUiState.FileListReview,
             is ScanUiState.ContentSearchReview,
             is ScanUiState.IndexedContentSearchReview,
@@ -1787,6 +1797,64 @@ class ScanViewModel(
                     return@launch
                 }
                 showPlanPreview("Trash duplicate files under ${review.scopeLabel}", operations, review.scopes)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun exportInventory(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                if (summary.mode != StorageAccessMode.DIRECT ||
+                    summary.scopes.any { it.root !is FileRef.Direct }
+                ) {
+                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                    return@launch
+                }
+
+                val timestamp = System.currentTimeMillis()
+                val written = mutableListOf<String>()
+                val errors = mutableListOf<String>()
+                val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
+
+                for ((scopeIndex, scope) in summary.scopes.withIndex()) {
+                    val root = scope.root as FileRef.Direct
+                    _uiState.value = ScanUiState.Working(
+                        label = "Exporting inventory",
+                        detail = scope.label,
+                        processed = scopeIndex,
+                        total = summary.scopes.size,
+                    )
+                    val records = withContext(Dispatchers.IO) {
+                        container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue())
+                    }
+                    val base = "POCKETSTEWARD-INVENTORY-$timestamp"
+                    val exports = listOf(
+                        "$base.json" to InventoryExport.json(scope.label, records),
+                        "$base.csv" to InventoryExport.csv(records),
+                    )
+                    for ((name, body) in exports) {
+                        when (val result = withContext(Dispatchers.IO) {
+                            VerifiedTextExporter.export(gateway, root, name, body)
+                        }) {
+                            is ExportResult.Written -> {
+                                written += result.path
+                                container.notifyExternalFileCreated(
+                                    result.path,
+                                    if (result.path.endsWith(".json")) "application/json" else "text/csv",
+                                )
+                            }
+                            is ExportResult.Failed -> errors += "${scope.label}: $name · ${result.reason}"
+                        }
+                    }
+                }
+
+                _uiState.value = ScanUiState.ArtifactExportReview(
+                    title = "Inventory export",
+                    paths = written,
+                    errors = errors,
+                )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
