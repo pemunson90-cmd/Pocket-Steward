@@ -703,6 +703,7 @@ class ScanViewModel(
         val parents = plan.operations.mapNotNull { operation ->
             when (operation) {
                 is PlannedOperation.Move -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
+                is PlannedOperation.Copy -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
                 is PlannedOperation.Rename -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
                 is PlannedOperation.Trash -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
                 is PlannedOperation.CreateDirectory,
@@ -738,8 +739,15 @@ class ScanViewModel(
             when (operation) {
                 is PlannedOperation.CreateDirectory -> operation.parent as? FileRef.Direct
                 is PlannedOperation.WriteTextFile -> operation.parent as? FileRef.Direct
-                is PlannedOperation.Move -> {
-                    val parentPath = (operation.destination as? FileRef.Direct)
+                is PlannedOperation.Move,
+                is PlannedOperation.Copy,
+                -> {
+                    val destination = when (operation) {
+                        is PlannedOperation.Move -> operation.destination
+                        is PlannedOperation.Copy -> operation.destination
+                        else -> error("unreachable")
+                    }
+                    val parentPath = (destination as? FileRef.Direct)
                         ?.absolutePath
                         ?.substringBeforeLast('/', missingDelimiterValue = "")
                         ?.takeIf { it.isNotBlank() }
@@ -2641,6 +2649,15 @@ class ScanViewModel(
                         original.copy(destination = FileRef.Direct(path))
                     }
 
+                    is PlannedOperation.Copy -> {
+                        val path = newDestinationPath?.trim()?.trimEnd('/')
+                        if (path.isNullOrBlank()) {
+                            _error.value = "Copy destination cannot be blank."
+                            return@launch
+                        }
+                        original.copy(destination = FileRef.Direct(path))
+                    }
+
                     is PlannedOperation.Rename -> {
                         val name = newName?.trim().orEmpty()
                         if (name.isBlank() || '/' in name || '\\' in name || name == "..") {
@@ -2670,6 +2687,13 @@ class ScanViewModel(
                             is PlannedOperation.CreateDirectory ->
                                 listOfNotNull(operation.parent as? FileRef.Direct)
                             is PlannedOperation.Move -> listOfNotNull(
+                                (operation.destination as? FileRef.Direct)
+                                    ?.absolutePath
+                                    ?.substringBeforeLast('/', missingDelimiterValue = "")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let(FileRef::Direct),
+                            )
+                            is PlannedOperation.Copy -> listOfNotNull(
                                 (operation.destination as? FileRef.Direct)
                                     ?.absolutePath
                                     ?.substringBeforeLast('/', missingDelimiterValue = "")
@@ -2788,6 +2812,21 @@ class ScanViewModel(
                         }
 
                         is PlannedOperation.Move -> {
+                            val destination = operation.destination as? FileRef.Direct
+                            val destinationParent = destination?.absolutePath
+                                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                            if (destination != null && destinationParent == oldDirectory) {
+                                operation.copy(
+                                    destination = FileRef.Direct(
+                                        "$targetRoot/$targetGroup/${destination.absolutePath.substringAfterLast('/')}",
+                                    ),
+                                )
+                            } else {
+                                operation
+                            }
+                        }
+
+                        is PlannedOperation.Copy -> {
                             val destination = operation.destination as? FileRef.Direct
                             val destinationParent = destination?.absolutePath
                                 ?.substringBeforeLast('/', missingDelimiterValue = "")
@@ -3117,6 +3156,7 @@ private fun scopeForOperation(operation: PlannedOperation, scopes: List<ScanScop
     val anchor = when (operation) {
         is PlannedOperation.CreateDirectory -> operation.parent
         is PlannedOperation.Move -> operation.source
+        is PlannedOperation.Copy -> operation.source
         is PlannedOperation.Rename -> operation.source
         is PlannedOperation.Trash -> operation.source
         is PlannedOperation.WriteTextFile -> operation.parent
