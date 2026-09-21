@@ -105,4 +105,24 @@ class PlanSelectionTest {
         assertThat(PlanSelection.noneSelected()).isEmpty()
     }
 
+    @Test
+    fun selectingCopy_reselectsRequiredDirectory() {
+        val copy = PlannedOperation.Copy(
+            source = FileRef.Direct("/storage/emulated/0/Download/source.jpg"),
+            destination = FileRef.Direct("/storage/emulated/0/Download/Images/source.jpg"),
+            reason = "copy",
+        )
+        val operations = listOf(destinationFolder, copy)
+
+        val selected = PlanSelection.setSelected(
+            operations,
+            emptySet(),
+            index = 1,
+            selected = true,
+        )
+
+        assertThat(selected).containsExactly(0, 1)
+    }
+
+
 }
