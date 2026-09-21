@@ -2580,6 +2580,107 @@ class ScanViewModel(
         IntentOrder.OLDEST_FIRST -> ContentSearchSort.MODIFIED_OLDEST
     }
 
+    fun editPlanOperation(
+        operationIndex: Int,
+        newDestinationPath: String? = null,
+        newName: String? = null,
+    ) {
+        val current = _preview.value ?: return
+        if (operationIndex !in current.accepted.indices) return
+
+        viewModelScope.launch {
+            try {
+                val original = current.accepted[operationIndex]
+                val edited = when (original) {
+                    is PlannedOperation.Move -> {
+                        val path = newDestinationPath?.trim()?.trimEnd('/')
+                        if (path.isNullOrBlank()) {
+                            _error.value = "Move destination cannot be blank."
+                            return@launch
+                        }
+                        original.copy(destination = FileRef.Direct(path))
+                    }
+
+                    is PlannedOperation.Rename -> {
+                        val name = newName?.trim().orEmpty()
+                        if (name.isBlank() || '/' in name || '\\' in name || name == "..") {
+                            _error.value = "Rename target must be one safe file name."
+                            return@launch
+                        }
+                        original.copy(newName = name)
+                    }
+
+                    else -> {
+                        _error.value = "This operation type is not directly editable."
+                        return@launch
+                    }
+                }
+
+                val transformed = current.accepted.toMutableList().apply {
+                    this[operationIndex] = edited
+                }
+
+                val sourceRoots = current.scopes
+                    .mapNotNull { it.root as? FileRef.Direct }
+                    .map { it.absolutePath.trimEnd('/') }
+
+                val extraRoots = transformed
+                    .flatMap { operation ->
+                        when (operation) {
+                            is PlannedOperation.CreateDirectory ->
+                                listOfNotNull(operation.parent as? FileRef.Direct)
+                            is PlannedOperation.Move -> listOfNotNull(
+                                (operation.destination as? FileRef.Direct)
+                                    ?.absolutePath
+                                    ?.substringBeforeLast('/', missingDelimiterValue = "")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let(FileRef::Direct),
+                            )
+                            is PlannedOperation.WriteTextFile ->
+                                listOfNotNull(operation.parent as? FileRef.Direct)
+                            is PlannedOperation.Rename,
+                            is PlannedOperation.Trash,
+                            -> emptyList()
+                        }
+                    }
+                    .filterNot { candidate ->
+                        sourceRoots.any { root ->
+                            val path = candidate.absolutePath.trimEnd('/')
+                            path == root || path.startsWith("$root/")
+                        }
+                    }
+                    .distinctBy { it.absolutePath.trimEnd('/') }
+
+                val index = buildAuthorizedPlanIndex(
+                    scopes = current.scopes,
+                    destinationRoots = extraRoots,
+                    mode = StorageAccessMode.DIRECT,
+                )
+                val validated = PlanValidator.validate(transformed, index)
+                if (validated.rejected.isNotEmpty() ||
+                    validated.accepted.size != transformed.size
+                ) {
+                    _error.value = validated.rejected.firstOrNull()?.reason
+                        ?: "The edited plan no longer validates against current storage."
+                    return@launch
+                }
+
+                _preview.value = current.copy(
+                    accepted = validated.accepted,
+                    rejected = current.rejected,
+                    acceptedScopeLabels = validated.accepted.map { operation ->
+                        scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
+                    },
+                    selectedIndices = current.selectedIndices
+                        .filterTo(linkedSetOf()) { it in validated.accepted.indices },
+                    authorizedDestinationRoots = extraRoots,
+                )
+            } catch (t: Throwable) {
+                _error.value = t.message ?: t.javaClass.simpleName
+            }
+        }
+    }
+
     fun editPlanDestinationGroup(
         groupDirectory: String,
         newDestinationRootPath: String? = null,
