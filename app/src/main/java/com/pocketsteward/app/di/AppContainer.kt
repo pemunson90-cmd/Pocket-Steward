@@ -15,6 +15,7 @@ import com.pocketsteward.app.executor.MutationRecovery
 import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.metadata.MetadataEnricher
+import com.pocketsteward.app.image.ImageUnderstanding
 import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.scheduled.ScheduledCleanupCoordinator
 import com.pocketsteward.app.scan.FileScanner
@@ -107,6 +108,7 @@ class AppContainer(context: Context) {
     }
 
     val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
+    val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext) }
     val scheduledCleanupCoordinator: ScheduledCleanupCoordinator by lazy { ScheduledCleanupCoordinator(appContext) }
 
     val mutationRecovery: MutationRecovery by lazy {
