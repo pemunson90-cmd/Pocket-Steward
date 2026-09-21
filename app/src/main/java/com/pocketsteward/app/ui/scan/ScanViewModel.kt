@@ -600,6 +600,122 @@ class ScanViewModel(
     }
 
 
+    fun startImportedReviewedPlan(cachePath: String) {
+        if (autoStarted) return
+        autoStarted = true
+        viewModelScope.launch {
+            try {
+                val access = settingsRepository.storageAccessState.first()
+                if (access.mode != StorageAccessMode.DIRECT) {
+                    _uiState.value = ScanUiState.Error(
+                        "Reviewed plan import requires full storage access so current filesystem state can be revalidated.",
+                    )
+                    return@launch
+                }
+                val json = withContext(Dispatchers.IO) {
+                    java.io.File(cachePath).takeIf { it.isFile }?.readText()
+                } ?: run {
+                    _uiState.value = ScanUiState.Error("The imported reviewed-plan file is no longer available.")
+                    return@launch
+                }
+                val plan = ReviewedPlanPackage.decodeOrNull(json)
+                if (plan == null) {
+                    _uiState.value = ScanUiState.Error("That file is not a valid Pocket Steward reviewed-plan package.")
+                    return@launch
+                }
+                val roots = sourceRootsForImportedPlan(plan)
+                if (roots.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("The imported plan has no direct-file sources to rescan.")
+                    return@launch
+                }
+                val targets = roots.map(::ScanTarget.CustomFolder)
+                _selectedTargets.value = targets
+                startScan(
+                    targets = targets,
+                    thenImportedPlan = plan,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun exportReviewedPlan(preview: ScanUiState.PlanPreview) {
+        viewModelScope.launch {
+            try {
+                if (preview.scopes.firstOrNull()?.root !is FileRef.Direct) {
+                    _uiState.value = ScanUiState.Error("Reviewed-plan export currently requires full storage access.")
+                    return@launch
+                }
+                val selected = PlanSelection.selectedOperations(preview.accepted, preview.selectedIndices)
+                if (selected.isEmpty()) {
+                    _uiState.value = ScanUiState.Error("Select at least one action before exporting a reviewed plan.")
+                    return@launch
+                }
+                val root = preview.scopes.first().root as FileRef.Direct
+                val name = "POCKETSTEWARD-REVIEWED-PLAN-${System.currentTimeMillis()}.json"
+                val body = ReviewedPlanPackage.encode(preview.goal, selected)
+                when (val result = withContext(Dispatchers.IO) {
+                    VerifiedTextExporter.export(
+                        gateway = container.gatewayFor(StorageAccessMode.DIRECT),
+                        parent = root,
+                        finalName = name,
+                        content = body,
+                    )
+                }) {
+                    is ExportResult.Written -> {
+                        container.notifyExternalFileCreated(result.path, "application/json")
+                        _uiState.value = ScanUiState.ArtifactExportReview(
+                            title = "Reviewed plan exported",
+                            paths = listOf(result.path),
+                        )
+                    }
+                    is ExportResult.Failed -> {
+                        _uiState.value = ScanUiState.Error("Reviewed-plan export failed: ${result.reason}")
+                    }
+                }
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    private fun sourceRootsForImportedPlan(plan: DurablePlan): List<String> {
+        val parents = plan.operations.mapNotNull { operation ->
+            when (operation) {
+                is PlannedOperation.Move -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
+                is PlannedOperation.Rename -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
+                is PlannedOperation.Trash -> (operation.source as? FileRef.Direct)?.absolutePath?.substringBeforeLast('/')
+                is PlannedOperation.CreateDirectory,
+                is PlannedOperation.WriteTextFile,
+                -> null
+            }
+        }
+            .filter { it.isNotBlank() }
+            .map { it.trimEnd('/') }
+            .distinct()
+            .sortedBy { it.length }
+
+        return parents.filter { candidate ->
+            parents.none { other ->
+                other != candidate && candidate.startsWith("$other/")
+            }
+        }
+    }
+
+    private fun destinationParentForImportedOperation(operation: PlannedOperation): FileRef.Direct? =
+        when (operation) {
+            is PlannedOperation.CreateDirectory -> operation.parent as? FileRef.Direct
+            is PlannedOperation.Move -> (operation.destination as? FileRef.Direct)?.absolutePath
+                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(FileRef::Direct)
+            is PlannedOperation.Rename,
+            is PlannedOperation.Trash,
+            -> null
+            is PlannedOperation.WriteTextFile -> operation.parent as? FileRef.Direct
+        }
+
     /** Recreates a saved scope/request from fresh storage state before doing anything else. */
     fun startSavedWorkflow(workflowId: String) {
         if (autoStarted) return
@@ -740,8 +856,9 @@ class ScanViewModel(
         thenRun: PostScanAction? = null,
         thenRequest: String? = null,
         thenSavedSearch: SavedSearch? = null,
+        thenImportedPlan: DurablePlan? = null,
     ) {
-        startScan(listOf(target), thenRun, thenRequest, thenSavedSearch)
+        startScan(listOf(target), thenRun, thenRequest, thenSavedSearch, thenImportedPlan)
     }
 
     fun startScan(
@@ -749,6 +866,7 @@ class ScanViewModel(
         thenRun: PostScanAction? = null,
         thenRequest: String? = null,
         thenSavedSearch: SavedSearch? = null,
+        thenImportedPlan: DurablePlan? = null,
     ) {
         scanJob?.cancel()
         userScanCancellationRequested = false
@@ -848,6 +966,29 @@ class ScanViewModel(
                         sort = saved.sort,
                         filters = saved.filters,
                         savedSearchId = saved.id,
+                    )
+                }
+
+                thenImportedPlan?.let { imported ->
+                    val destinationRoots = imported.operations
+                        .mapNotNull(::destinationParentForImportedOperation)
+                        .filterNot { destination ->
+                            summary.scopes.any { scope ->
+                                val root = (scope.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') ?: return@any false
+                                destination.absolutePath.trimEnd('/') == root ||
+                                    destination.absolutePath.startsWith("$root/")
+                            }
+                        }
+                        .distinctBy { it.absolutePath.trimEnd('/') }
+
+                    showPlanPreview(
+                        goal = "Imported reviewed plan · ${imported.goal}",
+                        operations = imported.operations,
+                        scopes = summary.scopes,
+                        scopeNotes = listOf(
+                            "Imported plans are never executed directly. Every operation was rescanned and revalidated against current storage.",
+                        ),
+                        authorizedDestinationRoots = destinationRoots,
                     )
                 }
             } catch (cancel: CancellationException) {
