@@ -187,7 +187,7 @@ object DeterministicIntentParser {
         var order = IntentOrder.DEFAULT
 
         val sizePattern = Regex(
-            """(?:(larger|bigger|over|above|smaller|under|below)\s+than?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb|kib|mib|gib)\b""",
+            """(?:(larger|bigger|over|above|smaller|under|below)(?:\s+than)?\s+)?(\d+(?:\.\d+)?)\s*(kb|mb|gb|kib|mib|gib)\b""",
         )
         sizePattern.findAll(lower).forEach { match ->
             val comparator = match.groupValues[1]
