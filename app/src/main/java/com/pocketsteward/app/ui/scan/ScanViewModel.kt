@@ -1094,11 +1094,6 @@ class ScanViewModel(
                 "Selecting a representative cross-section from the local index",
             )
             try {
-                if (summary.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
-
                 val privacy = settingsRepository.privacySettings.first()
                 if (!privacy.contentInspectionEnabled) {
                     _uiState.value = ScanUiState.Error(
@@ -1159,11 +1154,17 @@ class ScanViewModel(
                         total = selected.size,
                     )
 
-                    val existing = withContext(Dispatchers.IO) {
-                        repository.indexedDocument(record.stableRef)
+                    val existing = if (summary.mode == StorageAccessMode.DIRECT) {
+                        withContext(Dispatchers.IO) {
+                            repository.indexedDocument(record.stableRef)
+                        }
+                    } else {
+                        null
                     }
-                    val canUseIndex = ContentIndexPolicy.canReuse(existing, record) &&
-                        existing?.extractionStatus == IndexedExtractionStatus.INDEXED.name
+                    val canUseIndex =
+                        summary.mode == StorageAccessMode.DIRECT &&
+                            ContentIndexPolicy.canReuse(existing, record) &&
+                            existing?.extractionStatus == IndexedExtractionStatus.INDEXED.name
 
                     val normalized = if (canUseIndex) {
                         val segments = withContext(Dispatchers.IO) {
