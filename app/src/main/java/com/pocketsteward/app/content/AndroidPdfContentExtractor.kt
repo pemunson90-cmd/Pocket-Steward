@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.ext.SdkExtensions
 import androidx.annotation.RequiresApi
+import androidx.annotation.RequiresExtension
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
@@ -95,6 +96,7 @@ class AndroidPdfContentExtractor(
      * exposes the Android V PDF APIs on Android R through U.
      */
     @RequiresApi(30)
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
     private suspend fun extractPreV(file: File): ContentExtraction {
         val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         pfd.use { descriptor ->
