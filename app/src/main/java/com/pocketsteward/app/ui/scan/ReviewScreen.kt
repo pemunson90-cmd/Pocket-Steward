@@ -1179,7 +1179,23 @@ private fun CoherenceAuditReview(
             }
         }
 
-        if (state.eligibleDocuments > 0) {
+        if (state.eligibleDocuments > 0 && state.scopes.any { it.root !is FileRef.Direct }) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
+                    Column(modifier = Modifier.padding(Spacing.base)) {
+                        Text("Read-only audit", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Selected-folder access can inspect these documents but cannot build or run mutation plans. Switch to full file-manager access if you want to organize the findings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = Spacing.hairline),
+                        )
+                    }
+                }
+            }
+        }
+
+        if (state.eligibleDocuments > 0 && state.scopes.all { it.root is FileRef.Direct }) {
             item {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
