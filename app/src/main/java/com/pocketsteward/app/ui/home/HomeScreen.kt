@@ -38,12 +38,14 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.data.db.TaskRunStatus
+import com.pocketsteward.app.ui.scan.PostScanAction
 
 @Composable
 fun HomeScreen(
     onExplore: () -> Unit,
     onOpenTasks: () -> Unit,
     onNaturalLanguageRequest: (String) -> Unit,
+    onQuickAction: (PostScanAction) -> Unit,
     onSavedWorkflow: (String) -> Unit,
     onSavedSearch: (String) -> Unit,
     onImportedPlan: (String) -> Unit,
@@ -151,6 +153,40 @@ fun HomeScreen(
                 }
             }
         }
+
+        Text("Quick actions", style = MaterialTheme.typography.titleLarge)
+        HomeQuickAction(
+            title = "Organize Downloads",
+            supporting = "Scan Downloads and build a preview for obvious type/project matches.",
+            onClick = { onQuickAction(PostScanAction.SMART_CLEANUP) },
+        )
+        HomeQuickAction(
+            title = "Find duplicates",
+            supporting = "Scan Downloads for exact SHA-256 duplicate sets.",
+            onClick = { onQuickAction(PostScanAction.FIND_DUPLICATES) },
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            HomeQuickAction(
+                title = "Largest files",
+                supporting = "Top 50 in Downloads.",
+                onClick = { onQuickAction(PostScanAction.FIND_LARGEST) },
+                modifier = Modifier.weight(1f),
+            )
+            HomeQuickAction(
+                title = "Old files",
+                supporting = "Older than six months.",
+                onClick = { onQuickAction(PostScanAction.FIND_OLD) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        HomeQuickAction(
+            title = "Review uncategorized",
+            supporting = "See files the deterministic rules deliberately left uncertain.",
+            onClick = { onQuickAction(PostScanAction.REVIEW_UNCATEGORIZED) },
+        )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -311,6 +347,27 @@ fun HomeScreen(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
+        }
+    }
+}
+
+
+@Composable
+private fun HomeQuickAction(
+    title: String,
+    supporting: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(onClick = onClick, modifier = modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                supporting,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
