@@ -20,6 +20,9 @@ interface ContentIndexDao {
     @Query("DELETE FROM indexed_segments_fts WHERE rowid IN (SELECT id FROM indexed_segments WHERE stableRef = :stableRef)")
     suspend fun deleteFtsForDocument(stableRef: String)
 
+    @Query("SELECT * FROM indexed_segments WHERE stableRef = :stableRef ORDER BY ordinal ASC")
+    suspend fun getSegmentsForDocument(stableRef: String): List<IndexedSegment>
+
     @Query("DELETE FROM indexed_segments WHERE stableRef = :stableRef")
     suspend fun deleteSegmentsForDocument(stableRef: String)
 
