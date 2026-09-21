@@ -26,6 +26,10 @@ class ContentIndexRepository(
     private val dao: ContentIndexDao,
     private val inspector: ContentInspector,
 ) {
+    private companion object {
+        const val STATE_CHECKPOINT_INTERVAL = 25
+    }
+
     suspend fun refresh(
         candidates: List<ContentIndexCandidate>,
         sourceRoots: List<String>,
@@ -166,6 +170,244 @@ class ContentIndexRepository(
             unsupported = unsupported,
             failed = failed,
             removedStale = removedStale,
+        )
+    }
+
+    suspend fun refreshRootResumable(
+        candidates: List<ContentIndexCandidate>,
+        sourceRoot: String,
+        shouldPause: () -> Boolean = { false },
+        onProgress: (ContentIndexJob) -> Unit = {},
+    ): ContentIndexJob {
+        val root = sourceRoot.trimEnd('/')
+        require(root.isNotBlank()) { "Content index refresh needs a source root." }
+
+        val sorted = candidates
+            .filter { !it.record.isDirectory && it.sourceRoot.trimEnd('/') == root }
+            .distinctBy { it.record.stableRef }
+            .sortedBy { it.record.stableRef }
+
+        val now = System.currentTimeMillis()
+        val previous = dao.getJob(root)
+        val previousStatus = previous?.status
+        val resumable = previous != null &&
+            previous.extractorVersion == ContentIndexPolicy.EXTRACTOR_VERSION &&
+            previousStatus in setOf(
+                ContentIndexJobStatus.QUEUED.name,
+                ContentIndexJobStatus.RUNNING.name,
+                ContentIndexJobStatus.PAUSED.name,
+            )
+
+        var job = if (resumable) {
+            previous!!.copy(
+                status = ContentIndexJobStatus.RUNNING.name,
+                eligibleCount = sorted.size,
+                updatedAt = now,
+                error = null,
+            )
+        } else {
+            ContentIndexJob(
+                sourceRoot = root,
+                status = ContentIndexJobStatus.RUNNING.name,
+                cursorRef = null,
+                eligibleCount = sorted.size,
+                processedCount = 0,
+                reused = 0,
+                extracted = 0,
+                unsupported = 0,
+                failed = 0,
+                removedStale = 0,
+                startedAt = now,
+                updatedAt = now,
+                extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+                error = null,
+            )
+        }
+
+        var startIndex = 0
+        if (resumable && job.cursorRef != null) {
+            val cursor = job.cursorRef!!
+            startIndex = sorted.indexOfFirst { it.record.stableRef > cursor }
+                .let { if (it < 0) sorted.size else it }
+        }
+
+        if (startIndex == 0) {
+            val currentRefs = sorted.mapTo(hashSetOf()) { it.record.stableRef }
+            val indexedRefs = dao.getStableRefsForRoot(root)
+            var removed = 0
+            for (stale in indexedRefs) {
+                if (stale !in currentRefs) {
+                    dao.removeDocument(stale)
+                    removed++
+                }
+            }
+            job = job.copy(removedStale = removed)
+        }
+
+        dao.putJob(job)
+        dao.putState(
+            ContentIndexState(
+                sourceRoot = root,
+                eligibleCount = sorted.size,
+                processedCount = startIndex,
+                completed = false,
+                startedAt = job.startedAt,
+                updatedAt = System.currentTimeMillis(),
+                extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+            ),
+        )
+        onProgress(job)
+
+        for (index in startIndex until sorted.size) {
+            currentCoroutineContext().ensureActive()
+
+            if (shouldPause()) {
+                job = job.copy(
+                    status = ContentIndexJobStatus.PAUSED.name,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                dao.putJob(job)
+                onProgress(job)
+                return job
+            }
+
+            val candidate = sorted[index]
+            val record = candidate.record
+            val existing = dao.getDocument(record.stableRef)
+
+            if (ContentIndexPolicy.canReuse(existing, record)) {
+                job = job.copy(reused = job.reused + 1)
+            } else {
+                when (val extraction = inspector.extract(record)) {
+                    is ContentExtraction.Text -> {
+                        val segments = extraction.toSegments(record.stableRef)
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
+                                sourceRoot = root,
+                                kind = extraction.kind,
+                                status = IndexedExtractionStatus.INDEXED,
+                                error = null,
+                                segmentCount = segments.size,
+                            ),
+                            segments = segments,
+                        )
+                        job = job.copy(extracted = job.extracted + 1)
+                    }
+
+                    is ContentExtraction.Unsupported -> {
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
+                                sourceRoot = root,
+                                kind = null,
+                                status = IndexedExtractionStatus.UNSUPPORTED,
+                                error = extraction.reason,
+                                segmentCount = 0,
+                            ),
+                            segments = emptyList(),
+                        )
+                        job = job.copy(unsupported = job.unsupported + 1)
+                    }
+
+                    is ContentExtraction.Failed -> {
+                        dao.replaceDocument(
+                            document = record.toIndexedDocument(
+                                sourceRoot = root,
+                                kind = null,
+                                status = IndexedExtractionStatus.FAILED,
+                                error = extraction.reason,
+                                segmentCount = 0,
+                            ),
+                            segments = emptyList(),
+                        )
+                        job = job.copy(failed = job.failed + 1)
+                    }
+                }
+            }
+
+            job = job.copy(
+                cursorRef = record.stableRef,
+                processedCount = index + 1,
+                status = ContentIndexJobStatus.RUNNING.name,
+                updatedAt = System.currentTimeMillis(),
+                error = null,
+            )
+            // Cursor durability is intentionally file-granular. A service
+            // timeout can therefore repeat at most the current file, never
+            // lose an entire folder's indexing progress.
+            dao.putJob(job)
+
+            if ((index + 1) % STATE_CHECKPOINT_INTERVAL == 0 || index == sorted.lastIndex) {
+                dao.putState(
+                    ContentIndexState(
+                        sourceRoot = root,
+                        eligibleCount = sorted.size,
+                        processedCount = index + 1,
+                        completed = false,
+                        startedAt = job.startedAt,
+                        updatedAt = System.currentTimeMillis(),
+                        extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+                    ),
+                )
+            }
+            onProgress(job)
+        }
+
+        job = job.copy(
+            status = ContentIndexJobStatus.COMPLETED.name,
+            processedCount = sorted.size,
+            updatedAt = System.currentTimeMillis(),
+            error = null,
+        )
+        dao.putJob(job)
+        dao.putState(
+            ContentIndexState(
+                sourceRoot = root,
+                eligibleCount = sorted.size,
+                processedCount = sorted.size,
+                completed = true,
+                startedAt = job.startedAt,
+                updatedAt = job.updatedAt,
+                extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+            ),
+        )
+        onProgress(job)
+        return job
+    }
+
+    suspend fun markPaused(sourceRoot: String, reason: String? = null) {
+        val root = sourceRoot.trimEnd('/')
+        val current = dao.getJob(root) ?: return
+        if (current.status == ContentIndexJobStatus.COMPLETED.name) return
+        dao.putJob(
+            current.copy(
+                status = ContentIndexJobStatus.PAUSED.name,
+                updatedAt = System.currentTimeMillis(),
+                error = reason?.take(500),
+            ),
+        )
+    }
+
+    suspend fun jobs(sourceRoots: List<String>): List<ContentIndexJob> {
+        val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
+        if (roots.isEmpty()) return emptyList()
+        return dao.getJobs(roots)
+    }
+
+    suspend fun indexedDocument(stableRef: String): IndexedDocument? =
+        dao.getDocument(stableRef)
+
+    suspend fun segments(stableRef: String): List<IndexedSegment> =
+        dao.getSegmentsForDocument(stableRef)
+
+    suspend fun jobSummary(sourceRoots: List<String>): ContentIndexRefreshSummary {
+        val jobs = jobs(sourceRoots)
+        return ContentIndexRefreshSummary(
+            totalCandidates = jobs.sumOf { it.eligibleCount },
+            reused = jobs.sumOf { it.reused },
+            extracted = jobs.sumOf { it.extracted },
+            unsupported = jobs.sumOf { it.unsupported },
+            failed = jobs.sumOf { it.failed },
+            removedStale = jobs.sumOf { it.removedStale },
         )
     }
 
