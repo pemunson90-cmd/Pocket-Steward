@@ -6,6 +6,7 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import com.google.mlkit.genai.prompt.generateTypedContentRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -47,58 +48,113 @@ class GeminiNanoAgentModel : AgentModel {
         check(model.checkStatus() == FeatureStatus.AVAILABLE) { "Gemini Nano is not available yet." }
 
         val bounded = documents.take(MAX_DOCUMENTS)
-        val findings = if (runCatching { model.isStructuredOutputFeatureAvailable() }.getOrDefault(false)) {
-            structuredAudit(scopeLabel, bounded)
+        val structuredAvailable = try {
+            model.isStructuredOutputFeatureAvailable()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            false
+        }
+
+        val attempt = if (structuredAvailable) {
+            try {
+                structuredAudit(scopeLabel, bounded)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                // Structured Output is an optimization, not a requirement.
+                // A device can advertise or partially expose it and still fail
+                // the typed inference path. Ordinary Prompt API remains the
+                // compatibility floor.
+                textFallbackAudit(scopeLabel, bounded)
+            }
         } else {
             textFallbackAudit(scopeLabel, bounded)
         }
 
         return CoherenceAuditResult(
-            findings = findings,
-            modelName = runCatching { model.getBaseModelName() }.getOrNull(),
-            limited = documents.size > bounded.size,
+            findings = attempt.findings,
+            modelName = try {
+                model.getBaseModelName()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                null
+            },
+            limited = documents.size > attempt.documentsUsed,
         )
     }
 
     private suspend fun structuredAudit(
         scopeLabel: String,
         documents: List<SemanticDocument>,
-    ): List<CoherenceFinding> {
-        val prompt = buildStructuredPrompt(scopeLabel, documents)
+    ): AuditAttempt {
+        val prepared = fitToInputBudget(scopeLabel, documents, structured = true)
+        val aliases = alias(prepared)
+        val prompt = buildStructuredPrompt(scopeLabel, aliases)
         val typed = generateTypedContentRequest(auditRequest(prompt), CoherenceAuditOutput::class)
         val response = model.generateContent(typed)
         val output = response.candidates.firstOrNull()?.response
             ?: error("Gemini Nano returned no structured audit result.")
 
-        val allowedIds = documents.mapTo(hashSetOf()) { it.id }
-        return output.findings.mapNotNull { item ->
-            if (item.id !in allowedIds) return@mapNotNull null
+        val aliasToId = aliases.associate { (alias, document) -> alias to document.id }
+        val findings = output.findings.mapNotNull { item ->
+            val documentId = aliasToId[item.id] ?: return@mapNotNull null
             val classification = runCatching {
                 CoherenceClass.valueOf(item.classification.trim().uppercase())
             }.getOrDefault(CoherenceClass.UNCERTAIN)
             CoherenceFinding(
-                id = item.id,
+                id = documentId,
                 classification = classification,
                 reason = item.reason.trim().take(MAX_REASON_CHARS),
                 suggestedGroup = item.suggestedGroup.trim().take(MAX_GROUP_CHARS).ifBlank { null },
             )
         }
+        return AuditAttempt(findings, prepared.size)
     }
 
     private suspend fun textFallbackAudit(
         scopeLabel: String,
         documents: List<SemanticDocument>,
-    ): List<CoherenceFinding> {
-        val aliases = documents.mapIndexed { index, document ->
-            "D%04d".format(index + 1) to document
+    ): AuditAttempt {
+        val prepared = fitToInputBudget(scopeLabel, documents, structured = false)
+        return try {
+            runTextFallback(scopeLabel, prepared)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (first: Throwable) {
+            if (!CoherencePromptPolicy.isComputeFailure(first.message)) throw first
+
+            // COMPUTE_ERROR is deliberately retried once with a much smaller
+            // request. This covers transient/model pressure without looping or
+            // silently pretending the full set was classified.
+            val retryDocuments = CoherencePromptPolicy.retry(prepared)
+            try {
+                runTextFallback(scopeLabel, retryDocuments)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (retry: Throwable) {
+                throw IllegalStateException(
+                    "On-device intelligence could not complete this audit after Pocket Steward reduced the request. " +
+                        "No files were changed.",
+                    retry,
+                )
+            }
         }
+    }
+
+    private suspend fun runTextFallback(
+        scopeLabel: String,
+        documents: List<SemanticDocument>,
+    ): AuditAttempt {
+        val aliases = alias(documents)
         val aliasToId = aliases.associate { (alias, document) -> alias to document.id }
 
         val response = model.generateContent(auditRequest(buildFallbackPrompt(scopeLabel, aliases)))
         val output = response.candidates.firstOrNull()?.text
             ?: error("On-device intelligence returned no audit text.")
 
-        return CoherenceTextProtocol.parse(output, aliasToId).map { parsed ->
+        val findings = CoherenceTextProtocol.parse(output, aliasToId).map { parsed ->
             CoherenceFinding(
                 id = parsed.documentId,
                 classification = parsed.classification,
@@ -106,30 +162,92 @@ class GeminiNanoAgentModel : AgentModel {
                 suggestedGroup = parsed.suggestedGroup,
             )
         }
+        return AuditAttempt(findings, documents.size)
     }
+
+    /**
+     * The Prompt API requires input below the model's token limit. The old
+     * implementation could hand 20 x 1,800-character excerpts to Nano in one
+     * request, which can greatly exceed that limit on real folders.
+     *
+     * Count the exact request, including Structured Output schema overhead,
+     * and progressively compact excerpts/documents until there is headroom.
+     * If token counting itself is unavailable, use a deliberately conservative
+     * fallback window rather than guessing with the original large request.
+     */
+    private suspend fun fitToInputBudget(
+        scopeLabel: String,
+        documents: List<SemanticDocument>,
+        structured: Boolean,
+    ): List<SemanticDocument> {
+        val tokenLimit = try {
+            model.getTokenLimit()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            DEFAULT_INPUT_TOKEN_LIMIT
+        }
+        val budget = minOf(
+            SAFE_INPUT_TOKEN_BUDGET,
+            (tokenLimit - INPUT_TOKEN_RESERVE).coerceAtLeast(MIN_INPUT_TOKEN_BUDGET),
+        )
+
+        var window = CoherencePromptPolicy.initialWindow()
+        repeat(MAX_BUDGET_PASSES) {
+            val candidate = CoherencePromptPolicy.compact(documents, window)
+            val aliases = alias(candidate)
+            val tokenCount = try {
+                if (structured) {
+                    val typed = generateTypedContentRequest(
+                        auditRequest(buildStructuredPrompt(scopeLabel, aliases)),
+                        CoherenceAuditOutput::class,
+                    )
+                    model.countTokens(typed).totalTokens
+                } else {
+                    model.countTokens(
+                        auditRequest(buildFallbackPrompt(scopeLabel, aliases)),
+                    ).totalTokens
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                return CoherencePromptPolicy.conservative(documents)
+            }
+
+            if (tokenCount <= budget) return candidate
+            window = CoherencePromptPolicy.next(window) ?: return candidate
+        }
+
+        return CoherencePromptPolicy.conservative(documents)
+    }
+
+    private fun alias(documents: List<SemanticDocument>): List<Pair<String, SemanticDocument>> =
+        documents.mapIndexed { index, document ->
+            "D%04d".format(index + 1) to document
+        }
 
     private fun auditRequest(prompt: String) =
         generateContentRequest(TextPart(prompt)) {
             temperature = 0.2f
-            maxOutputTokens = 1800
+            maxOutputTokens = 1200
             candidateCount = 1
         }
 
     private fun buildStructuredPrompt(
         scopeLabel: String,
-        documents: List<SemanticDocument>,
+        documents: List<Pair<String, SemanticDocument>>,
     ): String = buildString {
         appendLine("You are performing a read-only folder coherence audit for Pocket Steward.")
         appendLine("Folder/scope: $scopeLabel")
         appendLine("Classify each document relative to the apparent themes of the set.")
         appendLine("Use BELONGS, QUESTIONABLE, DOES_NOT_BELONG, or UNCERTAIN.")
         appendLine("For QUESTIONABLE or DOES_NOT_BELONG, suggest a short destination/group name when useful.")
-        appendLine("Do not invent file contents. Preserve every id exactly.")
+        appendLine("Keep each reason under 18 words and each group name under 6 words.")
+        appendLine("Do not invent file contents. Preserve every alias exactly in the id field.")
         appendLine()
-        documents.forEach { doc ->
-            appendLine("ID: ${doc.id}")
+        documents.forEach { (alias, doc) ->
+            appendLine("ID: $alias")
             appendLine("NAME: ${doc.displayName}")
-            appendLine("PATH: ${doc.sourcePath}")
             appendLine("EXCERPT:")
             appendLine(doc.excerpt)
             appendLine("---")
@@ -145,6 +263,7 @@ class GeminiNanoAgentModel : AgentModel {
         appendLine("Classify every listed document relative to the apparent themes of the set.")
         appendLine("Allowed classifications: BELONGS, QUESTIONABLE, DOES_NOT_BELONG, UNCERTAIN.")
         appendLine("For QUESTIONABLE or DOES_NOT_BELONG, suggest a short group name when useful.")
+        appendLine("Keep REASON under 18 words and GROUP under 6 words.")
         appendLine()
         appendLine("OUTPUT PROTOCOL:")
         appendLine("Return exactly one protocol line per document and no prose.")
@@ -157,16 +276,78 @@ class GeminiNanoAgentModel : AgentModel {
         documents.forEach { (alias, doc) ->
             appendLine("ALIAS: $alias")
             appendLine("NAME: ${doc.displayName}")
-            appendLine("PATH: ${doc.sourcePath}")
             appendLine("EXCERPT:")
             appendLine(doc.excerpt)
             appendLine("---")
         }
     }
 
+    private data class AuditAttempt(
+        val findings: List<CoherenceFinding>,
+        val documentsUsed: Int,
+    )
+
     private companion object {
         const val MAX_DOCUMENTS = 20
         const val MAX_REASON_CHARS = 400
         const val MAX_GROUP_CHARS = 80
+        const val DEFAULT_INPUT_TOKEN_LIMIT = 4000
+        const val SAFE_INPUT_TOKEN_BUDGET = 3400
+        const val INPUT_TOKEN_RESERVE = 512
+        const val MIN_INPUT_TOKEN_BUDGET = 2200
+        const val MAX_BUDGET_PASSES = 16
+    }
+}
+
+/**
+ * Pure request-shaping policy so the hardware-sensitive prompt size rules are
+ * unit-testable without AICore.
+ */
+internal object CoherencePromptPolicy {
+    data class Window(
+        val maxDocuments: Int,
+        val excerptChars: Int,
+    )
+
+    private const val MAX_DOCUMENTS = 20
+    private const val INITIAL_EXCERPT_CHARS = 700
+    private const val MIN_EXCERPT_CHARS = 240
+    private const val MIN_DOCUMENTS = 4
+    private const val CONSERVATIVE_DOCUMENTS = 8
+    private const val CONSERVATIVE_EXCERPT_CHARS = 400
+    private const val RETRY_DOCUMENTS = 6
+    private const val RETRY_EXCERPT_CHARS = 320
+
+    fun initialWindow(): Window = Window(MAX_DOCUMENTS, INITIAL_EXCERPT_CHARS)
+
+    fun compact(
+        documents: List<SemanticDocument>,
+        window: Window,
+    ): List<SemanticDocument> =
+        documents.take(window.maxDocuments).map { document ->
+            document.copy(excerpt = document.excerpt.take(window.excerptChars))
+        }
+
+    fun next(window: Window): Window? {
+        if (window.excerptChars > MIN_EXCERPT_CHARS) {
+            val nextChars = maxOf(MIN_EXCERPT_CHARS, window.excerptChars * 3 / 4)
+            if (nextChars != window.excerptChars) return window.copy(excerptChars = nextChars)
+        }
+        if (window.maxDocuments > MIN_DOCUMENTS) {
+            return window.copy(maxDocuments = maxOf(MIN_DOCUMENTS, window.maxDocuments - 2))
+        }
+        return null
+    }
+
+    fun conservative(documents: List<SemanticDocument>): List<SemanticDocument> =
+        compact(documents, Window(CONSERVATIVE_DOCUMENTS, CONSERVATIVE_EXCERPT_CHARS))
+
+    fun retry(documents: List<SemanticDocument>): List<SemanticDocument> =
+        compact(documents, Window(RETRY_DOCUMENTS, RETRY_EXCERPT_CHARS))
+
+    fun isComputeFailure(message: String?): Boolean {
+        val normalized = message.orEmpty().uppercase()
+        return "COMPUTE_ERROR" in normalized ||
+            ("INFERENCE_ERROR" in normalized && "INFERENCE FAILED" in normalized)
     }
 }
