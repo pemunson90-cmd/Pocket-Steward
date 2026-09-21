@@ -2013,10 +2013,6 @@ class ScanViewModel(
     fun analyzeImages(summary: ScanUiState.Summary) {
         viewModelScope.launch {
             try {
-                if (summary.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
                 val privacy = settingsRepository.privacySettings.first()
                 if (!privacy.imageAnalysisEnabled) {
                     _uiState.value = ScanUiState.Error(
@@ -2062,10 +2058,6 @@ class ScanViewModel(
     fun findSimilarFiles(summary: ScanUiState.Summary) {
         viewModelScope.launch {
             try {
-                if (summary.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
                 val privacy = settingsRepository.privacySettings.first()
                 if (!privacy.imageAnalysisEnabled && !privacy.contentInspectionEnabled) {
                     _uiState.value = ScanUiState.Error(
@@ -2084,6 +2076,7 @@ class ScanViewModel(
                     val images = records.filter {
                         !it.isDirectory && classifyByExtension(it.extension) == FileCategory.IMAGE
                     }.take(MAX_SIMILARITY_FILES_PER_KIND)
+
                     for ((index, record) in images.withIndex()) {
                         _uiState.value = ScanUiState.Working(
                             label = "Comparing similar images",
@@ -2092,40 +2085,80 @@ class ScanViewModel(
                             total = images.size,
                         )
                         val hash = withContext(Dispatchers.IO) {
-                            ImageDHash.fromPath(record.stableRef)
+                            container.imageUnderstanding.perceptualHash(record)
                         }
                         if (hash != null) {
-                            signatures += SimilaritySignature(record.stableRef, SimilarityKind.IMAGE, hash)
+                            signatures += SimilaritySignature(
+                                stableRef = record.stableRef,
+                                kind = SimilarityKind.IMAGE,
+                                hash = hash,
+                            )
                             imagesAnalyzed++
                         }
                     }
                 }
 
                 if (privacy.contentInspectionEnabled) {
-                    val roots = summary.scopes.map { it.root.rawValue().trimEnd('/') }
-                    val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
-                    val indexed = withContext(Dispatchers.IO) {
-                        repository.indexedDocuments(roots)
-                    }
-                        .filter { it.category == FileCategory.DOCUMENT.name }
-                        .take(MAX_SIMILARITY_FILES_PER_KIND)
-
-                    for ((index, document) in indexed.withIndex()) {
-                        _uiState.value = ScanUiState.Working(
-                            label = "Comparing similar documents",
-                            detail = document.displayName,
-                            processed = index,
-                            total = indexed.size,
-                        )
-                        val text = withContext(Dispatchers.IO) {
-                            repository.segments(document.stableRef)
-                                .joinToString(" ") { it.body }
-                                .take(MAX_SIMHASH_TEXT_CHARS)
+                    if (summary.mode == StorageAccessMode.DIRECT) {
+                        val roots = summary.scopes.map { it.root.rawValue().trimEnd('/') }
+                        val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+                        val indexed = withContext(Dispatchers.IO) {
+                            repository.indexedDocuments(roots)
                         }
-                        val hash = withContext(Dispatchers.Default) { DocumentSimHash.of(text) }
-                        if (hash != null) {
-                            signatures += SimilaritySignature(document.stableRef, SimilarityKind.DOCUMENT, hash)
-                            documentsAnalyzed++
+                            .filter { it.category == FileCategory.DOCUMENT.name }
+                            .take(MAX_SIMILARITY_FILES_PER_KIND)
+
+                        for ((index, document) in indexed.withIndex()) {
+                            _uiState.value = ScanUiState.Working(
+                                label = "Comparing similar documents",
+                                detail = document.displayName,
+                                processed = index,
+                                total = indexed.size,
+                            )
+                            val text = withContext(Dispatchers.IO) {
+                                repository.segments(document.stableRef)
+                                    .joinToString(" ") { it.body }
+                                    .take(MAX_SIMHASH_TEXT_CHARS)
+                            }
+                            val hash = withContext(Dispatchers.Default) { DocumentSimHash.of(text) }
+                            if (hash != null) {
+                                signatures += SimilaritySignature(
+                                    stableRef = document.stableRef,
+                                    kind = SimilarityKind.DOCUMENT,
+                                    hash = hash,
+                                )
+                                documentsAnalyzed++
+                            }
+                        }
+                    } else {
+                        val documents = records.filter {
+                            !it.isDirectory &&
+                                classifyByExtension(it.extension) == FileCategory.DOCUMENT &&
+                                ContentExtractor.supports(it.extension)
+                        }.take(MAX_SIMILARITY_FILES_PER_KIND)
+                        val inspector = container.contentInspector(StorageAccessMode.SAF)
+
+                        for ((index, record) in documents.withIndex()) {
+                            _uiState.value = ScanUiState.Working(
+                                label = "Comparing similar documents",
+                                detail = record.displayName,
+                                processed = index,
+                                total = documents.size,
+                            )
+                            val extraction = withContext(Dispatchers.IO) { inspector.extract(record) }
+                            val text = (extraction as? ContentExtraction.Text)
+                                ?.content
+                                ?.take(MAX_SIMHASH_TEXT_CHARS)
+                                .orEmpty()
+                            val hash = withContext(Dispatchers.Default) { DocumentSimHash.of(text) }
+                            if (hash != null) {
+                                signatures += SimilaritySignature(
+                                    stableRef = record.stableRef,
+                                    kind = SimilarityKind.DOCUMENT,
+                                    hash = hash,
+                                )
+                                documentsAnalyzed++
+                            }
                         }
                     }
                 }
@@ -3228,14 +3261,14 @@ class ScanViewModel(
         /**
          * One message for one limitation. SAF mode used to produce three
          * different outcomes for the same underlying gap — a clean guard
-         * message from the planners, a raw NotImplementedError from anything
-         * that opened a file, and silent success elsewhere. SAF mutations and
-         * content reads stay deliberately unimplemented (plan Section 5 /
-         * STATUS.md), so every path that needs them says the same thing.
+         * message from the planners, a raw NotImplementedError from backend
+         * stubs, and silent success elsewhere. SAF can now scan, browse, hash,
+         * inspect text, label images, and run read-only audits. Mutations remain
+         * deliberately fenced, so every path that changes files says the same thing.
          */
         const val SAF_UNSUPPORTED =
-            "This needs full file-manager access. In folder-only (SAF) mode Pocket Steward can scan and " +
-                "browse, but it can't move, trash, or read file contents. Change storage access in Settings."
+            "This changes files and needs full file-manager access. In selected-folder mode Pocket Steward can " +
+                "scan, browse, hash, search contents, and run read-only analysis, but it won't move, rename, copy, trash, or write files."
 
         const val COHERENCE_EXCERPT_CHARS = 1_800
         const val COHERENCE_BATCH_SIZE = 12
