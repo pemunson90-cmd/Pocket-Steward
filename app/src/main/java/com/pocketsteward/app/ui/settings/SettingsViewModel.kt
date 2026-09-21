@@ -11,6 +11,8 @@ import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
 import com.pocketsteward.app.data.settings.UiSettings
 import com.pocketsteward.app.rules.ProjectKeyword
+import com.pocketsteward.app.saved.CorrectionRule
+import com.pocketsteward.app.saved.FavoriteDestination
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,12 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiSettings())
 
     val projectKeywords: StateFlow<List<ProjectKeyword>> = settingsRepository.projectKeywords
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val favoriteDestinations: StateFlow<List<FavoriteDestination>> = settingsRepository.favoriteDestinations
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val correctionRules: StateFlow<List<CorrectionRule>> = settingsRepository.correctionRules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _modelStatus = MutableStateFlow(ModelStatusUi())
@@ -161,6 +169,42 @@ class SettingsViewModel(
 
     fun clearStorageAccessChoice() {
         viewModelScope.launch { settingsRepository.clearStorageAccessChoice() }
+    }
+
+    fun setFavoriteDestinationsFromText(text: String) {
+        val values = text.lineSequence()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val parts = line.split("=", limit = 2)
+                if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+                    FavoriteDestination(
+                        name = parts[0].trim(),
+                        path = parts[1].trim(),
+                    )
+                } else {
+                    null
+                }
+            }
+            .toList()
+        viewModelScope.launch { settingsRepository.setFavoriteDestinations(values) }
+    }
+
+    fun setCorrectionRulesFromText(text: String) {
+        val values = text.lineSequence()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val parts = line.split("=", limit = 2)
+                if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+                    CorrectionRule(
+                        term = parts[0].trim(),
+                        destinationFolder = parts[1].trim(),
+                    )
+                } else {
+                    null
+                }
+            }
+            .toList()
+        viewModelScope.launch { settingsRepository.setCorrectionRules(values) }
     }
 
     fun setProjectKeywordsFromText(text: String) {
