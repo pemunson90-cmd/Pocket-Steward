@@ -96,6 +96,37 @@ class DirectStorageGateway(
         }
     }
 
+    override suspend fun copy(source: FileRef, destination: FileRef): MutationResult {
+        val sourceFile = File(source.requirePath())
+        val destinationFile = File(destination.requirePath())
+        if (!sourceFile.exists()) {
+            return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
+        }
+        if (sourceFile.isDirectory) {
+            return MutationResult.Failure("Directory copy is not supported by this operation: ${sourceFile.absolutePath}")
+        }
+        if (destinationFile.exists()) {
+            return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
+        }
+        val parent = destinationFile.parentFile
+            ?: return MutationResult.Failure("Cannot determine destination parent: ${destinationFile.absolutePath}")
+        if (!parent.exists() && !parent.mkdirs()) {
+            return MutationResult.Failure("Could not create parent directory: ${parent.absolutePath}")
+        }
+        return try {
+            sourceFile.copyTo(destinationFile, overwrite = false)
+            if (destinationFile.length() != sourceFile.length()) {
+                destinationFile.delete()
+                MutationResult.Failure("Copied file size did not match source; partial destination was removed.")
+            } else {
+                MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
+            }
+        } catch (t: Throwable) {
+            destinationFile.takeIf { it.exists() }?.delete()
+            MutationResult.Failure("Copy failed: ${t.message}", t)
+        }
+    }
+
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
         moveFile(File(source.requirePath()), File(destination.requirePath()))
 
