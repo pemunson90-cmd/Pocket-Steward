@@ -70,6 +70,7 @@ import com.pocketsteward.app.content.index.ContentSearchSort
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.dedupe.DuplicateGroup
+import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.semantic.DestinationPolicy
 import com.pocketsteward.app.ui.theme.Spacing
 import java.text.DateFormat
@@ -88,6 +89,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val state by viewModel.review.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
     val recentFolders by viewModel.recentFolders.collectAsState()
 
     val title = when (val current = state) {
@@ -1194,6 +1196,24 @@ private fun CoherenceAuditReview(
                             selected = destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER,
                             onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
                         )
+                        if (favoriteDestinations.isNotEmpty()) {
+                            Text(
+                                "Favorites",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(top = Spacing.tight),
+                            )
+                            favoriteDestinations.forEach { favorite ->
+                                OutlinedButton(
+                                    onClick = {
+                                        destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER
+                                        explicitDestination = favorite.path
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                                ) {
+                                    Text("${favorite.name} · ${favorite.path}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
                         if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
                             if (recentFolders.isNotEmpty()) {
                                 Text(
