@@ -203,6 +203,7 @@ fun EmptyState(message: String, modifier: Modifier = Modifier) {
 fun operationSummary(operation: PlannedOperation): String = when (operation) {
     is PlannedOperation.CreateDirectory -> "Create folder: ${operation.name}"
     is PlannedOperation.Move -> "Move ${operation.source.shortPath()} to ${operation.destination.shortPath()}"
+    is PlannedOperation.Copy -> "Copy ${operation.source.shortPath()} to ${operation.destination.shortPath()}"
     is PlannedOperation.Rename -> "Rename to ${operation.newName}"
     is PlannedOperation.Trash -> "Trash ${operation.source.shortPath()}"
     is PlannedOperation.WriteTextFile -> "Write ${operation.name} into ${operation.parent.shortPath()}"
