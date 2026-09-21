@@ -39,8 +39,10 @@ import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
+import com.pocketsteward.app.intent.BoundedIntent
 import com.pocketsteward.app.intent.DeterministicIntentParser
 import com.pocketsteward.app.intent.IntentAction
+import com.pocketsteward.app.intent.IntentOrder
 import com.pocketsteward.app.intent.IntentParseResult
 import com.pocketsteward.app.intent.IntentPlanGenerator
 import com.pocketsteward.app.plan.AgentPlan
@@ -435,6 +437,7 @@ class ScanViewModel(
 
     private var scanJob: Job? = null
     private var indexSearchWatchJob: Job? = null
+    private var lastBoundedIntent: BoundedIntent? = null
     private var userScanCancellationRequested: Boolean = false
 
     init {
@@ -1992,31 +1995,44 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Understanding request", "Offline deterministic parser")
             try {
-                when (val parsed = DeterministicIntentParser.parse(request)) {
+                when (val parsed = DeterministicIntentParser.parse(request, lastBoundedIntent)) {
                     is IntentParseResult.Unsupported -> {
                         _uiState.value = ScanUiState.Error(parsed.reason)
                     }
 
                     is IntentParseResult.Parsed -> {
                         val intent = parsed.intent
+                        lastBoundedIntent = intent
                         when (intent.action) {
                             IntentAction.DUPLICATE_REVIEW -> {
                                 findDuplicates(summary)
                             }
 
                             IntentAction.FIND -> {
-                                val records = filesForScopes(summary.scopes)
-                                    .filter { record ->
-                                        !record.isDirectory &&
-                                            (intent.categories.isEmpty() ||
-                                                classifyByExtension(record.extension) in intent.categories)
-                                    }
+                                val records = applyIntentCriteria(
+                                    filesForScopes(summary.scopes)
+                                        .filter { record ->
+                                            !record.isDirectory &&
+                                                (intent.categories.isEmpty() ||
+                                                    classifyByExtension(record.extension) in intent.categories)
+                                        },
+                                    intent,
+                                )
                                 val contentTerm = intent.contentTerm
                                 if (contentTerm != null) {
+                                    val contentFilters = ContentSearchFilters(
+                                        categories = intent.categories.mapTo(linkedSetOf()) { it.name },
+                                        minSizeBytes = intent.minSizeBytes,
+                                        maxSizeBytes = intent.maxSizeBytes,
+                                        modifiedAfter = intent.modifiedAfter,
+                                        modifiedBefore = intent.modifiedBefore,
+                                    )
                                     runIndexedContentSearch(
                                         summary = summary,
                                         query = contentTerm,
                                         requestedCategories = intent.categories,
+                                        sort = intent.toContentSearchSort(),
+                                        filters = contentFilters,
                                     )
                                 } else {
                                     val matches = records.filter { record ->
@@ -2107,6 +2123,36 @@ class ScanViewModel(
             }
         }
     }
+    private fun applyIntentCriteria(
+        records: List<FileRecord>,
+        intent: BoundedIntent,
+    ): List<FileRecord> {
+        val filtered = records.filter { record ->
+            if (intent.minSizeBytes != null && record.sizeBytes < intent.minSizeBytes) return@filter false
+            if (intent.maxSizeBytes != null && record.sizeBytes > intent.maxSizeBytes) return@filter false
+            val modified = record.modifiedAt
+            if (intent.modifiedBefore != null && (modified == null || modified >= intent.modifiedBefore)) return@filter false
+            if (intent.modifiedAfter != null && (modified == null || modified <= intent.modifiedAfter)) return@filter false
+            true
+        }
+        val ordered = when (intent.order) {
+            IntentOrder.DEFAULT -> filtered
+            IntentOrder.LARGEST_FIRST -> filtered.sortedByDescending { it.sizeBytes }
+            IntentOrder.SMALLEST_FIRST -> filtered.sortedBy { it.sizeBytes }
+            IntentOrder.NEWEST_FIRST -> filtered.sortedByDescending { it.modifiedAt ?: Long.MIN_VALUE }
+            IntentOrder.OLDEST_FIRST -> filtered.sortedBy { it.modifiedAt ?: Long.MAX_VALUE }
+        }
+        return intent.resultLimit?.let { ordered.take(it) } ?: ordered
+    }
+
+    private fun BoundedIntent.toContentSearchSort(): ContentSearchSort = when (order) {
+        IntentOrder.DEFAULT -> ContentSearchSort.RELEVANCE
+        IntentOrder.LARGEST_FIRST -> ContentSearchSort.LARGEST
+        IntentOrder.SMALLEST_FIRST -> ContentSearchSort.SMALLEST
+        IntentOrder.NEWEST_FIRST -> ContentSearchSort.MODIFIED_NEWEST
+        IntentOrder.OLDEST_FIRST -> ContentSearchSort.MODIFIED_OLDEST
+    }
+
     fun editPlanDestinationGroup(
         groupDirectory: String,
         newDestinationRootPath: String? = null,
