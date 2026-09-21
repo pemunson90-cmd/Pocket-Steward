@@ -33,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.data.db.TaskJournalProgress
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.plan.DurablePlanCodec
@@ -62,6 +63,7 @@ fun HistoryScreen(onBack: () -> Unit) {
         },
     )
     val tasks by viewModel.tasks.collectAsState()
+    val taskProgress by viewModel.taskProgress.collectAsState()
     val actionState by viewModel.actionState.collectAsState()
 
     Scaffold(
@@ -160,6 +162,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                     items(tasks, key = { it.id }) { task ->
                         TaskCard(
                             task = task,
+                            progress = taskProgress[task.id],
                             onResume = { viewModel.resumeTask(task) },
                             onPause = viewModel::pauseTask,
                             onUndo = { viewModel.requestUndo(task) },
@@ -287,6 +290,7 @@ private fun ManifestCard(
 @Composable
 private fun TaskCard(
     task: TaskRun,
+    progress: TaskJournalProgress?,
     onResume: () -> Unit,
     onPause: () -> Unit,
     onUndo: () -> Unit,
@@ -303,6 +307,26 @@ private fun TaskCard(
                 Text("· ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(task.startedAt))}")
             }
             task.summary?.takeIf { it.isNotBlank() }?.let { Text(it, modifier = Modifier.padding(top = 4.dp)) }
+
+            val durableTotal = DurablePlanCodec.decodeOrNull(task.planJson)?.operations?.size ?: 0
+            if (durableTotal > 0 && progress != null &&
+                (task.status == TaskRunStatus.RUNNING || task.status == TaskRunStatus.CANCELLED)
+            ) {
+                val completed = progress.journaledCount.coerceAtMost(durableTotal.toLong()).toInt()
+                LinearProgressIndicator(
+                    progress = { completed.toFloat() / durableTotal.toFloat() },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                Text(
+                    buildString {
+                        append("$completed of $durableTotal operations recorded")
+                        if (progress.pendingCount > 0) append(" · ${progress.pendingCount} in progress")
+                        if (progress.failedCount > 0) append(" · ${progress.failedCount} failed")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             if (task.status == TaskRunStatus.PARTIAL) {
                 // Spec item 3: a run that moved 4,829 files and missed one
