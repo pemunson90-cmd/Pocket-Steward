@@ -1,6 +1,7 @@
 package com.pocketsteward.app.di
 
 import android.content.Context
+import android.media.MediaScannerConnection
 import androidx.core.content.ContextCompat
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.ai.AgentModel
@@ -82,7 +83,18 @@ class AppContainer(context: Context) {
     }
 
     val taskManifestService: TaskManifestService by lazy {
-        TaskManifestService(database.taskRunDao(), database.mutationRecordDao())
+        TaskManifestService(
+            taskRunDao = database.taskRunDao(),
+            mutationRecordDao = database.mutationRecordDao(),
+            onVerifiedExport = { path ->
+                MediaScannerConnection.scanFile(
+                    appContext,
+                    arrayOf(path),
+                    arrayOf("text/markdown"),
+                    null,
+                )
+            },
+        )
     }
 
     val mutationRecovery: MutationRecovery by lazy {
