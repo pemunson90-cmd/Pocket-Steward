@@ -54,13 +54,27 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val storageAccess by viewModel.storageAccessState.collectAsState()
     val uiSettings by viewModel.uiSettings.collectAsState()
     val storedKeywords by viewModel.projectKeywords.collectAsState()
+    val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
+    val correctionRules by viewModel.correctionRules.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
 
     var keywordsText by remember { mutableStateOf<String?>(null) }
+    var favoritesText by remember { mutableStateOf<String?>(null) }
+    var correctionsText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(storedKeywords) {
         if (keywordsText == null) {
             keywordsText = storedKeywords.joinToString("\n") { "${it.term}=${it.projectFolder}" }
+        }
+    }
+    LaunchedEffect(favoriteDestinations) {
+        if (favoritesText == null) {
+            favoritesText = favoriteDestinations.joinToString("\n") { "${it.name}=${it.path}" }
+        }
+    }
+    LaunchedEffect(correctionRules) {
+        if (correctionsText == null) {
+            correctionsText = correctionRules.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
         }
     }
 
@@ -223,6 +237,54 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                     }
                 }
             }
+        }
+
+        SectionTitle("Organization preferences")
+        Text(
+            text = "Favorite destinations",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "One per line as name=/absolute/path. Favorite roots appear in organization destination choices.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = favoritesText ?: "",
+            onValueChange = { favoritesText = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+        )
+        Button(
+            onClick = { viewModel.setFavoriteDestinationsFromText(favoritesText ?: "") },
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text("Save favorite destinations")
+        }
+
+        Text(
+            text = "Learned correction rules",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = "One per line as filename-term=group. These outrank project keywords and model suggestions.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = correctionsText ?: "",
+            onValueChange = { correctionsText = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+        )
+        Button(
+            onClick = { viewModel.setCorrectionRulesFromText(correctionsText ?: "") },
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text("Save correction rules")
         }
 
         HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
