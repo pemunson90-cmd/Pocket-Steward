@@ -14,4 +14,10 @@ class AdaptiveLayoutPolicyTest {
         assertThat(AdaptiveLayoutPolicy.useExpandedNavigation(600f)).isTrue()
         assertThat(AdaptiveLayoutPolicy.useExpandedNavigation(840f)).isTrue()
     }
+
+    @Test
+    fun mediumWorkspaceCanUseTwoPanesBeforeNavigationRailThreshold() {
+        assertThat(AdaptiveLayoutPolicy.useTwoPane(519f)).isFalse()
+        assertThat(AdaptiveLayoutPolicy.useTwoPane(520f)).isTrue()
+    }
 }
