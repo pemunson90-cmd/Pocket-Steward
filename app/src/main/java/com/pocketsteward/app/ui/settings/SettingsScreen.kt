@@ -45,6 +45,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                     agentModel = container.agentModel,
                     loadContentIndexOverview = container::contentIndexOverview,
                     clearContentIndexCache = container::clearContentIndex,
+                    applyScheduledCleanup = container.scheduledCleanupCoordinator::apply,
                 )
             }
         },
@@ -56,12 +57,15 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val storedKeywords by viewModel.projectKeywords.collectAsState()
     val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
     val correctionRules by viewModel.correctionRules.collectAsState()
+    val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
 
     var keywordsText by remember { mutableStateOf<String?>(null) }
     var favoritesText by remember { mutableStateOf<String?>(null) }
     var correctionsText by remember { mutableStateOf<String?>(null) }
+    var scheduleRootsText by remember { mutableStateOf<String?>(null) }
+    var scheduleIntervalText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(storedKeywords) {
         if (keywordsText == null) {
             keywordsText = storedKeywords.joinToString("\n") { "${it.term}=${it.projectFolder}" }
@@ -75,6 +79,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     LaunchedEffect(correctionRules) {
         if (correctionsText == null) {
             correctionsText = correctionRules.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
+        }
+    }
+    LaunchedEffect(scheduledCleanup) {
+        if (scheduleRootsText == null) {
+            scheduleRootsText = scheduledCleanup.roots.joinToString("\n")
+        }
+        if (scheduleIntervalText == null) {
+            scheduleIntervalText = scheduledCleanup.intervalHours.toString()
         }
     }
 
@@ -285,6 +297,51 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
             modifier = Modifier.padding(top = 8.dp),
         ) {
             Text("Save correction rules")
+        }
+
+        Text(
+            text = "Scheduled review suggestions",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        SettingsSwitchRow(
+            label = "Periodic review",
+            supporting = "Scans metadata in the background and notifies you about new files. It never moves anything unattended.",
+            checked = scheduledCleanup.enabled,
+            onCheckedChange = { enabled ->
+                viewModel.setScheduledCleanup(
+                    enabled = enabled,
+                    intervalHours = scheduleIntervalText?.toLongOrNull() ?: scheduledCleanup.intervalHours,
+                    rootsText = scheduleRootsText.orEmpty(),
+                )
+            },
+        )
+        OutlinedTextField(
+            value = scheduleIntervalText ?: "",
+            onValueChange = { scheduleIntervalText = it.filter(Char::isDigit).take(3) },
+            label = { Text("Interval hours") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = scheduleRootsText ?: "",
+            onValueChange = { scheduleRootsText = it },
+            label = { Text("Folders to watch (one path per line)") },
+            supportingText = { Text("Leave blank to reuse previously scanned roots.") },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            minLines = 2,
+        )
+        Button(
+            onClick = {
+                viewModel.setScheduledCleanup(
+                    enabled = scheduledCleanup.enabled,
+                    intervalHours = scheduleIntervalText?.toLongOrNull() ?: 24,
+                    rootsText = scheduleRootsText.orEmpty(),
+                )
+            },
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text("Save schedule")
         }
 
         HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
