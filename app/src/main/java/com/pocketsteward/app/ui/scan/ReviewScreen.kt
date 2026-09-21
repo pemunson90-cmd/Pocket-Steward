@@ -124,6 +124,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
                 state = current,
+                favoriteDestinations = favoriteDestinations,
                 recentFolders = recentFolders,
                 onBuildProposal = { includeSubfolders, destinationPolicy, explicitPath ->
                     viewModel.proposeSemanticOrganization(
@@ -1061,6 +1062,7 @@ private fun ContentSearchProvenance.label(): String = when (this) {
 @Composable
 private fun CoherenceAuditReview(
     state: ScanUiState.CoherenceAuditReview,
+    favoriteDestinations: List<FavoriteDestination>,
     recentFolders: List<String>,
     onBuildProposal: (Boolean, DestinationPolicy, String?) -> Unit,
     modifier: Modifier,
