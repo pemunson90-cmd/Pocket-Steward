@@ -46,6 +46,7 @@ fun HomeScreen(
     onOpenTasks: () -> Unit,
     onNaturalLanguageRequest: (String) -> Unit,
     onQuickAction: (PostScanAction) -> Unit,
+    onScheduledReview: () -> Unit,
     onSavedWorkflow: (String) -> Unit,
     onSavedSearch: (String) -> Unit,
     onImportedPlan: (String) -> Unit,
@@ -67,6 +68,7 @@ fun HomeScreen(
     val taskProgress by viewModel.taskProgress.collectAsState()
     val savedWorkflows by viewModel.savedWorkflows.collectAsState()
     val savedSearches by viewModel.savedSearches.collectAsState()
+    val pendingCleanupSuggestion by viewModel.pendingCleanupSuggestion.collectAsState()
     var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
 
     val importPlanLauncher = rememberLauncherForActivityResult(
@@ -150,6 +152,47 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+
+        pendingCleanupSuggestion?.let { suggestion ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Scheduled review ready", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        buildString {
+                            append(suggestion.newFileCount)
+                            append(" new file")
+                            if (suggestion.newFileCount != 1) append("s")
+                            if (suggestion.obviousMatchCount > 0) {
+                                append(" · ")
+                                append(suggestion.obviousMatchCount)
+                                append(" obvious organization match")
+                                if (suggestion.obviousMatchCount != 1) append("es")
+                            }
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "Nothing has moved. Open the fresh review to build and approve a plan.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Button(onClick = onScheduledReview) {
+                            Text("Review")
+                        }
+                        TextButton(onClick = viewModel::dismissCleanupSuggestion) {
+                            Text("Dismiss")
+                        }
+                    }
                 }
             }
         }
