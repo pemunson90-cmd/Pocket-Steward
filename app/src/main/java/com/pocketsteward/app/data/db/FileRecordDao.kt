@@ -31,6 +31,21 @@ interface FileRecordDao {
     suspend fun upsertAll(records: List<FileRecord>): List<Long> =
         records.map { upsert(it) }
 
+    @Transaction
+    suspend fun upsertFromScan(record: FileRecord): Long {
+        val existing = getByStableRef(record.stableRef)
+        return if (existing == null) {
+            insert(record)
+        } else {
+            update(mergeScanRecord(existing, record))
+            existing.id
+        }
+    }
+
+    @Transaction
+    suspend fun upsertAllFromScan(records: List<FileRecord>): List<Long> =
+        records.map { upsertFromScan(it) }
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertScopeTag(scope: FileScope)
 
@@ -69,6 +84,12 @@ interface FileRecordDao {
 
     @Query("DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef")
     suspend fun removeScopeTags(scopeRootRef: String)
+
+    @Query(
+        "DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef " +
+            "AND fileRef IN (SELECT stableRef FROM file_records WHERE lastScannedAt < :scanStartedAt)",
+    )
+    suspend fun removeStaleScopeTags(scopeRootRef: String, scanStartedAt: Long)
 
     @Query("DELETE FROM file_records WHERE stableRef NOT IN (SELECT fileRef FROM file_scopes)")
     suspend fun deleteOrphanedFiles()
