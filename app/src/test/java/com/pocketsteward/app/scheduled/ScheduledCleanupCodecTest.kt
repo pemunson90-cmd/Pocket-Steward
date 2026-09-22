@@ -23,4 +23,29 @@ class ScheduledCleanupCodecTest {
         assertThat(decoded.intervalHours).isEqualTo(24)
         assertThat(decoded.roots).isEmpty()
     }
+    @Test
+    fun pendingSuggestionRoundTripsMultipleRoots() {
+        val input = PendingCleanupSuggestion(
+            createdAtEpochMs = 123456789L,
+            roots = listOf(
+                "/storage/emulated/0/Download",
+                "content://provider/tree/root/document/root%2FWriting",
+            ),
+            newFileCount = 43,
+            obviousMatchCount = 17,
+        )
+
+        val decoded = PendingCleanupSuggestionCodec.decode(
+            PendingCleanupSuggestionCodec.encode(input),
+        )
+
+        assertThat(decoded).isEqualTo(input)
+    }
+
+    @Test
+    fun malformedPendingSuggestionFailsClosed() {
+        assertThat(PendingCleanupSuggestionCodec.decode("garbage")).isNull()
+        assertThat(PendingCleanupSuggestionCodec.decode("1|nope|4|2|abc")).isNull()
+    }
+
 }
