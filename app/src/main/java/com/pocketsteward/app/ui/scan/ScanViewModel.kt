@@ -183,7 +183,7 @@ sealed interface ScanUiState {
         val acceptedScopeLabels: List<String>,
         /** Accepted operations the user still intends to run. Rejected
          * operations never enter this selection set. */
-        val selectedIndices: Set<Int> = PlanSelection.allSelected(accepted),
+        val selectedIndices: Set<Int> = PlanSelection.safeSelected(accepted),
         /**
          * What the generator declined to touch and why, in the user's words
          * rather than counts the screen has to interpret. Empty when a plan
