@@ -70,7 +70,8 @@ class DirectStorageGatewayMutationTest {
             movedPath.readText(),
         )
 
-        val copiedPath = File(root, "copy/duplicate.txt")
+        val copyDir = File(root, "copy").apply { mkdirs() }
+        val copiedPath = File(copyDir, "duplicate.txt")
         val copied = gateway.copy(
             FileRef.Direct(movedPath.absolutePath),
             FileRef.Direct(copiedPath.absolutePath),
@@ -156,7 +157,8 @@ class DirectStorageGatewayMutationTest {
         val renamed = gateway.rename((written as MutationResult.Success).resultRef, renamedName)
         assertTrue(renamed is MutationResult.Success)
 
-        val copiedPath = File(root, "copies/$renamedName")
+        val copiesDir = File(root, "copies").apply { mkdirs() }
+        val copiedPath = File(copiesDir, renamedName)
         val copied = gateway.copy(
             (renamed as MutationResult.Success).resultRef,
             FileRef.Direct(copiedPath.absolutePath),
@@ -176,7 +178,8 @@ class DirectStorageGatewayMutationTest {
             raf.seek(raf.length() - 4)
             raf.write(byteArrayOf(5, 6, 7, 8))
         }
-        val destination = File(root, "copies/sparse-large.bin")
+        val copiesDir = File(root, "copies").apply { mkdirs() }
+        val destination = File(copiesDir, "sparse-large.bin")
 
         val result = gateway.copy(
             FileRef.Direct(source.absolutePath),
@@ -194,6 +197,23 @@ class DirectStorageGatewayMutationTest {
             raf.readFully(last)
             assertEquals(listOf<Byte>(5, 6, 7, 8), last.toList())
         }
+    }
+
+    @Test
+    fun moveRefusesMissingParentInsteadOfCreatingUnjournaledDirectory() = runBlocking {
+        val source = File(root, "source-for-move.txt").apply { writeText("source") }
+        val missingParent = File(root, "missing-move-parent")
+        val destination = File(missingParent, "moved.txt")
+
+        val result = gateway.move(
+            FileRef.Direct(source.absolutePath),
+            FileRef.Direct(destination.absolutePath),
+        )
+
+        assertTrue(result is MutationResult.Failure)
+        assertTrue(source.exists())
+        assertFalse(missingParent.exists())
+        assertFalse(destination.exists())
     }
 
 }
