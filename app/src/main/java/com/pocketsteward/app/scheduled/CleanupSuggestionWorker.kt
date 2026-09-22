@@ -1,5 +1,15 @@
 package com.pocketsteward.app.scheduled
 
+import androidx.core.content.ContextCompat
+
+import androidx.core.app.NotificationManagerCompat
+
+import android.os.Build
+
+import android.content.pm.PackageManager
+
+import android.Manifest
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -166,6 +176,21 @@ class CleanupSuggestionWorker(
     }
 
     private fun postSuggestion(newFiles: Int, obvious: Int) {
+        val permissionGranted =
+            Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED
+        if (!permissionGranted ||
+            !NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()
+        ) {
+            // The pending review was persisted before this call. Notification
+            // permission controls surfacing only, never whether the finding
+            // survives for Home to show later.
+            return
+        }
+
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(
