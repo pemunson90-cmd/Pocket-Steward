@@ -2,9 +2,11 @@ package com.pocketsteward.app.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.pocketsteward.app.ui.history.HistoryScreen
 import com.pocketsteward.app.ui.home.HomeScreen
 import com.pocketsteward.app.ui.onboarding.OnboardingScreen
@@ -19,6 +21,7 @@ object Routes {
     const val HOME = "home"
     const val SETTINGS = "settings"
     const val HISTORY = "history"
+    const val HISTORY_TASK = "history/task/{taskId}"
     const val TRASH = "trash"
 
     /**
@@ -34,6 +37,7 @@ object Routes {
     fun scanFlowWithSavedSearch(searchId: String): String = ScanFlow.entryWithSavedSearch(searchId)
     fun scanFlowWithImportedPlan(cachePath: String): String = ScanFlow.entryWithImportedPlan(cachePath)
     fun scanFlowScheduledReview(): String = ScanFlow.entryWithScheduledReview()
+    fun historyTask(taskId: Long): String = "history/task/$taskId"
 }
 
 @Composable
@@ -89,6 +93,17 @@ fun PocketStewardNavHost(
         )
         composable(Routes.HISTORY) {
             HistoryScreen(onBack = { navController.popBackStack() })
+        }
+        composable(
+            route = Routes.HISTORY_TASK,
+            arguments = listOf(
+                navArgument("taskId") { type = NavType.LongType },
+            ),
+        ) { entry ->
+            HistoryScreen(
+                onBack = { navController.popBackStack() },
+                initialManifestTaskId = entry.arguments?.getLong("taskId"),
+            )
         }
         composable(Routes.TRASH) {
             TrashScreen(onBack = { navController.popBackStack() })
