@@ -186,7 +186,12 @@ private fun FileListReview(state: ScanUiState.FileListReview, modifier: Modifier
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(Spacing.hairline),
         ) {
-            items(state.records, key = { it.stableRef }) { record -> FileRow(record) }
+            items(state.records, key = { it.stableRef }) { record ->
+                FileRow(
+                    record = record,
+                    explanation = state.explanationByRef[record.stableRef],
+                )
+            }
         }
     }
 }
@@ -198,18 +203,32 @@ private fun FileListReview(state: ScanUiState.FileListReview, modifier: Modifier
  * wraps.
  */
 @Composable
-private fun FileRow(record: FileRecord) {
+private fun FileRow(
+    record: FileRecord,
+    explanation: String? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
         horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
     ) {
-        Text(
-            text = record.displayName,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = record.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            explanation?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
+        }
         Text(
             text = formatBytes(record.sizeBytes),
             style = MaterialTheme.typography.bodyMedium,
