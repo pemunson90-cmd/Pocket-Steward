@@ -182,10 +182,13 @@ class PlanExecutor(
         var filesTrashed = 0
         var filesWritten = 0
         var failed = 0
+        var needsReview = false
         val failures = mutableListOf<OperationFailure>()
         val createdFolders = mutableListOf<String>()
 
         validated.accepted.forEachIndexed { sequence, operation ->
+            if (needsReview) return@forEachIndexed
+
             val approvalFailure = approvalPreconditionFailure(
                 operation = operation,
                 expected = sourcePreconditions[sequence],
@@ -305,6 +308,20 @@ class PlanExecutor(
                 }
 
                 is MutationResult.Failure -> {
+                    val destinationRemains = expectedDestination?.let { destination ->
+                        runCatching { gateway.exists(destination) }.getOrDefault(false)
+                    } == true
+                    val journalStatus = if (destinationRemains) {
+                        MutationStatus.NEEDS_REVIEW
+                    } else {
+                        MutationStatus.FAILED
+                    }
+                    val recordedReason = if (destinationRemains) {
+                        needsReview = true
+                        "${result.reason} The expected destination exists after the reported failure, so execution stopped for review."
+                    } else {
+                        result.reason
+                    }
                     mutationRecordDao.update(
                         MutationRecord(
                             id = mutationId,
@@ -314,15 +331,15 @@ class PlanExecutor(
                             sourceBefore = FileRefJournalCodec.encode(journalSource),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
                             sourceFingerprint = contentFingerprint,
-                            status = MutationStatus.FAILED,
+                            status = journalStatus,
                             executedAt = System.currentTimeMillis(),
-                            undoState = UndoState.NOT_AVAILABLE,
+                            undoState = if (destinationRemains) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
                             undoAttemptedAt = null,
-                            error = result.reason,
+                            error = recordedReason,
                             undoError = null,
                         ),
                     )
-                    failures += operation.toFailure(sequence, result.reason)
+                    failures += operation.toFailure(sequence, recordedReason)
                     failed++
                 }
             }
@@ -358,6 +375,7 @@ class PlanExecutor(
                 // filing it as FAILED made an audit trail read like a disaster
                 // directly above its own "4834 succeeded" summary line.
                 status = when {
+                    needsReview -> TaskRunStatus.NEEDS_REVIEW
                     failed == 0 -> TaskRunStatus.COMPLETED
                     summary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
@@ -419,6 +437,7 @@ class PlanExecutor(
         var filesTrashed = 0
         var filesWritten = 0
         var failed = 0
+        var needsReview = false
         val failures = mutableListOf<OperationFailure>()
         val createdFolders = mutableListOf<String>()
         val existingBySequence = existingRecords.associateBy { it.sequence }
@@ -610,6 +629,20 @@ class PlanExecutor(
                     }
                 }
                 is MutationResult.Failure -> {
+                    val destinationRemains = expectedDestination?.let { destination ->
+                        runCatching { gateway.exists(destination) }.getOrDefault(false)
+                    } == true
+                    val journalStatus = if (destinationRemains) {
+                        MutationStatus.NEEDS_REVIEW
+                    } else {
+                        MutationStatus.FAILED
+                    }
+                    val recordedReason = if (destinationRemains) {
+                        needsReview = true
+                        "${result.reason} The expected destination exists after the reported failure, so execution stopped for review."
+                    } else {
+                        result.reason
+                    }
                     mutationRecordDao.update(
                         MutationRecord(
                             id = mutationId,
@@ -619,19 +652,20 @@ class PlanExecutor(
                             sourceBefore = FileRefJournalCodec.encode(journalSource),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
                             sourceFingerprint = contentFingerprint,
-                            status = MutationStatus.FAILED,
+                            status = journalStatus,
                             executedAt = System.currentTimeMillis(),
-                            undoState = UndoState.NOT_AVAILABLE,
+                            undoState = if (destinationRemains) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
                             undoAttemptedAt = null,
-                            error = result.reason,
+                            error = recordedReason,
                             undoError = null,
                         ),
                     )
-                    failures += operation.toFailure(sequence, result.reason)
+                    failures += operation.toFailure(sequence, recordedReason)
                     failed++
                 }
             }
             onProgress(sequence + 1, operations.size)
+            if (needsReview) break
         }
 
         val finishedSummary = summary()
@@ -640,6 +674,7 @@ class PlanExecutor(
             latest.copy(
                 completedAt = System.currentTimeMillis(),
                 status = when {
+                    needsReview -> TaskRunStatus.NEEDS_REVIEW
                     failed == 0 -> TaskRunStatus.COMPLETED
                     finishedSummary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
