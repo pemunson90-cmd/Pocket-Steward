@@ -10,6 +10,7 @@ import com.pocketsteward.app.data.settings.PrivacySettings
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.data.settings.StorageAccessState
 import com.pocketsteward.app.data.settings.UiSettings
+import com.pocketsteward.app.diagnostics.RuntimeDiagnosticsSnapshot
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.CorrectionRule
 import com.pocketsteward.app.saved.FavoriteDestination
@@ -38,12 +39,19 @@ data class ContentIndexStatusUi(
     val error: String? = null,
 )
 
+data class DiagnosticsStatusUi(
+    val snapshot: RuntimeDiagnosticsSnapshot? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val agentModel: AgentModel,
     private val loadContentIndexOverview: suspend () -> ContentIndexOverview,
     private val clearContentIndexCache: () -> Boolean,
     private val applyScheduledCleanup: (ScheduledCleanupSettings) -> Unit,
+    private val loadRuntimeDiagnostics: suspend () -> RuntimeDiagnosticsSnapshot,
 ) : ViewModel() {
 
     val privacySettings: StateFlow<PrivacySettings> = settingsRepository.privacySettings
@@ -74,9 +82,26 @@ class SettingsViewModel(
     private val _contentIndexStatus = MutableStateFlow(ContentIndexStatusUi())
     val contentIndexStatus: StateFlow<ContentIndexStatusUi> = _contentIndexStatus
 
+    private val _diagnosticsStatus = MutableStateFlow(DiagnosticsStatusUi())
+    val diagnosticsStatus: StateFlow<DiagnosticsStatusUi> = _diagnosticsStatus
+
     init {
         refreshModelStatus()
         refreshContentIndexStatus()
+        refreshRuntimeDiagnostics()
+    }
+
+    fun refreshRuntimeDiagnostics() {
+        viewModelScope.launch {
+            _diagnosticsStatus.value = DiagnosticsStatusUi(loading = true)
+            _diagnosticsStatus.value = try {
+                DiagnosticsStatusUi(
+                    snapshot = withContext(Dispatchers.IO) { loadRuntimeDiagnostics() },
+                )
+            } catch (t: Throwable) {
+                DiagnosticsStatusUi(error = t.message ?: t.javaClass.simpleName)
+            }
+        }
     }
 
     fun refreshContentIndexStatus() {
