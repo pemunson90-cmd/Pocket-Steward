@@ -140,7 +140,9 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
             ScanFlowNavEffect(navController, viewModel)
             CompletionScreen(
                 viewModel = viewModel,
-                onOpenTasks = { navController.navigate(Routes.HISTORY) },
+                onOpenTask = { taskId ->
+                    navController.navigate(Routes.historyTask(taskId))
+                },
                 onDone = {
                     // Done means the task is finished with, not that the scan
                     // is. Popping back to the results keeps the index and lets
