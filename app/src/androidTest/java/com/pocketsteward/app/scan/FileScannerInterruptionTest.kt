@@ -8,7 +8,9 @@ import com.google.common.truth.Truth.assertThat
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.data.db.ScanStatus
 import com.pocketsteward.app.storage.DirectStorageGateway
+import com.pocketsteward.app.storage.FileEntry
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.StorageGateway
 import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.CancellationException
@@ -95,6 +97,57 @@ class FileScannerInterruptionTest {
         assertThat(all).hasSize(116)
         assertThat(all.map { it.stableRef }.distinct()).hasSize(116)
         assertThat(db.fileRecordDao().getFilesUnderScopeRoot(root.absolutePath)).hasSize(110)
+    }
+
+    @Test
+    fun permissionLossBeforeDirectoryCommitKeepsThatDirectoryInResumeQueue() = runBlocking {
+        val nested = File(root, "nested").apply { mkdirs() }
+        repeat(12) { index -> File(nested, "nested-$index.txt").writeText("n:$index") }
+        repeat(4) { index -> File(root, "root-$index.txt").writeText("r:$index") }
+
+        val rootRef = FileRef.Direct(root.absolutePath)
+        val direct = DirectStorageGateway(context)
+        val revoked = object : StorageGateway by direct {
+            var listCalls = 0
+
+            override suspend fun listChildren(directory: FileRef): List<FileEntry> {
+                listCalls++
+                if (listCalls == 2) {
+                    throw SecurityException("synthetic revoked storage permission")
+                }
+                return direct.listChildren(directory)
+            }
+        }
+
+        val first = runCatching {
+            FileScanner(
+                gateway = revoked,
+                fileRecordDao = db.fileRecordDao(),
+                scanCheckpointDao = db.scanCheckpointDao(),
+            ).scan(rootRef)
+        }
+        assertThat(first.exceptionOrNull()).isInstanceOf(SecurityException::class.java)
+
+        val paused = db.scanCheckpointDao().get(root.absolutePath)
+        assertThat(paused?.status).isEqualTo(ScanStatus.PAUSED)
+        val pending = FileRefCodec.decodeList(paused!!.pendingDirectoriesJson)
+        assertThat(pending.map { (it as FileRef.Direct).absolutePath })
+            .contains(nested.absolutePath)
+
+        // Access restored. The forgotten-in-old-code nested directory must
+        // still be scanned on resume.
+        FileScanner(
+            gateway = direct,
+            fileRecordDao = db.fileRecordDao(),
+            scanCheckpointDao = db.scanCheckpointDao(),
+        ).scan(rootRef)
+
+        assertThat(db.scanCheckpointDao().get(root.absolutePath)?.status)
+            .isEqualTo(ScanStatus.COMPLETED)
+        val files = db.fileRecordDao().getFilesUnderScopeRoot(root.absolutePath)
+        assertThat(files).hasSize(16)
+        assertThat(files.map { it.stableRef }.distinct()).hasSize(16)
+        assertThat(files.count { it.parentRef == nested.absolutePath }).isEqualTo(12)
     }
 
     @Test
