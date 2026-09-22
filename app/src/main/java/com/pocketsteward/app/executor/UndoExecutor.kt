@@ -17,6 +17,7 @@ import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.knownParentOrNull
 
 data class UndoSummary(
     val taskRunId: Long,
@@ -243,11 +244,18 @@ class UndoExecutor(
                 val restored = FileRefJournalCodec.decode(record.sourceBefore)
                 fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
                 val meta = gateway.stat(restored)
-                val restoredRecord = meta.toFileRecord(restored.parentRefOrNull())
+                val restoredRecord = meta.toFileRecord(restored.knownParentOrNull())
                 fileRecordDao.upsert(restoredRecord)
                 val knownScopes = (fileRecordDao.getKnownScopeRoots() + scopeRootRef).distinct()
+                val matchedScopes = matchingScopeRoots(meta.ref, knownScopes).toMutableSet()
+                if (restored !is FileRef.Direct) {
+                    // SAF mode has one granted tree per task. A symbolic child
+                    // restores into that exact tree even though the provider's
+                    // concrete URI is assigned only after the inverse move.
+                    matchedScopes += scopeRootRef
+                }
                 fileRecordDao.insertScopeTags(
-                    matchingScopeRoots(restored, knownScopes).map { FileScope(restoredRecord.stableRef, it) },
+                    matchedScopes.map { FileScope(restoredRecord.stableRef, it) },
                 )
             }
         }
@@ -258,18 +266,8 @@ private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<St
     val raw = ref.rawValue().trimEnd('/')
     return knownScopes.distinct().filter { scope ->
         val normalized = scope.trimEnd('/')
-        when (ref) {
-            is FileRef.Direct -> raw == normalized || raw.startsWith("$normalized/")
-            is FileRef.Saf -> raw == normalized || raw.startsWith("$normalized/")
-        }
+        raw == normalized || raw.startsWith("$normalized/")
     }
-}
-
-private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
-    is FileRef.Direct -> absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
-        .takeIf { it.isNotBlank() }
-        ?.let(FileRef::Direct)
-    is FileRef.Saf -> null
 }
 
 private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord = FileRecord(
