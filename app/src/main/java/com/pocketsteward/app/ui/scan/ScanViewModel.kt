@@ -258,7 +258,11 @@ sealed interface ScanUiState {
     ) : ScanUiState
 
     /** Plan Section 16's "find large files" / "find old files" quick actions: browse only, no plan generated. */
-    data class FileListReview(val title: String, val records: List<FileRecord>) : ScanUiState
+    data class FileListReview(
+        val title: String,
+        val records: List<FileRecord>,
+        val explanationByRef: Map<String, String> = emptyMap(),
+    ) : ScanUiState
     /** M10A on-demand local content search. Read-only and never persisted to Room. */
     data class ContentSearchReview(
         val title: String,
@@ -2030,12 +2034,26 @@ class ScanViewModel(
             try {
                 val records = filesForScopes(summary.scopes)
                 val projectKeywords = settingsRepository.projectKeywords.first()
-                val uncategorized = withContext(Dispatchers.Default) {
-                    records.filter { RuleEngine.classify(it.displayName, it.extension, projectKeywords).isUncategorized() }
+                val classified = withContext(Dispatchers.Default) {
+                    records.map { record ->
+                        record to RuleEngine.classify(
+                            record.displayName,
+                            record.extension,
+                            projectKeywords,
+                        )
+                    }
                 }
+                val uncategorized = classified
+                    .filter { (_, classification) -> classification.isUncategorized() }
+                    .map { it.first }
                 _uiState.value = ScanUiState.FileListReview(
                     title = "Uncategorized under ${summary.scopeLabel}",
                     records = uncategorized,
+                    explanationByRef = classified
+                        .filter { (_, classification) -> classification.isUncategorized() }
+                        .associate { (record, classification) ->
+                            record.stableRef to classification.reason
+                        },
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
