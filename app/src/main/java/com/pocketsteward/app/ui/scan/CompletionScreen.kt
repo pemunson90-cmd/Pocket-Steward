@@ -106,6 +106,8 @@ private fun ExecutionQueued(
     progress: TaskJournalProgress?,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onUndo: () -> Unit,
+    onOpenTask: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
@@ -184,7 +186,11 @@ private fun ExecutionQueued(
                 status == TaskRunStatus.CANCELLED -> {
                     Button(onClick = onResume) { Text("Resume") }
                 }
+                status == TaskRunStatus.COMPLETED || status == TaskRunStatus.PARTIAL -> {
+                    OutlinedButton(onClick = onUndo) { Text("Undo task") }
+                }
             }
+            OutlinedButton(onClick = onOpenTask) { Text("Open task") }
             Button(onClick = onDone) {
                 Text(if (terminal) "Done" else "Leave running")
             }
