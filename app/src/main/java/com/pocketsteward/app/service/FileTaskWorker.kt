@@ -39,6 +39,11 @@ class FileTaskWorker(
         } catch (cancel: CancellationException) {
             withContext(NonCancellable) {
                 container.mutationRecovery.recoverAll()
+                container.database.taskRunDao().markRunningPaused(
+                    id = taskRunId,
+                    completedAt = System.currentTimeMillis(),
+                    summary = "Paused safely after background execution was interrupted. Resume continues from the journal.",
+                )
             }
             throw cancel
         } catch (security: SecurityException) {
