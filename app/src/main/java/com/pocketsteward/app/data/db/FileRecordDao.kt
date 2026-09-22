@@ -76,6 +76,9 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
     suspend fun getByStableRef(stableRef: String): FileRecord?
 
+    @Query("SELECT COUNT(*) FROM file_records")
+    suspend fun countAllRecords(): Int
+
     @Query("UPDATE file_records SET quickFingerprint = :value WHERE stableRef = :stableRef")
     suspend fun updateQuickFingerprint(stableRef: String, value: String)
 
