@@ -28,12 +28,22 @@ class SingleFolderIndex(
     private val directoryKey = directory.rawValue().trimEnd('/')
     private val byKey: Map<String, FileEntry> = children.associateBy { it.ref.rawValue() }
 
-    override fun exists(ref: FileRef): Boolean =
-        ref.rawValue().trimEnd('/') == directoryKey || ref.rawValue() in byKey
+    override fun exists(ref: FileRef): Boolean = when (ref) {
+        is FileRef.Child ->
+            ref.parent.rawValue().trimEnd('/') == directoryKey &&
+                caseInsensitiveMatch(ref.parent, ref.name, excluding = null) != null
+        else -> ref.rawValue().trimEnd('/') == directoryKey || ref.rawValue() in byKey
+    }
 
-    override fun isDirectory(ref: FileRef): Boolean = when {
-        ref.rawValue().trimEnd('/') == directoryKey -> true
-        else -> byKey[ref.rawValue()]?.isDirectory == true
+    override fun isDirectory(ref: FileRef): Boolean = when (ref) {
+        is FileRef.Child -> {
+            val match = caseInsensitiveMatch(ref.parent, ref.name, excluding = null)
+            match?.let { byKey[it.rawValue()]?.isDirectory } == true
+        }
+        else -> when {
+            ref.rawValue().trimEnd('/') == directoryKey -> true
+            else -> byKey[ref.rawValue()]?.isDirectory == true
+        }
     }
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
