@@ -11,6 +11,7 @@ import java.util.Base64
 data class DurablePlan(
     val goal: String,
     val operations: List<PlannedOperation>,
+    val sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
 )
 
 /**
@@ -22,23 +23,39 @@ data class DurablePlan(
  * a Room schema migration or invalidating old task history.
  */
 object DurablePlanCodec {
-    private const val HEADER = "@psplan\t1"
+    private const val HEADER_V1 = "@psplan\t1"
+    private const val HEADER_V2 = "@psplan\t2"
     private const val OP_PREFIX = "@psop\t"
+    private const val PRECONDITION_PREFIX = "@pspre\t"
     private const val BINARY_VERSION = 1
     private const val MAX_STRING_BYTES = 16 * 1024 * 1024
 
-    fun encode(goal: String, operations: List<PlannedOperation>): String = buildString {
+    fun encode(
+        goal: String,
+        operations: List<PlannedOperation>,
+        sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
+    ): String = buildString {
         appendLine(goal)
-        appendLine(HEADER)
+        appendLine(HEADER_V2)
         operations.forEachIndexed { sequence, operation ->
             appendLine("$sequence\t${operation.typeLabel()}\t${operation.reason}")
             appendLine("$OP_PREFIX$sequence\t${encodeOperation(operation)}")
+            sourcePreconditions[sequence]?.let { precondition ->
+                appendLine(
+                    "$PRECONDITION_PREFIX$sequence\t${precondition.sizeBytes}\t" +
+                        (precondition.modifiedAtEpochMs?.toString() ?: "null"),
+                )
+            }
         }
     }
 
     fun decodeOrNull(text: String): DurablePlan? = runCatching {
         val lines = text.lineSequence().toList()
-        if (HEADER !in lines) return null
+        val version = when {
+            HEADER_V2 in lines -> 2
+            HEADER_V1 in lines -> 1
+            else -> return null
+        }
 
         val indexed = lines.mapNotNull { line ->
             if (!line.startsWith(OP_PREFIX)) return@mapNotNull null
@@ -52,13 +69,32 @@ object DurablePlanCodec {
             "Durable plan operation sequence is not contiguous."
         }
 
+        val preconditions = if (version >= 2) {
+            lines.mapNotNull { line ->
+                if (!line.startsWith(PRECONDITION_PREFIX)) return@mapNotNull null
+                val fields = line.split('\t')
+                require(fields.size == 4) { "Malformed source-precondition line." }
+                val sequence = fields[1].toInt()
+                val sizeBytes = fields[2].toLong()
+                val modified = fields[3].takeUnless { it == "null" }?.toLong()
+                sequence to SourcePrecondition(sizeBytes, modified)
+            }.toMap()
+        } else {
+            emptyMap()
+        }
+        require(preconditions.keys.all { it in indexed.indices }) {
+            "Source precondition references an operation outside the durable plan."
+        }
+
         DurablePlan(
             goal = lines.firstOrNull().orEmpty(),
             operations = indexed.map { it.second },
+            sourcePreconditions = preconditions,
         )
     }.getOrNull()
 
-    fun isDurable(text: String): Boolean = text.lineSequence().any { it == HEADER }
+    fun isDurable(text: String): Boolean =
+        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 }
 
     private fun encodeOperation(operation: PlannedOperation): String {
         val bytes = ByteArrayOutputStream()
