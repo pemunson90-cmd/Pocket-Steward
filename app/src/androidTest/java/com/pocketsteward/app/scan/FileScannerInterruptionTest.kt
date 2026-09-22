@@ -151,12 +151,12 @@ class FileScannerInterruptionTest {
     }
 
     @Test
-    fun scannerHandlesLongUnicodeNamesAndHugeSparseFilesWithoutReadingPayload() = runBlocking {
+    fun scannerHandlesLongUnicodeNamesAndTenPlusGiBSparseFilesWithoutReadingPayload() = runBlocking {
         val longName = "é-🦇-" + "a".repeat(180) + ".txt"
         val longFile = File(root, longName).apply { writeText("tiny") }
 
         val sparse = File(root, "huge-sparse.bin")
-        RandomAccessFile(sparse, "rw").use { it.setLength(2L * 1024L * 1024L * 1024L) }
+        RandomAccessFile(sparse, "rw").use { it.setLength(12L * 1024L * 1024L * 1024L) }
 
         val empty = File(root, "empty").apply { mkdirs() }
         File(empty, "日本語-🙂.md").writeText("hello")
@@ -172,6 +172,6 @@ class FileScannerInterruptionTest {
         assertThat(files.map { it.displayName }).contains(longFile.name)
         assertThat(files.map { it.displayName }).contains("日本語-🙂.md")
         assertThat(files.first { it.displayName == "huge-sparse.bin" }.sizeBytes)
-            .isEqualTo(2L * 1024L * 1024L * 1024L)
+            .isEqualTo(12L * 1024L * 1024L * 1024L)
     }
 }
