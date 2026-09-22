@@ -76,6 +76,12 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
     suspend fun getByStableRef(stableRef: String): FileRecord?
 
+    @Query("UPDATE file_records SET quickFingerprint = :value WHERE stableRef = :stableRef")
+    suspend fun updateQuickFingerprint(stableRef: String, value: String)
+
+    @Query("UPDATE file_records SET sha256 = :value WHERE stableRef = :stableRef")
+    suspend fun updateSha256(stableRef: String, value: String)
+
     @Query("DELETE FROM file_records WHERE stableRef = :stableRef")
     suspend fun deleteByStableRef(stableRef: String)
 
