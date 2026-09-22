@@ -11,7 +11,16 @@ data class TaskJournalProgress(
     val journaledCount: Long,
     val pendingCount: Long,
     val failedCount: Long,
-)
+    val foldersCreated: Long = 0,
+    val filesMoved: Long = 0,
+    val filesCopied: Long = 0,
+    val filesRenamed: Long = 0,
+    val filesTrashed: Long = 0,
+    val filesWritten: Long = 0,
+) {
+    val changedCount: Long
+        get() = foldersCreated + filesMoved + filesCopied + filesRenamed + filesTrashed + filesWritten
+}
 
 @Dao
 interface MutationRecordDao {
@@ -34,7 +43,13 @@ interface MutationRecordDao {
         "SELECT taskRunId AS taskRunId, " +
             "COUNT(*) AS journaledCount, " +
             "SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pendingCount, " +
-            "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failedCount " +
+            "SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failedCount, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'CREATE_DIRECTORY' THEN 1 ELSE 0 END) AS foldersCreated, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'MOVE' THEN 1 ELSE 0 END) AS filesMoved, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'COPY' THEN 1 ELSE 0 END) AS filesCopied, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'RENAME' THEN 1 ELSE 0 END) AS filesRenamed, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'TRASH' THEN 1 ELSE 0 END) AS filesTrashed, " +
+            "SUM(CASE WHEN status = 'COMMITTED' AND undoState = 'AVAILABLE' AND operationType = 'WRITE_TEXT_FILE' THEN 1 ELSE 0 END) AS filesWritten " +
             "FROM mutation_records GROUP BY taskRunId",
     )
     fun observeTaskProgress(): Flow<List<TaskJournalProgress>>
