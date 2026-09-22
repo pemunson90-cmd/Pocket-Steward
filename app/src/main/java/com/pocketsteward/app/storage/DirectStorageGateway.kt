@@ -116,9 +116,13 @@ class DirectStorageGateway(
         }
         return try {
             sourceFile.copyTo(destinationFile, overwrite = false)
-            if (destinationFile.length() != sourceFile.length()) {
+            val verified = destinationFile.length() == sourceFile.length() &&
+                sha256(sourceFile).contentEquals(sha256(destinationFile))
+            if (!verified) {
                 destinationFile.delete()
-                MutationResult.Failure("Copied file size did not match source; partial destination was removed.")
+                MutationResult.Failure(
+                    "Copied file did not verify against the source; the destination was removed.",
+                )
             } else {
                 MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
             }
