@@ -86,6 +86,46 @@ class MutationRecoveryCoreTest {
     }
 
     @Test
+    fun interruptedDuplicateTrash_matchingBytes_recoversCommitted() = runTest {
+        val approvedBytes = "duplicate".toByteArray()
+        val approvedHash = fingerprint(approvedBytes)
+        val operation = PlannedOperation.Trash(source, "duplicate", sourceFingerprint = approvedHash)
+        val record = pending(operation, MutationOperationType.TRASH, source, destination)
+            .copy(sourceFingerprint = approvedHash)
+        val harness = harness(
+            operation = operation,
+            record = record,
+            existing = setOf(destination),
+            bytesByRef = mapOf(destination to approvedBytes),
+        )
+
+        harness.recover()
+
+        assertThat(harness.record.status).isEqualTo(MutationStatus.COMMITTED)
+        assertThat(harness.record.undoState).isEqualTo(UndoState.AVAILABLE)
+    }
+
+    @Test
+    fun interruptedDuplicateTrash_wrongBytes_requiresReview() = runTest {
+        val approvedHash = fingerprint("duplicate".toByteArray())
+        val operation = PlannedOperation.Trash(source, "duplicate", sourceFingerprint = approvedHash)
+        val record = pending(operation, MutationOperationType.TRASH, source, destination)
+            .copy(sourceFingerprint = approvedHash)
+        val harness = harness(
+            operation = operation,
+            record = record,
+            existing = setOf(destination),
+            bytesByRef = mapOf(destination to "changed".toByteArray()),
+        )
+
+        harness.recover()
+
+        assertThat(harness.record.status).isEqualTo(MutationStatus.NEEDS_REVIEW)
+        assertThat(harness.record.undoState).isEqualTo(UndoState.BLOCKED)
+        assertThat(harness.task.status).isEqualTo(TaskRunStatus.NEEDS_REVIEW)
+    }
+
+    @Test
     fun interruptedWrite_destinationExists_recoversCommitted() = runTest {
         val operation = PlannedOperation.WriteTextFile(parent, "generated.txt", "hello", "write")
         val record = pending(operation, MutationOperationType.WRITE_TEXT_FILE, parent, written)
