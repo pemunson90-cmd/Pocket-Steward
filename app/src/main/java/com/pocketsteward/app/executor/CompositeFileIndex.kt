@@ -24,6 +24,11 @@ class CompositeFileIndex(
     override fun isDirectory(ref: FileRef): Boolean =
         delegates.any { it.exists(ref) && it.isDirectory(ref) }
 
+    override fun parentOf(ref: FileRef): FileRef? =
+        delegates.firstNotNullOfOrNull { delegate ->
+            if (delegate.exists(ref)) delegate.parentOf(ref) else null
+        }
+
     override fun caseInsensitiveMatch(
         directory: FileRef,
         name: String,
