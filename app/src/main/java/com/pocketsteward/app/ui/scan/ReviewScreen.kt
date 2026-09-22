@@ -1084,8 +1084,14 @@ private fun CoherenceAuditReview(
     onBuildProposal: (Boolean, DestinationPolicy, String?) -> Unit,
     modifier: Modifier,
 ) {
+    val directScope = state.scopes.all { it.root is FileRef.Direct }
     var includeSubfolders by remember { mutableStateOf(false) }
-    var destinationPolicy by remember { mutableStateOf(DestinationPolicy.RECOMMENDED_DOCUMENTS) }
+    var destinationPolicy by remember(directScope) {
+        mutableStateOf(
+            if (directScope) DestinationPolicy.RECOMMENDED_DOCUMENTS
+            else DestinationPolicy.ROOT_LOCAL,
+        )
+    }
     var explicitDestination by remember { mutableStateOf("") }
     val context = LocalContext.current
 
@@ -1117,7 +1123,7 @@ private fun CoherenceAuditReview(
                     if (state.freshExtractions > 0) append(" · ${state.freshExtractions} freshly read")
                     if (state.modelFailures > 0) append(" · ${state.modelFailures} model misses")
                     append(model)
-                    append(" · read-only")
+                    append(" · local audit")
                 },
             )
         }
@@ -1195,29 +1201,22 @@ private fun CoherenceAuditReview(
             }
         }
 
-        if (state.eligibleDocuments > 0 && state.scopes.any { it.root !is FileRef.Direct }) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
-                    Column(modifier = Modifier.padding(Spacing.base)) {
-                        Text("Read-only audit", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Selected-folder access can inspect these documents but cannot build or run mutation plans. Switch to full file-manager access if you want to organize the findings.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = Spacing.hairline),
-                        )
-                    }
-                }
-            }
-        }
-
-        if (state.eligibleDocuments > 0 && state.scopes.all { it.root is FileRef.Direct }) {
+        if (state.eligibleDocuments > 0) {
             item {
                 Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
                         Text("Build organization proposal", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Model outliers: $proposalCandidates. The proposal also evaluates all readable documents using project keywords, repeated filename/title signals, and indexed content before model advice. Choose where one-level groups should live; nothing moves until the next preview is approved.",
+                            buildString {
+                                append("Model outliers: $proposalCandidates. ")
+                                append("The proposal also evaluates readable documents using project keywords, repeated filename/title signals, indexed content, and model advice. ")
+                                if (directScope) {
+                                    append("Choose where one-level groups should live.")
+                                } else {
+                                    append("Selected-folder mode keeps every proposed group inside the granted tree.")
+                                }
+                                append(" Nothing moves until the next preview is approved.")
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = Spacing.hairline),
@@ -1228,67 +1227,82 @@ private fun CoherenceAuditReview(
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(top = Spacing.base),
                         )
-                        RadioFilterRow(
-                            label = "Recommended Documents",
-                            selected = destinationPolicy == DestinationPolicy.RECOMMENDED_DOCUMENTS,
-                            onSelect = { destinationPolicy = DestinationPolicy.RECOMMENDED_DOCUMENTS },
-                        )
-                        RadioFilterRow(
-                            label = "Keep inside current scan root",
-                            selected = destinationPolicy == DestinationPolicy.ROOT_LOCAL,
-                            onSelect = { destinationPolicy = DestinationPolicy.ROOT_LOCAL },
-                        )
-                        RadioFilterRow(
-                            label = "Choose explicit existing folder",
-                            selected = destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER,
-                            onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
-                        )
-                        if (favoriteDestinations.isNotEmpty()) {
-                            Text(
-                                "Favorites",
-                                style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.padding(top = Spacing.tight),
+
+                        if (directScope) {
+                            RadioFilterRow(
+                                label = "Recommended Documents",
+                                selected = destinationPolicy == DestinationPolicy.RECOMMENDED_DOCUMENTS,
+                                onSelect = { destinationPolicy = DestinationPolicy.RECOMMENDED_DOCUMENTS },
                             )
-                            favoriteDestinations.forEach { favorite ->
-                                OutlinedButton(
-                                    onClick = {
-                                        destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER
-                                        explicitDestination = favorite.path
-                                    },
-                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
-                                ) {
-                                    Text("${favorite.name} · ${favorite.path}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                            }
-                        }
-                        if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
-                            if (recentFolders.isNotEmpty()) {
+                            RadioFilterRow(
+                                label = "Keep inside current scan root",
+                                selected = destinationPolicy == DestinationPolicy.ROOT_LOCAL,
+                                onSelect = { destinationPolicy = DestinationPolicy.ROOT_LOCAL },
+                            )
+                            RadioFilterRow(
+                                label = "Choose explicit existing folder",
+                                selected = destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER,
+                                onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
+                            )
+                            if (favoriteDestinations.isNotEmpty()) {
                                 Text(
-                                    "Recent folders",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    "Favorites",
+                                    style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(top = Spacing.tight),
                                 )
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                                ) {
-                                    items(recentFolders.take(8)) { path ->
-                                        FilterChip(
-                                            selected = explicitDestination.trimEnd('/') == path.trimEnd('/'),
-                                            onClick = { explicitDestination = path },
-                                            label = {
-                                                Text(path.substringAfterLast('/').ifBlank { path })
-                                            },
+                                favoriteDestinations.forEach { favorite ->
+                                    OutlinedButton(
+                                        onClick = {
+                                            destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER
+                                            explicitDestination = favorite.path
+                                        },
+                                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                                    ) {
+                                        Text(
+                                            "${favorite.name} · ${favorite.path}",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                     }
                                 }
                             }
-                            OutlinedTextField(
-                                value = explicitDestination,
-                                onValueChange = { explicitDestination = it },
-                                label = { Text("Destination folder path") },
-                                placeholder = { Text("/storage/emulated/0/Documents") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                            if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
+                                if (recentFolders.isNotEmpty()) {
+                                    Text(
+                                        "Recent folders",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(top = Spacing.tight),
+                                    )
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                                    ) {
+                                        items(recentFolders.take(8)) { path ->
+                                            FilterChip(
+                                                selected = explicitDestination.trimEnd('/') == path.trimEnd('/'),
+                                                onClick = { explicitDestination = path },
+                                                label = {
+                                                    Text(path.substringAfterLast('/').ifBlank { path })
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = explicitDestination,
+                                    onValueChange = { explicitDestination = it },
+                                    label = { Text("Destination folder path") },
+                                    placeholder = { Text("/storage/emulated/0/Documents") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                                )
+                            }
+                        } else {
+                            destinationPolicy = DestinationPolicy.ROOT_LOCAL
+                            Text(
+                                "Inside the selected Android document tree",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = Spacing.hairline),
                             )
                         }
 
@@ -1321,11 +1335,13 @@ private fun CoherenceAuditReview(
                                     includeSubfolders,
                                     destinationPolicy,
                                     explicitDestination.takeIf {
-                                        destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER
+                                        directScope &&
+                                            destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER
                                     },
                                 )
                             },
-                            enabled = destinationPolicy != DestinationPolicy.EXPLICIT_FOLDER ||
+                            enabled = !directScope ||
+                                destinationPolicy != DestinationPolicy.EXPLICIT_FOLDER ||
                                 explicitDestination.isNotBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
                         ) {
