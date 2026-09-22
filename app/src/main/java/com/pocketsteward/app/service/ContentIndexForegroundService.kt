@@ -85,16 +85,23 @@ class ContentIndexForegroundService : Service() {
                         indeterminate = true,
                     ),
                 )
+                val mode = intent.getStringExtra(EXTRA_MODE)
+                    ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
+                    ?: StorageAccessMode.DIRECT
                 runningJob = scope.launch {
-                    runRoots(roots, startId)
+                    runRoots(roots, mode, startId)
                 }
             }
         }
         return START_NOT_STICKY
     }
 
-    private suspend fun runRoots(roots: List<String>, startId: Int) {
-        val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+    private suspend fun runRoots(
+        roots: List<String>,
+        mode: StorageAccessMode,
+        startId: Int,
+    ) {
+        val repository = container.contentIndexRepository(mode)
         try {
             var rootsCompleted = 0
             for (root in roots) {
@@ -270,11 +277,17 @@ class ContentIndexForegroundService : Service() {
         private const val ACTION_RUN = "com.pocketsteward.app.action.RUN_CONTENT_INDEX"
         private const val ACTION_PAUSE = "com.pocketsteward.app.action.PAUSE_CONTENT_INDEX"
         private const val EXTRA_ROOTS = "source_roots"
+        private const val EXTRA_MODE = "storage_mode"
 
-        fun runIntent(context: Context, roots: List<String>): Intent =
+        fun runIntent(
+            context: Context,
+            roots: List<String>,
+            mode: StorageAccessMode,
+        ): Intent =
             Intent(context, ContentIndexForegroundService::class.java)
                 .setAction(ACTION_RUN)
                 .putStringArrayListExtra(EXTRA_ROOTS, ArrayList(roots))
+                .putExtra(EXTRA_MODE, mode.name)
 
         fun pauseIntent(context: Context): Intent =
             Intent(context, ContentIndexForegroundService::class.java)
