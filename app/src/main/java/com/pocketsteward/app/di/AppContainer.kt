@@ -32,6 +32,10 @@ import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * Deliberately manual dependency container rather than Hilt/Dagger. Milestone
@@ -41,6 +45,7 @@ import com.pocketsteward.app.storage.StorageGateway
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
@@ -152,6 +157,20 @@ class AppContainer(context: Context) {
     }
 
     fun pauseForegroundTask() {
+        // Record explicit user intent durably. A system kill leaves RUNNING so
+        // startup recovery may continue it; an explicit Pause becomes
+        // CANCELLED and StartupRecoveryPolicy will not resurrect it.
+        appScope.launch {
+            val now = System.currentTimeMillis()
+            database.taskRunDao().getRunning().forEach { task ->
+                database.taskRunDao().markRunningPaused(
+                    id = task.id,
+                    completedAt = now,
+                    summary = "Paused by user · progress preserved in the mutation journal",
+                )
+            }
+        }
+
         WorkManager.getInstance(appContext).cancelAllWorkByTag(FileTaskWorker.WORK_TAG)
         runCatching {
             appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
