@@ -32,7 +32,11 @@ import com.pocketsteward.app.ui.theme.Spacing
  * header directly under the status "Partly done".
  */
 @Composable
-fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
+fun CompletionScreen(
+    viewModel: ScanViewModel,
+    onDone: () -> Unit,
+    onOpenTasks: () -> Unit,
+) {
     val state by viewModel.completion.collectAsState()
     val undoing by viewModel.undoProgress.collectAsState()
     val taskRuns by viewModel.taskRuns.collectAsState()
@@ -74,6 +78,7 @@ fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
             is ScanUiState.ExecutionDone -> ExecutionDone(
                 summary = current.summary,
                 onUndo = { viewModel.undoTask(current.summary.taskRunId) },
+                onOpenTasks = onOpenTasks,
                 onDone = onDone,
                 modifier = contentModifier,
             )
@@ -83,6 +88,7 @@ fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
                 progress = taskProgress[current.taskRunId],
                 onPause = viewModel::pauseTaskExecution,
                 onResume = { viewModel.resumeTaskExecution(current.taskRunId) },
+                onOpenTasks = onOpenTasks,
                 onDone = onDone,
                 modifier = contentModifier,
             )
@@ -99,6 +105,7 @@ private fun ExecutionQueued(
     progress: TaskJournalProgress?,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onOpenTasks: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
@@ -164,6 +171,9 @@ private fun ExecutionQueued(
                 }
                 else -> Unit
             }
+            OutlinedButton(onClick = onOpenTasks) {
+                Text("Open Tasks")
+            }
             Button(onClick = onDone) {
                 Text(
                     if (status in setOf(
@@ -186,6 +196,7 @@ private fun ExecutionQueued(
 private fun ExecutionDone(
     summary: ExecutionSummary,
     onUndo: () -> Unit,
+    onOpenTasks: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
@@ -287,6 +298,7 @@ private fun ExecutionDone(
             if (summary.succeededTotal > 0) {
                 OutlinedButton(onClick = onUndo) { Text("Undo this task") }
             }
+            OutlinedButton(onClick = onOpenTasks) { Text("Review task") }
             Button(onClick = onDone) { Text("Done") }
         }
     }
