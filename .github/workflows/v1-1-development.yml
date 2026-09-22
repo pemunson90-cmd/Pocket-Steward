@@ -106,6 +106,19 @@ jobs:
             adb shell am start -W -n com.pocketsteward.app/.MainActivity
             adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
 
+            # Adaptive-layout smoke at compact and wide window geometries.
+            # Screenshots become review artifacts even when the emulator
+            # cannot reproduce Samsung Fold hardware exactly.
+            mkdir -p app/build/reports/adaptive-smoke
+            adb shell wm size 720x1600
+            sleep 2
+            adb exec-out screencap -p > app/build/reports/adaptive-smoke/compact.png
+            adb shell wm size 1600x1200
+            sleep 2
+            adb exec-out screencap -p > app/build/reports/adaptive-smoke/wide.png
+            adb shell wm reset
+            sleep 1
+
             # Lock/wake/unlock around a live app task. There is no PIN on the
             # CI emulator, so this exercises lifecycle/power transitions
             # without introducing UI automation credentials.
@@ -152,4 +165,5 @@ jobs:
             app/build/reports/androidTests/connected/**
             app/build/outputs/androidTest-results/connected/**
             app/build/reports/v1-1-post-reboot-logcat.txt
+            app/build/reports/adaptive-smoke/**
           if-no-files-found: warn
