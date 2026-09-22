@@ -88,6 +88,7 @@ fun CompletionScreen(
                 progress = taskProgress[current.taskRunId],
                 onPause = viewModel::pauseTaskExecution,
                 onResume = { viewModel.resumeTaskExecution(current.taskRunId) },
+                onUndo = { viewModel.undoTask(current.taskRunId) },
                 onOpenTasks = onOpenTasks,
                 onDone = onDone,
                 modifier = contentModifier,
@@ -105,6 +106,7 @@ private fun ExecutionQueued(
     progress: TaskJournalProgress?,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onUndo: () -> Unit,
     onOpenTasks: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
@@ -144,6 +146,20 @@ private fun ExecutionQueued(
                     task?.requestText ?: "Approved Pocket Steward task",
                     style = MaterialTheme.typography.titleSmall,
                 )
+                if (progress != null && progress.changedCount > 0) {
+                    Text(
+                        buildList {
+                            if (progress.foldersCreated > 0) add("${progress.foldersCreated} folders")
+                            if (progress.filesMoved > 0) add("${progress.filesMoved} moved")
+                            if (progress.filesCopied > 0) add("${progress.filesCopied} copied")
+                            if (progress.filesRenamed > 0) add("${progress.filesRenamed} renamed")
+                            if (progress.filesTrashed > 0) add("${progress.filesTrashed} quarantined")
+                            if (progress.filesWritten > 0) add("${progress.filesWritten} written")
+                        }.joinToString(" · "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = Spacing.tight),
+                    )
+                }
                 Text(
                     task?.summary ?: "The approved plan is journaled before each filesystem mutation.",
                     style = MaterialTheme.typography.bodySmall,
@@ -168,6 +184,12 @@ private fun ExecutionQueued(
                 }
                 TaskRunStatus.CANCELLED -> {
                     Button(onClick = onResume) { Text("Resume") }
+                }
+                TaskRunStatus.COMPLETED,
+                TaskRunStatus.PARTIAL,
+                TaskRunStatus.FAILED,
+                -> if (progress != null && progress.changedCount > 0) {
+                    OutlinedButton(onClick = onUndo) { Text("Undo this task") }
                 }
                 else -> Unit
             }
