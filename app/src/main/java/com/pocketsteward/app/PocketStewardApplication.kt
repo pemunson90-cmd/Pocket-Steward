@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 class PocketStewardApplication : Application() {
     lateinit var container: AppContainer
@@ -47,14 +48,27 @@ class PocketStewardApplication : Application() {
                     .contentIndexDao()
                     .getResumableJobs()
             }.getOrDefault(emptyList())
-            val roots = jobs
-                .filter {
-                    it.status == ContentIndexJobStatus.RUNNING.name ||
-                        it.status == ContentIndexJobStatus.QUEUED.name
+            val resumable = jobs.filter {
+                it.status == ContentIndexJobStatus.RUNNING.name ||
+                    it.status == ContentIndexJobStatus.QUEUED.name
+            }
+            val currentMode = runCatching {
+                container.settingsRepository.storageAccessState.first().mode
+            }.getOrNull()
+            if (currentMode != null) {
+                val roots = resumable
+                    .map { it.sourceRoot }
+                    .filter { root ->
+                        when (currentMode) {
+                            com.pocketsteward.app.storage.StorageAccessMode.DIRECT ->
+                                !root.startsWith("content://")
+                            com.pocketsteward.app.storage.StorageAccessMode.SAF ->
+                                root.startsWith("content://")
+                        }
+                    }
+                if (roots.isNotEmpty()) {
+                    container.startContentIndexing(roots, currentMode)
                 }
-                .map { it.sourceRoot }
-            if (roots.isNotEmpty()) {
-                container.startContentIndexing(roots)
             }
         }
     }
