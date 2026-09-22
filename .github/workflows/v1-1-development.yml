@@ -81,6 +81,20 @@ jobs:
             set -euo pipefail
             ./gradlew connectedDebugAndroidTest --stacktrace
 
+            # Re-run the canonical deterministic V1 flow with every ordinary
+            # network transport disabled. Core organization is required to be
+            # genuinely offline, not merely "usually doesn't call a server".
+            ./gradlew installDebug installDebugAndroidTest --stacktrace
+            adb shell cmd connectivity airplane-mode enable || true
+            adb shell svc wifi disable || true
+            adb shell svc data disable || true
+            sleep 2
+            adb shell am instrument -w \
+              -e class com.pocketsteward.app.V1EndToEndAcceptanceTest \
+              com.pocketsteward.app.test/androidx.test.runner.AndroidJUnitRunner
+            adb shell cmd connectivity airplane-mode disable || true
+            adb shell svc wifi enable || true
+
             # Keep a target APK installed for lifecycle/reboot smoke after the
             # instrumentation runner has finished.
             ./gradlew installDebug --stacktrace
