@@ -126,8 +126,11 @@ class DirectStorageGateway(
         }
         val parent = destinationFile.parentFile
             ?: return MutationResult.Failure("Cannot determine destination parent: ${destinationFile.absolutePath}")
-        if (!parent.exists() && !parent.mkdirs()) {
-            return MutationResult.Failure("Could not create parent directory: ${parent.absolutePath}")
+        if (!parent.isDirectory) {
+            return MutationResult.Failure(
+                "Destination parent does not exist or is not a directory: ${parent.absolutePath}. " +
+                    "Pocket Steward will not create an unjournaled parent implicitly.",
+            )
         }
         val requiredBytes = sourceFile.length()
         if (!StorageCapacityPolicy.canFit(requiredBytes, parent.usableSpace)) {
@@ -212,8 +215,12 @@ class DirectStorageGateway(
         if (destinationFile.exists()) return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
 
         val destinationParent = destinationFile.parentFile
-        if (destinationParent != null && !destinationParent.exists() && !destinationParent.mkdirs()) {
-            return MutationResult.Failure("Could not create parent directory: ${destinationParent.absolutePath}")
+            ?: return MutationResult.Failure("Cannot determine destination parent: ${destinationFile.absolutePath}")
+        if (!destinationParent.isDirectory) {
+            return MutationResult.Failure(
+                "Destination parent does not exist or is not a directory: ${destinationParent.absolutePath}. " +
+                    "Pocket Steward will not create an unjournaled parent implicitly.",
+            )
         }
 
         if (sourceFile.renameTo(destinationFile)) {
@@ -228,7 +235,7 @@ class DirectStorageGateway(
         }
 
         val requiredBytes = sourceFile.length()
-        val usableBytes = destinationParent?.usableSpace ?: destinationFile.parentFile?.usableSpace ?: 0L
+        val usableBytes = destinationParent.usableSpace
         if (!StorageCapacityPolicy.canFit(requiredBytes, usableBytes)) {
             return MutationResult.Failure(
                 StorageCapacityPolicy.failureMessage(requiredBytes, usableBytes),
