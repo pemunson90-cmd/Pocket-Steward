@@ -175,8 +175,17 @@ class AppContainer(context: Context) {
         }
 
         WorkManager.getInstance(appContext).cancelAllWorkByTag(FileTaskWorker.WORK_TAG)
-        runCatching {
+        val pauseDelivered = runCatching {
             appContext.startService(FileTaskForegroundService.pauseIntent(appContext))
+        }.getOrNull() != null
+        if (!pauseDelivered) {
+            // If Android refuses a service command from the current lifecycle
+            // state, stop the already-running service. Its cancellation path
+            // leaves any in-flight PENDING journal row for conservative
+            // recovery and never replays a committed sequence.
+            appContext.stopService(
+                android.content.Intent(appContext, FileTaskForegroundService::class.java),
+            )
         }
     }
 
@@ -215,8 +224,13 @@ class AppContainer(context: Context) {
 
     fun pauseContentIndexing() {
         WorkManager.getInstance(appContext).cancelAllWorkByTag(ContentIndexWorker.WORK_TAG)
-        runCatching {
+        val pauseDelivered = runCatching {
             appContext.startService(ContentIndexForegroundService.pauseIntent(appContext))
+        }.getOrNull() != null
+        if (!pauseDelivered) {
+            appContext.stopService(
+                android.content.Intent(appContext, ContentIndexForegroundService::class.java),
+            )
         }
     }
 }
