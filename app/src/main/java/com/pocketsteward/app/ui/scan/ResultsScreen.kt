@@ -294,7 +294,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         supporting = if (hasBroadAccess) {
                             "Analyze a representative document sample with local extraction and on-device intelligence, then optionally build a reviewed organization proposal."
                         } else {
-                            "Analyze a representative document sample locally. Findings are read-only in selected-folder mode."
+                            "Analyze a representative document sample locally, then optionally build reviewed groups inside the granted tree."
                         },
                         onClick = { viewModel.runCoherenceAudit(state) },
                     )
