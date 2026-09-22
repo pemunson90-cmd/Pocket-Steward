@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import com.pocketsteward.app.data.db.AppDatabase
 import com.pocketsteward.app.data.db.TaskRunStatus
@@ -35,9 +36,12 @@ class SafPlanExecutorRoundTripTest {
 
     @Before
     fun setUp() = runBlocking {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.adoptShellPermissionIdentity(
+            "android.permission.MANAGE_DOCUMENTS",
+        )
         context = ApplicationProvider.getApplicationContext()
         context.contentResolver.call(
-            Uri.parse("content://\${TestSafDocumentsProvider.AUTHORITY}"),
+            Uri.parse("content://${TestSafDocumentsProvider.AUTHORITY}"),
             TestSafDocumentsProvider.METHOD_RESET,
             null,
             null,
@@ -62,6 +66,7 @@ class SafPlanExecutorRoundTripTest {
     @After
     fun tearDown() {
         runCatching { db.close() }
+        InstrumentationRegistry.getInstrumentation().uiAutomation.dropShellPermissionIdentity()
     }
 
     @Test
