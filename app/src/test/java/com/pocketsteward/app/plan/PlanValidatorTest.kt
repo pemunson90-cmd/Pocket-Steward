@@ -7,11 +7,13 @@ import org.junit.Test
 private class FakeFileIndex(
     existing: Set<FileRef>,
     private val directories: Set<FileRef>,
+    private val parents: Map<FileRef, FileRef> = emptyMap(),
 ) : FileIndex {
     private val existingRefs = existing + directories
 
     override fun exists(ref: FileRef) = ref in existingRefs
     override fun isDirectory(ref: FileRef) = ref in directories
+    override fun parentOf(ref: FileRef): FileRef? = parents[ref] ?: super.parentOf(ref)
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
         if (directory !is FileRef.Direct) return null
@@ -267,6 +269,57 @@ class PlanValidatorTest {
 
         assertThat(result.accepted).isEmpty()
         assertThat(result.rejected.single().reason).contains("Directory copy")
+    }
+
+    @Test
+    fun `SAF rename is accepted when the trusted index knows its parent`() {
+        val parent = FileRef.Saf("content://provider/tree/root/document/root")
+        val source = FileRef.Saf("content://provider/tree/root/document/root%2Freport.txt")
+        val index = FakeFileIndex(
+            existing = setOf(source),
+            directories = setOf(parent),
+            parents = mapOf(source to parent),
+        )
+        val op = PlannedOperation.Rename(source, "renamed.txt", "rename in granted tree")
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).containsExactly(op)
+        assertThat(result.rejected).isEmpty()
+    }
+
+    @Test
+    fun `SAF protection marker write is accepted inside an indexed folder`() {
+        val folder = FileRef.Saf("content://provider/tree/root/document/root%2FProject")
+        val index = FakeFileIndex(
+            existing = emptySet(),
+            directories = setOf(folder),
+        )
+        val op = PlannedOperation.WriteTextFile(
+            parent = folder,
+            name = "POCKETSTEWARD-DO-NOT-SORT.md",
+            content = "protect",
+            reason = "protect folder",
+        )
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).containsExactly(op)
+        assertThat(result.rejected).isEmpty()
+    }
+
+    @Test
+    fun `SAF protection marker can be moved to recoverable Trash`() {
+        val marker = FileRef.Saf(
+            "content://provider/tree/root/document/root%2FProject%2FPOCKETSTEWARD-DO-NOT-SORT.md",
+        )
+        val index = FakeFileIndex(existing = setOf(marker), directories = emptySet())
+        val op = PlannedOperation.Trash(marker, "unprotect")
+
+        val result = PlanValidator.validate(listOf(op), index)
+
+        assertThat(result.accepted).containsExactly(op)
+        assertThat(result.rejected).isEmpty()
     }
 
 }
