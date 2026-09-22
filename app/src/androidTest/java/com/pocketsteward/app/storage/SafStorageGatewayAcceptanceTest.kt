@@ -24,7 +24,7 @@ class SafStorageGatewayAcceptanceTest {
     fun setUp() = runBlocking {
         context = ApplicationProvider.getApplicationContext()
         context.contentResolver.call(
-            Uri.parse("content://\${TestSafDocumentsProvider.AUTHORITY}"),
+            Uri.parse("content://${TestSafDocumentsProvider.AUTHORITY}"),
             TestSafDocumentsProvider.METHOD_RESET,
             null,
             null,
