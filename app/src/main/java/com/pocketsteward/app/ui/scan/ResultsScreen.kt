@@ -143,7 +143,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
 
-                if (hasBroadAccess) {
+                if (canOrganizeFiles) {
                     item { SectionHeader("Save this setup") }
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
@@ -153,7 +153,11 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                                 Text(
-                                    "Running it later performs a fresh scan before rerunning the request.",
+                                    if (hasBroadAccess) {
+                                        "Running it later performs a fresh scan before rerunning the request."
+                                    } else {
+                                        "Running it later reopens this same granted tree, rescans it, then reruns the request."
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(top = Spacing.hairline),
