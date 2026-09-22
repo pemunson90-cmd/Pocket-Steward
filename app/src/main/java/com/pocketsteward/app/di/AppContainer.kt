@@ -19,6 +19,7 @@ import com.pocketsteward.app.content.index.ContentIndexRepository
 import com.pocketsteward.app.content.index.ContentSearchDatabase
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.executor.MutationRecovery
+import com.pocketsteward.app.diagnostics.RuntimeDiagnostics
 import com.pocketsteward.app.executor.PlanExecutor
 import com.pocketsteward.app.executor.UndoExecutor
 import com.pocketsteward.app.metadata.MetadataEnricher
@@ -125,6 +126,13 @@ class AppContainer(context: Context) {
     val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
     val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext) }
     val scheduledCleanupCoordinator: ScheduledCleanupCoordinator by lazy { ScheduledCleanupCoordinator(appContext) }
+    val runtimeDiagnostics: RuntimeDiagnostics by lazy {
+        RuntimeDiagnostics(
+            context = appContext,
+            database = database,
+            contentIndexOverview = ::contentIndexOverview,
+        )
+    }
 
     val mutationRecovery: MutationRecovery by lazy {
         MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), ::gatewayFor)
