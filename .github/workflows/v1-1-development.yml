@@ -28,8 +28,10 @@ jobs:
             echo "V1 core must not require INTERNET permission."
             exit 1
           fi
-      - name: Clean debug release Android-test compile unit suite and lint
-        run: ./gradlew clean assembleDebug assembleRelease assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - name: Clean debug Android-test compile unit suite and lint
+        run: ./gradlew clean assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - name: Release build after Room schema generation
+        run: ./gradlew assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -41,6 +43,12 @@ jobs:
         with:
           name: pocket-steward-v1-1-release
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-1-room-schemas
+          path: app/schemas/**
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
