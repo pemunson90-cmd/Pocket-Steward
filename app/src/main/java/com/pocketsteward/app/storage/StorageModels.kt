@@ -9,12 +9,36 @@ package com.pocketsteward.app.storage
 sealed interface FileRef {
     data class Direct(val absolutePath: String) : FileRef
     data class Saf(val documentUri: String) : FileRef
+
+    /**
+     * A not-yet-created child of an already-known directory.
+     *
+     * Direct files can name future destinations as ordinary paths. SAF
+     * providers cannot supply a document URI until the document exists, so a
+     * typed child reference is the durable plan-time equivalent. Gateways
+     * resolve it by parent + display name after preceding create operations
+     * have landed.
+     */
+    data class Child(
+        val parent: FileRef,
+        val name: String,
+    ) : FileRef {
+        init {
+            require(name.isNotBlank() && name != "." && name != "..") {
+                "Child name must be one non-empty safe segment."
+            }
+            require('/' !in name && '\\' !in name) {
+                "Child name cannot contain a path separator."
+            }
+        }
+    }
 }
 
 /** The path or URI a [FileRef] wraps, with no type tag — for display and as a DB column value. */
 fun FileRef.rawValue(): String = when (this) {
     is FileRef.Direct -> absolutePath
     is FileRef.Saf -> documentUri
+    is FileRef.Child -> "ps-child:" + FileRefJournalCodec.encode(this)
 }
 
 /**
@@ -28,8 +52,29 @@ fun FileRef.rawValue(): String = when (this) {
  * type-tagged format chosen for the journal specifically so recovery never
  * has to guess from a bare string.
  */
-fun parseFileRef(rawValue: String): FileRef =
-    if (rawValue.startsWith("content://")) FileRef.Saf(rawValue) else FileRef.Direct(rawValue)
+fun parseFileRef(rawValue: String): FileRef = when {
+    rawValue.startsWith("ps-child:") ->
+        FileRefJournalCodec.decode(rawValue.removePrefix("ps-child:"))
+    rawValue.startsWith("content://") -> FileRef.Saf(rawValue)
+    else -> FileRef.Direct(rawValue)
+}
+
+/** Parent known structurally without asking a storage provider. */
+fun FileRef.knownParentOrNull(): FileRef? = when (this) {
+    is FileRef.Direct -> absolutePath
+        .substringBeforeLast('/', missingDelimiterValue = "")
+        .takeIf { it.isNotBlank() }
+        ?.let(FileRef::Direct)
+    is FileRef.Saf -> null
+    is FileRef.Child -> parent
+}
+
+fun FileRef.child(name: String): FileRef = when (this) {
+    is FileRef.Direct -> FileRef.Direct("${absolutePath.trimEnd('/')}/$name")
+    is FileRef.Saf,
+    is FileRef.Child,
+    -> FileRef.Child(this, name)
+}
 
 enum class StorageAccessMode { DIRECT, SAF }
 
