@@ -642,12 +642,6 @@ class ScanViewModel(
         viewModelScope.launch {
             try {
                 val access = settingsRepository.storageAccessState.first()
-                if (access.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(
-                        "Reviewed plan import requires full storage access so current filesystem state can be revalidated.",
-                    )
-                    return@launch
-                }
                 val json = withContext(Dispatchers.IO) {
                     java.io.File(cachePath).takeIf { it.isFile }?.readText()
                 } ?: run {
@@ -659,12 +653,35 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("That file is not a valid Pocket Steward reviewed-plan package.")
                     return@launch
                 }
-                val roots = sourceRootsForImportedPlan(plan)
-                if (roots.isEmpty()) {
-                    _uiState.value = ScanUiState.Error("The imported plan has no direct-file sources to rescan.")
-                    return@launch
+
+                val targets = when (access.mode) {
+                    StorageAccessMode.DIRECT -> {
+                        val roots = sourceRootsForImportedPlan(plan)
+                        if (roots.isEmpty()) {
+                            _uiState.value = ScanUiState.Error(
+                                "The imported plan has no direct-file sources to rescan.",
+                            )
+                            return@launch
+                        }
+                        roots.map(::ScanTarget.CustomFolder)
+                    }
+
+                    StorageAccessMode.SAF -> {
+                        if (access.safTreeUri.isNullOrBlank()) {
+                            _uiState.value = ScanUiState.Error(
+                                "Selected-folder access is no longer available. Re-select the folder before importing this plan.",
+                            )
+                            return@launch
+                        }
+                        listOf(ScanTarget.GrantedFolder("Selected folder"))
+                    }
+
+                    null -> {
+                        _uiState.value = ScanUiState.Error("Choose storage access before importing a reviewed plan.")
+                        return@launch
+                    }
                 }
-                val targets = roots.map { ScanTarget.CustomFolder(it) }
+
                 _selectedTargets.value = targets
                 startScan(
                     targets = targets,
@@ -679,28 +696,34 @@ class ScanViewModel(
     fun exportReviewedPlan(preview: ScanUiState.PlanPreview) {
         viewModelScope.launch {
             try {
-                if (preview.scopes.firstOrNull()?.root !is FileRef.Direct) {
-                    _uiState.value = ScanUiState.Error("Reviewed-plan export currently requires full storage access.")
-                    return@launch
-                }
                 val selected = PlanSelection.selectedOperations(preview.accepted, preview.selectedIndices)
                 if (selected.isEmpty()) {
                     _uiState.value = ScanUiState.Error("Select at least one action before exporting a reviewed plan.")
                     return@launch
                 }
-                val root = preview.scopes.first().root as FileRef.Direct
+                val access = settingsRepository.storageAccessState.first()
+                val mode = access.mode ?: run {
+                    _uiState.value = ScanUiState.Error("No storage access is active.")
+                    return@launch
+                }
+                val root = preview.scopes.firstOrNull()?.root ?: run {
+                    _uiState.value = ScanUiState.Error("This preview no longer has an export folder.")
+                    return@launch
+                }
                 val name = "POCKETSTEWARD-REVIEWED-PLAN-${System.currentTimeMillis()}.json"
                 val body = ReviewedPlanPackage.encode(preview.goal, selected)
                 when (val result = withContext(Dispatchers.IO) {
                     VerifiedTextExporter.export(
-                        gateway = container.gatewayFor(StorageAccessMode.DIRECT),
+                        gateway = container.gatewayFor(mode),
                         parent = root,
                         finalName = name,
                         content = body,
                     )
                 }) {
                     is ExportResult.Written -> {
-                        container.notifyExternalFileCreated(result.path, "application/json")
+                        if (result.path.startsWith("/")) {
+                            container.notifyExternalFileCreated(result.path, "application/json")
+                        }
                         _uiState.value = ScanUiState.ArtifactExportReview(
                             title = "Reviewed plan exported",
                             paths = listOf(result.path),
