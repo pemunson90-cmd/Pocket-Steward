@@ -107,7 +107,7 @@ class CleanupSuggestionWorker(
                                 displayName = "Selected folder",
                             ),
                         )
-                }.getOrNull() ?: return Result.retry()
+                }.getOrNull() ?: return transientFailureResult()
 
                 val configured = settings.roots
                     .map { it.trimEnd('/') }
@@ -129,7 +129,7 @@ class CleanupSuggestionWorker(
         val newFileRefs = linkedSetOf<String>()
 
         for (root in roots) {
-            if (isStopped) return Result.retry()
+            if (isStopped) return transientFailureResult()
             val rootRaw = root.rawValue().trimEnd('/')
 
             val before = withContext(Dispatchers.IO) {
@@ -141,7 +141,7 @@ class CleanupSuggestionWorker(
             runCatching {
                 container.fileScanner(mode).scan(root)
             }.getOrElse {
-                return Result.retry()
+                return transientFailureResult()
             }
 
             val after = withContext(Dispatchers.IO) {
@@ -176,6 +176,13 @@ class CleanupSuggestionWorker(
         }
         return Result.success()
     }
+
+    private fun transientFailureResult(): Result =
+        if (BackgroundWorkPolicy.shouldRetry(runAttemptCount)) {
+            Result.retry()
+        } else {
+            Result.failure()
+        }
 
     private fun postSuggestion(newFiles: Int, obvious: Int) {
         val permissionGranted =
