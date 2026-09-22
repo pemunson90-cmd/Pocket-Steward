@@ -120,7 +120,7 @@ data class ScanScope(
  * tested; this adds only the typed ref the rest of the app works in.
  */
 data class BrowsableFolder(
-    val ref: FileRef.Direct,
+    val ref: FileRef,
     val folder: PickerFolder,
 ) {
     val displayName: String get() = folder.displayName
@@ -328,12 +328,15 @@ sealed interface ScanUiState {
      * that a file can be one.
      */
     data class FolderBrowser(
-        val current: FileRef.Direct,
+        val root: FileRef,
+        val current: FileRef,
         val currentDisplayName: String,
         val currentIsProtected: Boolean,
         val children: List<BrowsableFolder>,
-        val parent: FileRef.Direct?,
-    ) : ScanUiState
+        val ancestors: List<FileRef> = emptyList(),
+    ) : ScanUiState {
+        val parent: FileRef? get() = ancestors.lastOrNull()
+    }
 
     /**
      * Spec 6b: every folder under the scan root, with whether a
@@ -1655,47 +1658,73 @@ class ScanViewModel(
      * narrowing inside it is what the granted-folder target already does, so
      * the browser is not offered rather than offered and then refusing.
      */
-    fun browseFolders(startAt: FileRef.Direct? = null) {
+    fun browseFolders(
+        startAt: FileRef? = null,
+        ancestors: List<FileRef> = emptyList(),
+    ) {
         viewModelScope.launch {
-            _uiState.value = ScanUiState.Working("Reading folders", startAt?.absolutePath ?: "Storage root")
+            val startLabel = startAt?.displayScopeLabel() ?: "Storage root"
+            _uiState.value = ScanUiState.Working("Reading folders", startLabel)
             try {
-                val mode = settingsRepository.storageAccessState.first().mode
-                if (mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                val access = settingsRepository.storageAccessState.first()
+                val mode = access.mode ?: run {
+                    _uiState.value = ScanUiState.Error("No storage access is active.")
                     return@launch
                 }
-                @Suppress("DEPRECATION")
-                val storageRoot = FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
-                val current = startAt ?: storageRoot
                 val gateway = container.gatewayFor(mode)
+
+                val storageRoot: FileRef = when (mode) {
+                    StorageAccessMode.DIRECT -> {
+                        @Suppress("DEPRECATION")
+                        FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
+                    }
+                    StorageAccessMode.SAF -> {
+                        val uri = access.safTreeUri ?: run {
+                            _uiState.value = ScanUiState.Error(
+                                "The selected-folder grant is no longer available. Choose the folder again.",
+                            )
+                            return@launch
+                        }
+                        gateway.rootOf(
+                            StorageScope.Tree(
+                                rootRef = FileRef.Saf(uri),
+                                displayName = "Selected folder",
+                            ),
+                        )
+                    }
+                }
+
+                val current = startAt ?: storageRoot
+                val effectiveAncestors = when {
+                    ancestors.isNotEmpty() -> ancestors
+                    mode == StorageAccessMode.DIRECT && current is FileRef.Direct && storageRoot is FileRef.Direct ->
+                        current.directAncestorsWithin(storageRoot)
+                    current.rawValue().trimEnd('/') == storageRoot.rawValue().trimEnd('/') -> emptyList()
+                    else -> emptyList()
+                }
 
                 val children = withContext(Dispatchers.IO) {
                     gateway.listChildren(current)
                         .filter { it.isDirectory }
-                        .mapNotNull { entry -> (entry.ref as? FileRef.Direct)?.let { entry.displayName to it } }
-                        .map { (name, ref) -> describeFolder(gateway, ref, name) }
+                        .map { entry -> describeFolder(gateway, entry.ref, entry.displayName) }
                 }
 
                 _uiState.value = ScanUiState.FolderBrowser(
+                    root = storageRoot,
                     current = current,
-                    currentDisplayName = current.absolutePath.trimEnd('/').substringAfterLast('/')
-                        .ifBlank { current.absolutePath },
-                    // The folder you are standing in, not just the ones
-                    // below it: otherwise a folder with no subfolders could
-                    // never be protected from here at all.
-                    currentIsProtected = withContext(Dispatchers.IO) { gateway.exists(current.markerRef()) },
+                    currentDisplayName = runCatching { gateway.stat(current).displayName }
+                        .getOrDefault(current.displayScopeLabel()),
+                    currentIsProtected = withContext(Dispatchers.IO) {
+                        gateway.exists(current.child(DO_NOT_SORT_MARKER))
+                    },
                     children = children,
-                    // Never above external storage root: there is nothing
-                    // useful up there and MANAGE_EXTERNAL_STORAGE does not
-                    // reach it anyway.
-                    parent = current.parentWithin(storageRoot),
+                    ancestors = effectiveAncestors,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
     }
-
     /**
      * Counts and measures one folder's **direct** contents, not its whole
      * subtree. One extra listing per child folder, which is bounded and fast
@@ -1708,7 +1737,7 @@ class ScanViewModel(
      */
     private suspend fun describeFolder(
         gateway: StorageGateway,
-        ref: FileRef.Direct,
+        ref: FileRef,
         displayName: String,
     ): BrowsableFolder {
         val contents = runCatching { gateway.listChildren(ref) }.getOrDefault(emptyList())
@@ -1717,7 +1746,7 @@ class ScanViewModel(
         return BrowsableFolder(
             ref = ref,
             folder = PickerFolder(
-                path = ref.absolutePath,
+                path = ref.rawValue(),
                 displayName = displayName,
                 fileCount = files.size,
                 totalBytes = stats.sumOf { it.sizeBytes },
@@ -1736,8 +1765,19 @@ class ScanViewModel(
     }
 
     /** Scans the folder currently open in the browser, as its own scope root. */
-    fun scanBrowsedFolder(folder: FileRef.Direct) {
-        startScan(ScanTarget.CustomFolder(folder.absolutePath))
+    fun scanBrowsedFolder(folder: FileRef) {
+        when (folder) {
+            is FileRef.Direct -> startScan(ScanTarget.CustomFolder(folder.absolutePath))
+            is FileRef.Saf -> startScan(
+                ScanTarget.GrantedSubfolder(
+                    documentUri = folder.documentUri,
+                    label = folder.displayScopeLabel(),
+                ),
+            )
+            is FileRef.Child -> _uiState.value = ScanUiState.Error(
+                "That folder has not been created yet and cannot be scanned.",
+            )
+        }
     }
 
     /**
@@ -1751,17 +1791,17 @@ class ScanViewModel(
      * unprotect is recoverable from the Trash screen like any other file.
      */
     fun proposeToggleProtection(state: ScanUiState.FolderBrowser, folder: BrowsableFolder) {
-        proposeToggleProtection(state.current, folder.ref, folder.displayName, folder.isProtected)
+        proposeToggleProtection(state.root, folder.ref, folder.displayName, folder.isProtected)
     }
 
     /** The same toggle for the folder currently open, rather than one listed inside it. */
     fun proposeToggleProtectionHere(state: ScanUiState.FolderBrowser) {
-        proposeToggleProtection(state.current, state.current, state.currentDisplayName, state.currentIsProtected)
+        proposeToggleProtection(state.root, state.current, state.currentDisplayName, state.currentIsProtected)
     }
 
     private fun proposeToggleProtection(
-        root: FileRef.Direct,
-        target: FileRef.Direct,
+        root: FileRef,
+        target: FileRef,
         displayName: String,
         isProtected: Boolean,
     ) {
@@ -1769,7 +1809,7 @@ class ScanViewModel(
             try {
                 val operation = if (isProtected) {
                     PlannedOperation.Trash(
-                        source = target.markerRef(),
+                        source = target.child(DO_NOT_SORT_MARKER),
                         reason = "Removes protection from $displayName. The marker file goes to Trash, " +
                             "not deleted, so this is reversible.",
                     )
@@ -1999,10 +2039,10 @@ class ScanViewModel(
         folder: FileRef,
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
-        if (mode != StorageAccessMode.DIRECT) {
-            _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-            return
-        }
+            ?: run {
+                _uiState.value = ScanUiState.Error("No storage access is active.")
+                return
+            }
         val gateway = container.gatewayFor(mode)
         val children = withContext(Dispatchers.IO) { gateway.listChildren(folder) }
         val validated = PlanValidator.validate(operations, SingleFolderIndex(folder, children))
@@ -3679,13 +3719,13 @@ class ScanViewModel(
         gateway: StorageGateway,
     ): FileRef {
         if (mode == StorageAccessMode.SAF) {
-            val uri = requireNotNull(safTreeUri) { "SAF mode with no granted tree URI" }
-            // Must go through rootOf(), not a bare FileRef.Saf(uri): it
-            // normalizes the raw tree URI (".../tree/X") into document-URI
-            // form (".../tree/X/document/X"), which is what makes
-            // SafStorageGateway's fromTreeUri-based listing/stat resolve
-            // this node instead of misbehaving on an un-normalized ref.
-            return gateway.rootOf(StorageScope.Tree(FileRef.Saf(uri), "Granted folder"))
+            return when (target) {
+                is ScanTarget.GrantedSubfolder -> FileRef.Saf(target.documentUri)
+                else -> {
+                    val uri = requireNotNull(safTreeUri) { "SAF mode with no granted tree URI" }
+                    gateway.rootOf(StorageScope.Tree(FileRef.Saf(uri), "Granted folder"))
+                }
+            }
         }
         // Environment.getExternalStoragePublicDirectory is deprecated for
         // scoped-storage apps in general, but this app deliberately runs
@@ -3702,8 +3742,9 @@ class ScanViewModel(
             ScanTarget.Everything ->
                 FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
             is ScanTarget.CustomFolder -> FileRef.Direct(target.absolutePath)
-            is ScanTarget.GrantedFolder ->
-                error("GrantedFolder target is only valid in SAF mode")
+            is ScanTarget.GrantedFolder,
+            is ScanTarget.GrantedSubfolder,
+            -> error("SAF target is only valid in SAF mode")
         }
     }
 }
@@ -3732,7 +3773,8 @@ private fun scopeForOperation(operation: PlannedOperation, scopes: List<ScanScop
 
 private fun FileRef.displayScopeLabel(): String = when (this) {
     is FileRef.Direct -> absolutePath.trimEnd('/').substringAfterLast('/').ifBlank { absolutePath }
-    is FileRef.Saf -> "Granted folder"
+    is FileRef.Saf -> documentUri.substringAfterLast('/').ifBlank { "Granted folder" }
+    is FileRef.Child -> name
 }
 
 private fun ScanTarget.selectionKey(): String = when (this) {
@@ -3740,7 +3782,8 @@ private fun ScanTarget.selectionKey(): String = when (this) {
     ScanTarget.Documents -> "preset:documents"
     ScanTarget.Pictures -> "preset:pictures"
     ScanTarget.Everything -> "preset:everything"
-    is ScanTarget.GrantedFolder -> "saf:$label"
+    is ScanTarget.GrantedFolder -> "saf-root:$label"
+    is ScanTarget.GrantedSubfolder -> "saf-sub:$documentUri"
     is ScanTarget.CustomFolder -> "path:${absolutePath.trimEnd('/')}"
 }
 
@@ -3755,14 +3798,17 @@ private fun FileRecord.toSortCandidate(): SortCandidate = SortCandidate(
  * The parent of this folder, or null when it is [storageRoot] or somehow
  * outside it. Keeps "up" from walking off the top of what the app can read.
  */
-private fun FileRef.Direct.parentWithin(storageRoot: FileRef.Direct): FileRef.Direct? {
+private fun FileRef.Direct.directAncestorsWithin(storageRoot: FileRef.Direct): List<FileRef> {
     val rootPath = storageRoot.absolutePath.trimEnd('/')
-    val here = absolutePath.trimEnd('/')
-    if (here == rootPath || !here.startsWith("$rootPath/")) return null
-    val parentPath = here.substringBeforeLast('/', missingDelimiterValue = "")
-    return if (parentPath.isBlank()) null else FileRef.Direct(parentPath)
-}
+    var here = absolutePath.trimEnd('/')
+    if (here == rootPath || !here.startsWith("$rootPath/")) return emptyList()
 
-/** The protection marker's path inside this folder. */
-private fun FileRef.Direct.markerRef(): FileRef.Direct =
-    FileRef.Direct("${absolutePath.trimEnd('/')}/$DO_NOT_SORT_MARKER")
+    val reversed = mutableListOf<FileRef>()
+    while (here != rootPath) {
+        val parentPath = here.substringBeforeLast('/', missingDelimiterValue = "")
+        if (parentPath.isBlank() || parentPath.length < rootPath.length) break
+        reversed += FileRef.Direct(parentPath)
+        here = parentPath
+    }
+    return reversed.asReversed()
+}
