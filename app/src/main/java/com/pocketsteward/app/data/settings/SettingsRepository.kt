@@ -12,6 +12,8 @@ import com.pocketsteward.app.content.index.ContentSearchSort
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.CorrectionRule
+import com.pocketsteward.app.saved.LastScanSessionCodec
+import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.OrganizationPreferenceCodec
 import com.pocketsteward.app.saved.SavedWorkflow
@@ -72,6 +74,7 @@ class SettingsRepository(private val context: Context) {
         val CORRECTION_RULES = stringPreferencesKey("correction_rules")
         val SCHEDULED_CLEANUP = stringPreferencesKey("scheduled_cleanup")
         val PENDING_CLEANUP_SUGGESTION = stringPreferencesKey("pending_cleanup_suggestion")
+        val LAST_SCAN_SESSION = stringPreferencesKey("last_scan_session")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -133,6 +136,22 @@ class SettingsRepository(private val context: Context) {
 
     val pendingCleanupSuggestion: Flow<PendingCleanupSuggestion?> = context.dataStore.data.map { prefs ->
         PendingCleanupSuggestionCodec.decode(prefs[Keys.PENDING_CLEANUP_SUGGESTION])
+    }
+
+    val lastScanSession: Flow<LastScanSession?> = context.dataStore.data.map { prefs ->
+        LastScanSessionCodec.decode(prefs[Keys.LAST_SCAN_SESSION])
+    }
+
+    suspend fun setLastScanSession(value: LastScanSession) {
+        context.dataStore.edit {
+            it[Keys.LAST_SCAN_SESSION] = LastScanSessionCodec.encode(value)
+        }
+    }
+
+    suspend fun clearLastScanSession() {
+        context.dataStore.edit {
+            it.remove(Keys.LAST_SCAN_SESSION)
+        }
     }
 
     suspend fun setPendingCleanupSuggestion(value: PendingCleanupSuggestion) {
@@ -350,6 +369,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it.remove(Keys.STORAGE_MODE)
             it.remove(Keys.SAF_TREE_URI)
+            it.remove(Keys.LAST_SCAN_SESSION)
         }
     }
 
