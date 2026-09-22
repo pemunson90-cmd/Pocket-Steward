@@ -42,7 +42,11 @@ class RuntimeDiagnostics(
         val power = appContext.getSystemService(PowerManager::class.java)
         val activity = appContext.getSystemService(ActivityManager::class.java)
         val index = contentIndexOverview()
-        val recent = database.taskRunDao().getMostRecentCompleted()
+        val fileRecords = scalarLong("SELECT COUNT(*) FROM file_records").toInt()
+        val scopeRoots = scalarLong("SELECT COUNT(DISTINCT scopeRoot) FROM file_scopes").toInt()
+        val taskRuns = scalarLong("SELECT COUNT(*) FROM task_runs").toInt()
+        val journalRows = scalarLong("SELECT COUNT(*) FROM mutation_records").toInt()
+        val recentTiming = mostRecentCompletedTaskTiming()
 
         val version = runCatching {
             val info = if (Build.VERSION.SDK_INT >= 33) {
@@ -62,19 +66,38 @@ class RuntimeDiagnostics(
 
         return RuntimeDiagnosticsSnapshot(
             appVersion = version,
-            fileRecords = database.fileRecordDao().countAllRecords(),
-            scopeRoots = database.fileRecordDao().getKnownScopeRoots().size,
-            taskRuns = database.taskRunDao().countAllRuns(),
-            journalRows = database.mutationRecordDao().countAllMutations(),
+            fileRecords = fileRecords,
+            scopeRoots = scopeRoots,
+            taskRuns = taskRuns,
+            journalRows = journalRows,
             contentDocuments = index.documentCount,
             contentSegments = index.segmentCount,
             contentRoots = index.rootCount,
-            lastTaskDurationMs = recent?.completedAt
-                ?.let { completed -> (completed - recent.startedAt).coerceAtLeast(0L) },
+            lastTaskDurationMs = recentTiming?.let { (started, completed) ->
+                (completed - started).coerceAtLeast(0L)
+            },
             powerSaveMode = power.isPowerSaveMode,
             batteryOptimizationExempt = power.isIgnoringBatteryOptimizations(appContext.packageName),
             lowRamDevice = activity.isLowRamDevice,
             sharedStorageUsableBytes = runCatching { sharedRoot.usableSpace }.getOrDefault(0L),
         )
     }
+
+    private fun scalarLong(sql: String): Long =
+        database.openHelper.readableDatabase.query(sql).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+        }
+
+    private fun mostRecentCompletedTaskTiming(): Pair<Long, Long>? =
+        database.openHelper.readableDatabase.query(
+            "SELECT startedAt, completedAt FROM task_runs " +
+                "WHERE completedAt IS NOT NULL ORDER BY completedAt DESC LIMIT 1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(1)) {
+                null
+            } else {
+                cursor.getLong(0) to cursor.getLong(1)
+            }
+        }
+
 }
