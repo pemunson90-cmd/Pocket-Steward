@@ -1,6 +1,7 @@
 package com.pocketsteward.app.dedupe
 
 import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.data.db.FileRecordDao
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
 import java.security.MessageDigest
@@ -35,7 +36,10 @@ data class DuplicateGroup(val sha256: String, val members: List<FileRecord>) {
  * Downloads: 13,738 files, 11.2 GB) the I/O phases take long enough that a
  * caller with no progress to show is indistinguishable from a dead button.
  */
-class DuplicateDetector(private val gateway: StorageGateway) {
+class DuplicateDetector(
+    private val gateway: StorageGateway,
+    private val fileRecordDao: FileRecordDao? = null,
+) {
 
     suspend fun findDuplicates(
         records: List<FileRecord>,
@@ -84,18 +88,28 @@ class DuplicateDetector(private val gateway: StorageGateway) {
     }
 
     private suspend fun quickFingerprint(record: FileRecord): String {
+        record.quickFingerprint?.takeIf { it.isNotBlank() }?.let { return it }
+
         val digest = MessageDigest.getInstance("SHA-256")
-        gateway.openRead(parseFileRef(record.stableRef)).use { stream ->
+        val ref = parseFileRef(record.stableRef)
+        gateway.openRead(ref).use { stream ->
             val buffer = ByteArray(QUICK_FINGERPRINT_BYTES)
             val read = stream.read(buffer)
             if (read > 0) digest.update(buffer, 0, read)
         }
-        return digest.digest().toHex()
+        val value = digest.digest().toHex()
+        if (stillSameIndexedFile(record, ref)) {
+            fileRecordDao?.updateQuickFingerprint(record.stableRef, value)
+        }
+        return value
     }
 
     private suspend fun sha256(record: FileRecord): String {
+        record.sha256?.takeIf { it.isNotBlank() }?.let { return it }
+
         val digest = MessageDigest.getInstance("SHA-256")
-        gateway.openRead(parseFileRef(record.stableRef)).use { stream ->
+        val ref = parseFileRef(record.stableRef)
+        gateway.openRead(ref).use { stream ->
             val buffer = ByteArray(READ_CHUNK_BYTES)
             while (true) {
                 val read = stream.read(buffer)
@@ -103,7 +117,20 @@ class DuplicateDetector(private val gateway: StorageGateway) {
                 digest.update(buffer, 0, read)
             }
         }
-        return digest.digest().toHex()
+        val value = digest.digest().toHex()
+        if (stillSameIndexedFile(record, ref)) {
+            fileRecordDao?.updateSha256(record.stableRef, value)
+        }
+        return value
+    }
+
+    private suspend fun stillSameIndexedFile(record: FileRecord, ref: com.pocketsteward.app.storage.FileRef): Boolean {
+        val current = runCatching { gateway.stat(ref) }.getOrNull() ?: return false
+        if (current.isDirectory || current.sizeBytes != record.sizeBytes) return false
+
+        val indexedModified = record.modifiedAt
+        val currentModified = current.modifiedAtEpochMs
+        return indexedModified == null || currentModified == null || indexedModified == currentModified
     }
 
     /**
