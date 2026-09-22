@@ -20,7 +20,7 @@ object PlanSelection {
     fun safeSelected(operations: List<PlannedOperation>): Set<Int> {
         var selected = emptySet<Int>()
         operations.forEachIndexed { index, operation ->
-            if (operation.safetyClass() != MutationSafetyClass.RED) {
+            if (operation.safetyClass() == MutationSafetyClass.GREEN) {
                 selected = setSelected(
                     operations = operations,
                     current = selected,
