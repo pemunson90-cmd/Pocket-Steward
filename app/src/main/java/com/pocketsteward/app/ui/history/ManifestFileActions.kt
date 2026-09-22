@@ -10,46 +10,45 @@ import java.io.File
 
 internal object ManifestFileActions {
     fun open(context: Context, path: String) {
-        val file = File(path)
-        if (!file.isFile) {
-            Toast.makeText(context, "Manifest file is no longer present.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file,
-        )
-        val mime = if (file.extension.equals("json", ignoreCase = true)) "application/json" else "text/markdown"
+        val resolved = resolve(context, path) ?: return
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
+            setDataAndType(resolved.uri, resolved.mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        launch(context, Intent.createChooser(intent, "Open manifest"), "No app can open this manifest.")
+        launch(context, Intent.createChooser(intent, "Open artifact"), "No app can open this artifact.")
     }
 
     fun share(context: Context, path: String) {
-        val file = File(path)
-        if (!file.isFile) {
-            Toast.makeText(context, "Manifest file is no longer present.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file,
-        )
-        val mime = if (file.extension.equals("json", ignoreCase = true)) "application/json" else "text/markdown"
+        val resolved = resolve(context, path) ?: return
         val intent = Intent(Intent.ACTION_SEND).apply {
-            type = mime
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, file.name)
+            type = resolved.mimeType
+            putExtra(Intent.EXTRA_STREAM, resolved.uri)
+            putExtra(Intent.EXTRA_SUBJECT, resolved.displayName)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        launch(context, Intent.createChooser(intent, "Share manifest"), "No app can share this manifest.")
+        launch(context, Intent.createChooser(intent, "Share artifact"), "No app can share this artifact.")
     }
 
     fun showContainingFolder(context: Context, path: String) {
+        if (path.startsWith("content://")) {
+            val uri = Uri.parse(path)
+            val treeUri = runCatching {
+                DocumentsContract.buildTreeDocumentUri(
+                    uri.authority,
+                    DocumentsContract.getTreeDocumentId(uri),
+                )
+            }.getOrNull()
+            if (treeUri == null) {
+                Toast.makeText(context, "This provider cannot expose the containing folder.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
+            }
+            launch(context, intent, "No folder browser is available.")
+            return
+        }
+
         val parent = File(path).parentFile
         if (parent == null || !parent.isDirectory) {
             Toast.makeText(context, "Containing folder is no longer present.", Toast.LENGTH_SHORT).show()
@@ -61,6 +60,41 @@ internal object ManifestFileActions {
             initial?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
         }
         launch(context, intent, "No folder browser is available.")
+    }
+
+    private data class ResolvedArtifact(
+        val uri: Uri,
+        val displayName: String,
+        val mimeType: String,
+    )
+
+    private fun resolve(context: Context, path: String): ResolvedArtifact? {
+        if (path.startsWith("content://")) {
+            val uri = Uri.parse(path)
+            val mime = context.contentResolver.getType(uri)
+                ?: mimeFromName(uri.lastPathSegment.orEmpty())
+            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "Pocket Steward artifact"
+            return ResolvedArtifact(uri, name, mime)
+        }
+
+        val file = File(path)
+        if (!file.isFile) {
+            Toast.makeText(context, "Artifact file is no longer present.", Toast.LENGTH_SHORT).show()
+            return null
+        }
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        return ResolvedArtifact(uri, file.name, mimeFromName(file.name))
+    }
+
+    private fun mimeFromName(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "json" -> "application/json"
+        "csv" -> "text/csv"
+        "md", "markdown" -> "text/markdown"
+        else -> "text/plain"
     }
 
     private fun externalStorageDocumentUri(path: String): Uri? {
