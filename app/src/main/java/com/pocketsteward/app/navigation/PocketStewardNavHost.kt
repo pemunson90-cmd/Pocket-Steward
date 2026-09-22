@@ -73,6 +73,11 @@ fun PocketStewardNavHost(
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
+                onChangeStorageAccess = {
+                    navController.navigate(Routes.ONBOARDING) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                },
             )
         }
         scanFlowGraph(
