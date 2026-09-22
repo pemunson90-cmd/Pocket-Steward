@@ -1955,20 +1955,13 @@ class ScanViewModel(
     fun exportInventory(summary: ScanUiState.Summary) {
         viewModelScope.launch {
             try {
-                if (summary.mode != StorageAccessMode.DIRECT ||
-                    summary.scopes.any { it.root !is FileRef.Direct }
-                ) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
-
                 val timestamp = System.currentTimeMillis()
                 val written = mutableListOf<String>()
                 val errors = mutableListOf<String>()
-                val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
+                val gateway = container.gatewayFor(summary.mode)
 
                 for ((scopeIndex, scope) in summary.scopes.withIndex()) {
-                    val root = scope.root as FileRef.Direct
+                    val root = scope.root
                     _uiState.value = ScanUiState.Working(
                         label = "Exporting inventory",
                         detail = scope.label,
@@ -1989,10 +1982,12 @@ class ScanViewModel(
                         }) {
                             is ExportResult.Written -> {
                                 written += result.path
-                                container.notifyExternalFileCreated(
-                                    result.path,
-                                    if (result.path.endsWith(".json")) "application/json" else "text/csv",
-                                )
+                                if (result.path.startsWith("/")) {
+                                    container.notifyExternalFileCreated(
+                                        result.path,
+                                        if (result.path.endsWith(".json")) "application/json" else "text/csv",
+                                    )
+                                }
                             }
                             is ExportResult.Failed -> errors += "${scope.label}: $name · ${result.reason}"
                         }
