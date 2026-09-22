@@ -813,49 +813,95 @@ class PlanExecutor(
         )
     }
 
-    private suspend fun reindexAfterMutation(operation: PlannedOperation, newRef: FileRef, scopeRootRef: String) {
+    private suspend fun reindexAfterMutation(
+        operation: PlannedOperation,
+        newRef: FileRef,
+        scopeRootRef: String,
+    ) {
         val knownScopes = (fileRecordDao.getKnownScopeRoots() + scopeRootRef).distinct()
+        val sourceRecord = when (operation) {
+            is PlannedOperation.Move,
+            is PlannedOperation.Copy,
+            is PlannedOperation.Rename,
+            is PlannedOperation.Trash,
+            -> fileRecordDao.getByStableRef(operation.sourceRef().rawValue())
+            is PlannedOperation.CreateDirectory,
+            is PlannedOperation.WriteTextFile,
+            -> null
+        }
 
-        // Both of these create a new entry and leave their source (the
-        // parent directory) exactly where it was. Falling through to the
-        // move/rename path below would delete the parent's index row.
-        if (
-            operation is PlannedOperation.CreateDirectory ||
-            operation is PlannedOperation.WriteTextFile ||
-            operation is PlannedOperation.Copy
-        ) {
-            val record = gateway.stat(newRef).toFileRecord(newRef.parentRefOrNull())
-            fileRecordDao.upsert(record)
-            fileRecordDao.insertScopeTags(
-                matchingScopeRoots(newRef, knownScopes).map { FileScope(record.stableRef, it) },
-            )
+        val destinationParent = when (operation) {
+            is PlannedOperation.CreateDirectory -> operation.parent
+            is PlannedOperation.WriteTextFile -> operation.parent
+            is PlannedOperation.Move -> operation.destination.knownParentOrNull()
+            is PlannedOperation.Copy -> operation.destination.knownParentOrNull()
+            is PlannedOperation.Rename ->
+                sourceRecord?.parentRef?.let(::parseFileRef)
+            is PlannedOperation.Trash -> null
+        }
+
+        if (operation is PlannedOperation.Trash) {
+            fileRecordDao.deleteByStableRef(operation.source.rawValue())
             return
         }
 
-        val oldStableRef = operation.sourceRef().rawValue()
-        val existing = fileRecordDao.getByStableRef(oldStableRef)
-        fileRecordDao.deleteByStableRef(oldStableRef)
-
-        if (operation is PlannedOperation.Trash) return
-
         val meta = gateway.stat(newRef)
-        fileRecordDao.upsert(
-            (existing ?: meta.toFileRecord(newRef.parentRefOrNull())).copy(
+
+        if (operation is PlannedOperation.Copy) {
+            val copied = (sourceRecord ?: meta.toFileRecord(destinationParent)).copy(
+                id = 0,
                 stableRef = newRef.rawValue(),
                 displayName = meta.displayName,
                 extension = meta.extension,
                 mimeType = meta.mimeType,
                 absolutePathOrUri = newRef.rawValue(),
-                parentRef = newRef.parentRefOrNull()?.rawValue(),
+                parentRef = destinationParent?.rawValue(),
                 sizeBytes = meta.sizeBytes,
                 modifiedAt = meta.modifiedAtEpochMs,
                 lastScannedAt = System.currentTimeMillis(),
                 isDirectory = meta.isDirectory,
                 isHidden = meta.isHidden,
-            ),
+            )
+            fileRecordDao.upsert(copied)
+            fileRecordDao.insertScopeTags(
+                matchingScopeRoots(newRef, knownScopes)
+                    .map { FileScope(copied.stableRef, it) },
+            )
+            return
+        }
+
+        if (operation is PlannedOperation.CreateDirectory ||
+            operation is PlannedOperation.WriteTextFile
+        ) {
+            val record = meta.toFileRecord(destinationParent)
+            fileRecordDao.upsert(record)
+            fileRecordDao.insertScopeTags(
+                matchingScopeRoots(newRef, knownScopes)
+                    .map { FileScope(record.stableRef, it) },
+            )
+            return
+        }
+
+        val oldStableRef = operation.sourceRef().rawValue()
+        fileRecordDao.deleteByStableRef(oldStableRef)
+
+        val moved = (sourceRecord ?: meta.toFileRecord(destinationParent)).copy(
+            stableRef = newRef.rawValue(),
+            displayName = meta.displayName,
+            extension = meta.extension,
+            mimeType = meta.mimeType,
+            absolutePathOrUri = newRef.rawValue(),
+            parentRef = destinationParent?.rawValue(),
+            sizeBytes = meta.sizeBytes,
+            modifiedAt = meta.modifiedAtEpochMs,
+            lastScannedAt = System.currentTimeMillis(),
+            isDirectory = meta.isDirectory,
+            isHidden = meta.isHidden,
         )
+        fileRecordDao.upsert(moved)
         fileRecordDao.insertScopeTags(
-            matchingScopeRoots(newRef, knownScopes).map { FileScope(newRef.rawValue(), it) },
+            matchingScopeRoots(newRef, knownScopes)
+                .map { FileScope(newRef.rawValue(), it) },
         )
     }
 
