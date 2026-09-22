@@ -103,6 +103,11 @@ class AppContainer(context: Context) {
     }
 
     fun notifyExternalFileCreated(path: String, mimeType: String? = null) {
+        // SAF/content URIs are already owned and indexed by their
+        // DocumentsProvider. MediaScannerConnection only accepts filesystem
+        // paths, so sending a content URI here is at best a no-op and at worst
+        // provider/device-specific noise.
+        if (path.startsWith("content://")) return
         MediaScannerConnection.scanFile(
             appContext,
             arrayOf(path),
