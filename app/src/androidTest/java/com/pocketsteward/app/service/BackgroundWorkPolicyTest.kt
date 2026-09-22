@@ -28,4 +28,12 @@ class BackgroundWorkPolicyTest {
         assertFalse(constraints.requiresBatteryNotLow())
         assertTrue(constraints.requiresStorageNotLow())
     }
+    @Test
+    fun transientRetriesStopAfterThreeTotalAttempts() {
+        assertTrue(BackgroundWorkPolicy.shouldRetry(0))
+        assertTrue(BackgroundWorkPolicy.shouldRetry(1))
+        assertFalse(BackgroundWorkPolicy.shouldRetry(2))
+        assertFalse(BackgroundWorkPolicy.shouldRetry(3))
+    }
+
 }
