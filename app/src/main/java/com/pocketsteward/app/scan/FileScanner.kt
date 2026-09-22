@@ -91,18 +91,31 @@ class FileScanner(
         try {
             while (queue.isNotEmpty()) {
                 currentCoroutineContext().ensureActive()
-                val directory = queue.removeFirst()
+
+                // Do not dequeue the current directory until its complete
+                // immediate listing and metadata batch are durable. If
+                // permission/process failure happens anywhere below, the
+                // checkpoint still contains this directory and resume safely
+                // replays this one idempotent unit of work.
+                val directory = queue.first()
                 val children = gateway.listChildren(directory)
+                val discoveredDirectories = mutableListOf<FileRef>()
 
                 val batch = children.map { entry ->
                     val meta = gateway.stat(entry.ref)
-                    if (meta.isDirectory) queue.addLast(entry.ref)
+                    if (meta.isDirectory) discoveredDirectories += entry.ref
                     meta.toFileRecord(parent = directory)
                 }
                 if (batch.isNotEmpty()) {
                     fileRecordDao.upsertAllFromScan(batch)
                     fileRecordDao.insertScopeTags(batch.map { FileScope(it.stableRef, scopeKey) })
                 }
+
+                // Only now is advancing the queue safe. Child directories are
+                // appended after removing the completed parent, so a resumed
+                // checkpoint cannot contain partially-discovered descendants.
+                queue.removeFirst()
+                discoveredDirectories.forEach(queue::addLast)
                 processedCount += batch.size
 
                 persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
