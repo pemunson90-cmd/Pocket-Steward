@@ -1,6 +1,7 @@
 package com.pocketsteward.app
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.room.Room
@@ -20,6 +21,7 @@ import com.pocketsteward.app.plan.PlanSelection
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileScanner
+import com.pocketsteward.app.service.BootRecoveryReceiver
 import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
@@ -212,6 +214,25 @@ class V1EndToEndAcceptanceTest {
         assertThat(finalJournal).hasSize(plan.operations.size)
         assertThat(finalJournal.map { it.sequence }.distinct()).hasSize(plan.operations.size)
         assertThat(File(root, "Documents").listFiles().orEmpty()).hasLength(60)
+    }
+
+    @Test
+    fun bootRecoveryReceiverIsRegisteredAndPrivate() {
+        val info = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            context.packageManager.getReceiverInfo(
+                ComponentName(context, BootRecoveryReceiver::class.java),
+                PackageManager.ComponentInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getReceiverInfo(
+                ComponentName(context, BootRecoveryReceiver::class.java),
+                0,
+            )
+        }
+
+        assertThat(info.enabled).isTrue()
+        assertThat(info.exported).isFalse()
     }
 
     @Test
