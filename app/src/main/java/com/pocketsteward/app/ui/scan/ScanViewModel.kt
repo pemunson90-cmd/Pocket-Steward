@@ -71,6 +71,7 @@ import com.pocketsteward.app.saved.LastScanRoot
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.SavedSearch
+import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -745,7 +746,7 @@ class ScanViewModel(
                 consumeScheduledSuggestionOnSummary = true
                 startScan(
                     targets = targets,
-                    thenRun = PostScanAction.SMART_CLEANUP,
+                    thenScheduledSuggestion = suggestion,
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -1147,8 +1148,16 @@ class ScanViewModel(
         thenRequest: String? = null,
         thenSavedSearch: SavedSearch? = null,
         thenImportedPlan: DurablePlan? = null,
+        thenScheduledSuggestion: PendingCleanupSuggestion? = null,
     ) {
-        startScan(listOf(target), thenRun, thenRequest, thenSavedSearch, thenImportedPlan)
+        startScan(
+            targets = listOf(target),
+            thenRun = thenRun,
+            thenRequest = thenRequest,
+            thenSavedSearch = thenSavedSearch,
+            thenImportedPlan = thenImportedPlan,
+            thenScheduledSuggestion = thenScheduledSuggestion,
+        )
     }
 
     fun startScan(
@@ -1157,6 +1166,7 @@ class ScanViewModel(
         thenRequest: String? = null,
         thenSavedSearch: SavedSearch? = null,
         thenImportedPlan: DurablePlan? = null,
+        thenScheduledSuggestion: PendingCleanupSuggestion? = null,
     ) {
         scanJob?.cancel()
         userScanCancellationRequested = false
@@ -1267,13 +1277,26 @@ class ScanViewModel(
                     }
                 }
 
-                when (thenRun) {
-                    null -> Unit
-                    PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
-                    PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
-                    PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
-                    PostScanAction.FIND_OLD -> findOldFiles(summary)
-                    PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
+                if (thenScheduledSuggestion != null) {
+                    if (thenScheduledSuggestion.newFileRefs.isNotEmpty()) {
+                        proposeScheduledCleanup(
+                            summary = summary,
+                            suggestion = thenScheduledSuggestion,
+                        )
+                    } else {
+                        // Backward-compatible fallback for v1 pending
+                        // suggestions that predate exact new-file refs.
+                        proposeSmartCleanup(summary)
+                    }
+                } else {
+                    when (thenRun) {
+                        null -> Unit
+                        PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
+                        PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
+                        PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
+                        PostScanAction.FIND_OLD -> findOldFiles(summary)
+                        PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
+                    }
                 }
 
                 thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
@@ -1754,6 +1777,73 @@ class ScanViewModel(
         }
     }
 
+    private fun proposeScheduledCleanup(
+        summary: ScanUiState.Summary,
+        suggestion: PendingCleanupSuggestion,
+    ) {
+        viewModelScope.launch {
+            _uiState.value = ScanUiState.Working(
+                "Planning scheduled review",
+                "Considering only files discovered by the scheduled scan",
+            )
+            try {
+                val exactRefs = suggestion.newFileRefs.toHashSet()
+                val projectKeywords = settingsRepository.projectKeywords.first()
+                val generatedByScope = summary.scopes.map { scope ->
+                    val records = container.database.fileRecordDao()
+                        .getFilesUnderScopeRoot(scope.root.rawValue())
+                        .filter { it.stableRef in exactRefs }
+
+                    val generated = withContext(Dispatchers.Default) {
+                        RuleBasedPlanSource.proposePlan(
+                            PlanRequest(
+                                scopeRoot = scope.root,
+                                records = records,
+                                projectKeywords = projectKeywords,
+                                includeSubfolders = false,
+                            ),
+                        )
+                    }
+                    scope to generated
+                }
+
+                val operations = generatedByScope.flatMap { it.second.plan.operations }
+                if (operations.isEmpty()) {
+                    _uiState.value = ScanUiState.Error(
+                        "The scheduled scan found ${suggestion.newFileCount} new file(s), " +
+                            "but none of the still-present new files can be organized with full confidence.",
+                    )
+                    return@launch
+                }
+
+                val tracked = exactRefs.size
+                val notes = buildList {
+                    add(
+                        "Scheduled review is limited to the $tracked newly discovered file reference(s) saved with this suggestion; older files are not reconsidered.",
+                    )
+                    if (suggestion.newFileCount > tracked) {
+                        add(
+                            "${suggestion.newFileCount - tracked} additional new file(s) were counted but omitted from the bounded persisted ref list. Run a normal cleanup if you want to review the whole root.",
+                        )
+                    }
+                    generatedByScope.forEach { (scope, generated) ->
+                        generated.scopeReport.previewLines().forEach { line ->
+                            add(if (summary.scopes.size == 1) line else "${scope.label}: $line")
+                        }
+                    }
+                }
+
+                showPlanPreview(
+                    goal = "Scheduled cleanup review · ${suggestion.newFileCount} new file(s)",
+                    operations = operations,
+                    scopes = summary.scopes,
+                    scopeNotes = notes,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
     fun proposeSmartCleanup(summary: ScanUiState.Summary, includeSubfolders: Boolean = false) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
