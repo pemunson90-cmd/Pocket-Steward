@@ -106,33 +106,35 @@ private fun ExecutionQueued(
     progress: TaskJournalProgress?,
     onPause: () -> Unit,
     onResume: () -> Unit,
-    onUndo: () -> Unit,
-    onOpenTask: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
     val total = state.operationCount.coerceAtLeast(1)
-    val completed = progress?.journaledCount?.coerceAtMost(total.toLong())?.toInt() ?: 0
-    val failed = progress?.failedCount ?: 0L
+    val completed = progress?.journaledCount
+        ?.coerceAtMost(total.toLong())
+        ?.toInt()
+        ?: 0
     val status = task?.status
-
-    val headline = when (status) {
-        TaskRunStatus.CANCELLED -> "Paused"
-        TaskRunStatus.COMPLETED -> "Done"
-        TaskRunStatus.PARTIAL -> "Partly done"
-        TaskRunStatus.FAILED -> "Nothing went through"
-        TaskRunStatus.NEEDS_REVIEW -> "Needs review"
-        else -> "Working"
-    }
+    val terminal = status in setOf(
+        TaskRunStatus.COMPLETED,
+        TaskRunStatus.PARTIAL,
+        TaskRunStatus.FAILED,
+        TaskRunStatus.NEEDS_REVIEW,
+        TaskRunStatus.UNDONE,
+        TaskRunStatus.UNDO_PARTIAL,
+    )
 
     Column(modifier = modifier.fillMaxWidth()) {
         ScreenHeadline(
-            text = headline,
-            supporting = buildString {
-                append("$completed of ${state.operationCount} operations recorded")
-                if (failed > 0) append(" · $failed failed")
-                append(" · task #${state.taskRunId}")
+            text = when (status) {
+                TaskRunStatus.CANCELLED -> "Task paused"
+                TaskRunStatus.COMPLETED -> "Task finished"
+                TaskRunStatus.PARTIAL -> "Task partly finished"
+                TaskRunStatus.FAILED -> "Task stopped"
+                TaskRunStatus.NEEDS_REVIEW -> "Task needs review"
+                else -> "Task running"
             },
+            supporting = "$completed of $total operation(s) recorded · task #${state.taskRunId}",
         )
 
         LinearProgressIndicator(
@@ -143,34 +145,31 @@ private fun ExecutionQueued(
         Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.base)) {
             Column(modifier = Modifier.padding(Spacing.base)) {
                 Text(
-                    task?.requestText ?: "Approved Pocket Steward task",
+                    "Pocket Steward saved the exact approved plan before execution.",
                     style = MaterialTheme.typography.titleSmall,
                 )
-                if (progress != null && progress.changedCount > 0) {
-                    Text(
-                        buildList {
-                            if (progress.foldersCreated > 0) add("${progress.foldersCreated} folders")
-                            if (progress.filesMoved > 0) add("${progress.filesMoved} moved")
-                            if (progress.filesCopied > 0) add("${progress.filesCopied} copied")
-                            if (progress.filesRenamed > 0) add("${progress.filesRenamed} renamed")
-                            if (progress.filesTrashed > 0) add("${progress.filesTrashed} quarantined")
-                            if (progress.filesWritten > 0) add("${progress.filesWritten} written")
-                        }.joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = Spacing.tight),
-                    )
-                }
                 Text(
-                    task?.summary ?: "The approved plan is journaled before each filesystem mutation.",
+                    buildString {
+                        append("Progress is journal-backed, so leaving this screen does not lose completed work. ")
+                        when (status) {
+                            TaskRunStatus.CANCELLED -> append("Resume continues with the first unrecorded operation.")
+                            TaskRunStatus.NEEDS_REVIEW, TaskRunStatus.UNDO_PARTIAL ->
+                                append("Open Tasks to inspect the journal before making another change.")
+                            else -> append("If Android interrupts the runner, recovery reconciles the journal before resume.")
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = Spacing.tight),
                 )
-                if (status == TaskRunStatus.RUNNING || status == null) {
+                progress?.let { journal ->
                     Text(
-                        "You can leave this screen. Progress is durable, and Android can switch between the foreground service and background worker without replaying completed operations.",
+                        buildString {
+                            append("${journal.journaledCount} journal row(s)")
+                            if (journal.pendingCount > 0) append(" · ${journal.pendingCount} in progress")
+                            if (journal.failedCount > 0) append(" · ${journal.failedCount} failed")
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Spacing.tight),
                     )
                 }
@@ -178,38 +177,16 @@ private fun ExecutionQueued(
         }
 
         ActionRow {
-            when (status) {
-                TaskRunStatus.RUNNING, null -> {
+            when {
+                status == TaskRunStatus.RUNNING -> {
                     OutlinedButton(onClick = onPause) { Text("Pause") }
                 }
-                TaskRunStatus.CANCELLED -> {
+                status == TaskRunStatus.CANCELLED -> {
                     Button(onClick = onResume) { Text("Resume") }
                 }
-                TaskRunStatus.COMPLETED,
-                TaskRunStatus.PARTIAL,
-                TaskRunStatus.FAILED,
-                -> if (progress != null && progress.changedCount > 0) {
-                    OutlinedButton(onClick = onUndo) { Text("Undo this task") }
-                }
-                else -> Unit
-            }
-            OutlinedButton(onClick = onOpenTask) {
-                Text("Open Tasks")
             }
             Button(onClick = onDone) {
-                Text(
-                    if (status in setOf(
-                            TaskRunStatus.COMPLETED,
-                            TaskRunStatus.PARTIAL,
-                            TaskRunStatus.FAILED,
-                            TaskRunStatus.NEEDS_REVIEW,
-                        )
-                    ) {
-                        "Done"
-                    } else {
-                        "Leave running"
-                    },
-                )
+                Text(if (terminal) "Done" else "Leave running")
             }
         }
     }
