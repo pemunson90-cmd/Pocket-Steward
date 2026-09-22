@@ -25,6 +25,9 @@ import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.parseFileRef
+import com.pocketsteward.app.storage.knownParentOrNull
+import com.pocketsteward.app.storage.child
 import kotlinx.coroutines.CancellationException
 
 data class ExecutionSummary(
@@ -214,6 +217,17 @@ class PlanExecutor(
                 return@forEachIndexed
             }
 
+            val journalSource = try {
+                journalSourceBefore(operation)
+            } catch (t: Throwable) {
+                val reason = "Could not capture a durable original location before mutation: ${t.message ?: t.javaClass.simpleName}"
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, validated.accepted.size)
+                return@forEachIndexed
+            }
+
             val contentFingerprint = try {
                 journalFingerprint(operation)
             } catch (t: Throwable) {
@@ -235,17 +249,18 @@ class PlanExecutor(
                     executedAt = null,
                     undoState = UndoState.NOT_AVAILABLE,
                     contentFingerprint = contentFingerprint,
+                    sourceBefore = journalSource,
                 ),
             )
 
-            when (val result = runOne(operation, contentFingerprint)) {
+            when (val result = runOne(operation, contentFingerprint, expectedDestination)) {
                 is MutationResult.Success -> {
                     val committed = MutationRecord(
                         id = mutationId,
                         taskRunId = taskRunId,
                         sequence = sequence,
                         operationType = operation.toOperationType(),
-                        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                        sourceBefore = FileRefJournalCodec.encode(journalSource),
                         destinationAfter = FileRefJournalCodec.encode(result.resultRef),
                         sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
@@ -279,7 +294,7 @@ class PlanExecutor(
                             taskRunId = taskRunId,
                             sequence = sequence,
                             operationType = operation.toOperationType(),
-                            sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                            sourceBefore = FileRefJournalCodec.encode(journalSource),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
                             sourceFingerprint = contentFingerprint,
                             status = MutationStatus.FAILED,
@@ -497,6 +512,17 @@ class PlanExecutor(
                 continue
             }
 
+            val journalSource = try {
+                journalSourceBefore(operation)
+            } catch (t: Throwable) {
+                val reason = "Could not capture a durable original location before mutation: ${t.message ?: t.javaClass.simpleName}"
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, operations.size)
+                continue
+            }
+
             val contentFingerprint = try {
                 journalFingerprint(operation)
             } catch (t: Throwable) {
@@ -518,17 +544,18 @@ class PlanExecutor(
                     executedAt = null,
                     undoState = UndoState.NOT_AVAILABLE,
                     contentFingerprint = contentFingerprint,
+                    sourceBefore = journalSource,
                 ),
             )
 
-            when (val result = runOne(operation, contentFingerprint)) {
+            when (val result = runOne(operation, contentFingerprint, expectedDestination)) {
                 is MutationResult.Success -> {
                     val committed = MutationRecord(
                         id = mutationId,
                         taskRunId = taskRunId,
                         sequence = sequence,
                         operationType = operation.toOperationType(),
-                        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                        sourceBefore = FileRefJournalCodec.encode(journalSource),
                         destinationAfter = FileRefJournalCodec.encode(result.resultRef),
                         sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
@@ -561,7 +588,7 @@ class PlanExecutor(
                             taskRunId = taskRunId,
                             sequence = sequence,
                             operationType = operation.toOperationType(),
-                            sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+                            sourceBefore = FileRefJournalCodec.encode(journalSource),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
                             sourceFingerprint = contentFingerprint,
                             status = MutationStatus.FAILED,
@@ -628,11 +655,12 @@ class PlanExecutor(
         undoState: UndoState,
         error: String? = null,
         contentFingerprint: String? = operation.fingerprintOrNull(),
+        sourceBefore: FileRef = operation.sourceRef(),
     ): MutationRecord = MutationRecord(
         taskRunId = taskRunId,
         sequence = sequence,
         operationType = operation.toOperationType(),
-        sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
+        sourceBefore = FileRefJournalCodec.encode(sourceBefore),
         destinationAfter = destination?.let(FileRefJournalCodec::encode),
         sourceFingerprint = contentFingerprint,
         status = status,
@@ -647,7 +675,7 @@ class PlanExecutor(
         is PlannedOperation.CreateDirectory -> childRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
         is PlannedOperation.Copy -> operation.destination
-        is PlannedOperation.Rename -> renameDestination(operation.source, operation.newName)
+        is PlannedOperation.Rename -> renameDestinationForJournal(operation.source, operation.newName)
         is PlannedOperation.Trash -> gateway.trashDestination(operation.source)
         is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
@@ -655,23 +683,85 @@ class PlanExecutor(
     private suspend fun journalFingerprint(operation: PlannedOperation): String? = when (operation) {
         is PlannedOperation.Copy -> StorageDigest.sha256(gateway, operation.source)
         is PlannedOperation.WriteTextFile -> StorageDigest.sha256(operation.content)
+        is PlannedOperation.Move ->
+            if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
+        is PlannedOperation.Rename ->
+            if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
         is PlannedOperation.Trash -> operation.sourceFingerprint
-        else -> null
+            ?: if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
+        is PlannedOperation.CreateDirectory -> null
+    }
+
+    private suspend fun journalSourceBefore(operation: PlannedOperation): FileRef {
+        val source = operation.sourceRef()
+        if (source !is FileRef.Saf) return source
+
+        if (operation is PlannedOperation.CreateDirectory ||
+            operation is PlannedOperation.WriteTextFile
+        ) {
+            return source
+        }
+
+        val record = fileRecordDao.getByStableRef(source.rawValue())
+            ?: error("SAF source is not present in the current scan index.")
+        val parent = record.parentRef?.let(::parseFileRef)
+            ?: error("SAF source has no indexed parent; exact undo cannot be guaranteed.")
+        return FileRef.Child(parent, record.displayName)
+    }
+
+    private suspend fun renameDestinationForJournal(
+        source: FileRef,
+        newName: String,
+    ): FileRef = when (source) {
+        is FileRef.Direct -> source.child(newName).let {
+            val parent = source.knownParentOrNull()
+                ?: error("Cannot determine rename parent.")
+            parent.child(newName)
+        }
+        is FileRef.Child -> source.parent.child(newName)
+        is FileRef.Saf -> {
+            val record = fileRecordDao.getByStableRef(source.rawValue())
+                ?: error("SAF rename source is not present in the current scan index.")
+            val parent = record.parentRef?.let(::parseFileRef)
+                ?: error("SAF rename source has no indexed parent.")
+            parent.child(newName)
+        }
     }
 
     private suspend fun runOne(
         operation: PlannedOperation,
         contentFingerprint: String?,
+        expectedDestination: FileRef?,
     ): MutationResult = try {
         when (operation) {
             is PlannedOperation.CreateDirectory -> gateway.createDirectory(operation.parent, operation.name)
-            is PlannedOperation.Move -> gateway.move(operation.source, operation.destination)
+            is PlannedOperation.Move -> {
+                val moved = gateway.move(operation.source, operation.destination)
+                if (contentFingerprint != null) {
+                    verifyCreatedContent(moved, contentFingerprint, "Moved")
+                } else {
+                    moved
+                }
+            }
             is PlannedOperation.Copy -> verifyCreatedContent(
                 result = gateway.copy(operation.source, operation.destination),
                 expectedFingerprint = contentFingerprint,
                 action = "Copied",
             )
-            is PlannedOperation.Rename -> gateway.rename(operation.source, operation.newName)
+            is PlannedOperation.Rename -> {
+                if (operation.source is FileRef.Direct) {
+                    gateway.rename(operation.source, operation.newName)
+                } else {
+                    val destination = requireNotNull(expectedDestination) {
+                        "SAF rename has no durable destination."
+                    }
+                    verifyCreatedContent(
+                        gateway.move(operation.source, destination),
+                        contentFingerprint,
+                        "Renamed",
+                    )
+                }
+            }
             is PlannedOperation.Trash -> {
                 if (contentFingerprint != null) {
                     val actual = StorageDigest.sha256(gateway, operation.source)
@@ -835,37 +925,19 @@ private fun PlannedOperation.toFailure(sequence: Int, reason: String): Operation
     reason = reason,
 )
 
-private fun childRef(parent: FileRef, name: String): FileRef = when (parent) {
-    is FileRef.Direct -> FileRef.Direct("${parent.absolutePath.trimEnd('/')}/$name")
-    is FileRef.Saf -> error("SAF mutations are not implemented yet")
-}
-
-private fun renameDestination(source: FileRef, newName: String): FileRef = when (source) {
-    is FileRef.Direct -> {
-        val parent = source.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
-        require(parent.isNotBlank()) { "Cannot determine rename parent" }
-        FileRef.Direct("${parent.trimEnd('/')}/$newName")
-    }
-    is FileRef.Saf -> error("SAF mutations are not implemented yet")
-}
+private fun childRef(parent: FileRef, name: String): FileRef =
+    parent.child(name)
 
 private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<String> {
     val raw = ref.rawValue().trimEnd('/')
     return knownScopes.distinct().filter { scope ->
         val normalized = scope.trimEnd('/')
-        when (ref) {
-            is FileRef.Direct -> raw == normalized || raw.startsWith("$normalized/")
-            is FileRef.Saf -> raw == normalized || raw.startsWith("$normalized/")
-        }
+        raw == normalized || raw.startsWith("$normalized/")
     }
 }
 
-private fun FileRef.parentRefOrNull(): FileRef? = when (this) {
-    is FileRef.Direct -> absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
-        .takeIf { it.isNotBlank() }
-        ?.let(FileRef::Direct)
-    is FileRef.Saf -> null
-}
+private fun FileRef.parentRefOrNull(): FileRef? =
+    knownParentOrNull()
 
 private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord = FileRecord(
     stableRef = ref.rawValue(),
