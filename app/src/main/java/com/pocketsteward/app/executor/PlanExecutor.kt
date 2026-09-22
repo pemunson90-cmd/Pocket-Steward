@@ -662,7 +662,7 @@ class PlanExecutor(
 
             val current = SourcePreconditions.from(gateway.stat(source)) ?: continue
             val indexed = fileRecordDao.getByStableRef(source.rawValue())
-                ?.let(SourcePreconditions::from)
+                ?.let { SourcePreconditions.from(it) }
             if (indexed != null && !SourcePreconditions.matches(indexed, current)) {
                 error("Source changed since the scan and must be reviewed again: ${source.rawValue()}")
             }
