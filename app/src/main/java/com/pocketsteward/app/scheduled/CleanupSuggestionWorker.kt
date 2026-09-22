@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -19,6 +20,8 @@ import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.storage.StorageScope
+import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -73,16 +76,44 @@ class CleanupSuggestionWorker(
         if (!settings.enabled) return Result.success()
 
         val access = container.settingsRepository.storageAccessState.first()
-        if (access.mode != StorageAccessMode.DIRECT) return Result.success()
+        val mode = access.mode ?: return Result.success()
+        val roots = when (mode) {
+            StorageAccessMode.DIRECT -> {
+                val configured = if (settings.roots.isNotEmpty()) {
+                    settings.roots
+                } else {
+                    container.database.fileRecordDao().getKnownScopeRoots()
+                }
+                configured
+                    .map { it.trimEnd('/') }
+                    .filter { it.isNotBlank() && File(it).isDirectory }
+                    .distinct()
+                    .map(FileRef::Direct)
+            }
 
-        val roots = if (settings.roots.isNotEmpty()) {
-            settings.roots
-        } else {
-            container.database.fileRecordDao().getKnownScopeRoots()
+            StorageAccessMode.SAF -> {
+                val treeUri = access.safTreeUri ?: return Result.success()
+                val root = runCatching {
+                    container.gatewayFor(StorageAccessMode.SAF)
+                        .rootOf(
+                            StorageScope.Tree(
+                                rootRef = FileRef.Saf(treeUri),
+                                displayName = "Selected folder",
+                            ),
+                        )
+                }.getOrNull() ?: return Result.retry()
+
+                val configured = settings.roots
+                    .map { it.trimEnd('/') }
+                    .filter { it.isNotBlank() }
+                if (configured.isNotEmpty() && root.rawValue().trimEnd('/') !in configured) {
+                    // The schedule was saved for a different tree. Do not
+                    // silently scan a newly granted folder instead.
+                    return Result.success()
+                }
+                listOf(root)
+            }
         }
-            .map { it.trimEnd('/') }
-            .filter { it.isNotBlank() && File(it).isDirectory }
-            .distinct()
 
         if (roots.isEmpty()) return Result.success()
 
@@ -92,22 +123,22 @@ class CleanupSuggestionWorker(
 
         for (root in roots) {
             if (isStopped) return Result.retry()
+            val rootRaw = root.rawValue().trimEnd('/')
 
             val before = withContext(Dispatchers.IO) {
                 container.database.fileRecordDao()
-                    .getFilesUnderScopeRoot(root)
+                    .getFilesUnderScopeRoot(rootRaw)
                     .mapTo(hashSetOf()) { it.stableRef }
             }
 
             runCatching {
-                container.fileScanner(StorageAccessMode.DIRECT)
-                    .scan(FileRef.Direct(root))
+                container.fileScanner(mode).scan(root)
             }.getOrElse {
                 return Result.retry()
             }
 
             val after = withContext(Dispatchers.IO) {
-                container.database.fileRecordDao().getFilesUnderScopeRoot(root)
+                container.database.fileRecordDao().getFilesUnderScopeRoot(rootRaw)
             }
             val added = after.filter { it.stableRef !in before && !it.isHidden }
             newFiles += added.size
@@ -141,6 +172,7 @@ class CleanupSuggestionWorker(
             applicationContext,
             0,
             Intent(applicationContext, MainActivity::class.java).apply {
+                data = Uri.parse("pocketsteward://explore")
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
