@@ -1,0 +1,44 @@
+name: Build Pocket Steward V1.1 RC1
+
+on:
+  push:
+    branches:
+      - delivery/v1.1-rc1
+  workflow_dispatch:
+
+concurrency:
+  group: pocket-steward-v1-1-rc1
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Build optimized release and run unit suite
+        run: ./gradlew clean assembleRelease testDebugUnitTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-steward-v1-1-rc1-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+      - name: Package apksigner
+        run: |
+          APK_SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          TOOL_DIR="$(dirname "$APK_SIGNER")"
+          mkdir -p "$RUNNER_TEMP/apksigner-tool/lib"
+          cp "$APK_SIGNER" "$RUNNER_TEMP/apksigner-tool/apksigner"
+          cp "$TOOL_DIR/lib/apksigner.jar" "$RUNNER_TEMP/apksigner-tool/lib/apksigner.jar"
+          chmod +x "$RUNNER_TEMP/apksigner-tool/apksigner"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apksigner-tool-v1-1-rc1
+          path: ${{ runner.temp }}/apksigner-tool
+          if-no-files-found: error
