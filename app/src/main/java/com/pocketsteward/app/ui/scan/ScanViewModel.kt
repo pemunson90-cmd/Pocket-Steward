@@ -508,6 +508,7 @@ class ScanViewModel(
     private var indexSearchWatchJob: Job? = null
     private var lastBoundedIntent: BoundedIntent? = null
     private var userScanCancellationRequested: Boolean = false
+    private var consumeScheduledSuggestionOnSummary: Boolean = false
 
     init {
         viewModelScope.launch {
@@ -638,6 +639,43 @@ class ScanViewModel(
         if (autoStarted) return
         autoStarted = true
         startScan(target, thenRequest = request)
+    }
+
+
+    fun startScheduledSuggestion() {
+        if (autoStarted) return
+        autoStarted = true
+        viewModelScope.launch {
+            try {
+                val suggestion = settingsRepository.pendingCleanupSuggestion.first()
+                if (suggestion == null) {
+                    _uiState.value = ScanUiState.Error(
+                        "There is no pending scheduled review. Run a fresh scan instead.",
+                    )
+                    return@launch
+                }
+
+                val targets = targetsForSavedRoots(
+                    roots = suggestion.roots,
+                    label = "Scheduled review",
+                )
+                if (targets == null) {
+                    _uiState.value = ScanUiState.Error(
+                        "The scheduled review belongs to a storage location that is no longer granted. Re-select that folder or switch storage access.",
+                    )
+                    return@launch
+                }
+
+                _selectedTargets.value = targets
+                consumeScheduledSuggestionOnSummary = true
+                startScan(
+                    targets = targets,
+                    thenRun = PostScanAction.SMART_CLEANUP,
+                )
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
     }
 
 
@@ -1126,6 +1164,11 @@ class ScanViewModel(
                     },
                 )
                 _uiState.value = summary
+
+                if (consumeScheduledSuggestionOnSummary) {
+                    settingsRepository.clearPendingCleanupSuggestion()
+                    consumeScheduledSuggestionOnSummary = false
+                }
 
                 targets.forEach { target ->
                     when (target) {
