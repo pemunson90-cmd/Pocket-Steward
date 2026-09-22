@@ -9,6 +9,7 @@ import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.saved.SavedWorkflow
 import com.pocketsteward.app.saved.SavedSearch
+import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
@@ -34,11 +35,19 @@ class HomeViewModel(
     val savedSearches: StateFlow<List<SavedSearch>> = settingsRepository.savedSearches
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val pendingCleanupSuggestion: StateFlow<PendingCleanupSuggestion?> =
+        settingsRepository.pendingCleanupSuggestion
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     fun deleteSavedWorkflow(id: String) {
         viewModelScope.launch { settingsRepository.deleteSavedWorkflow(id) }
     }
 
     fun deleteSavedSearch(id: String) {
         viewModelScope.launch { settingsRepository.deleteSavedSearch(id) }
+    }
+
+    fun dismissCleanupSuggestion() {
+        viewModelScope.launch { settingsRepository.clearPendingCleanupSuggestion() }
     }
 }
