@@ -118,7 +118,11 @@ class VerifiedManifestExporterTest {
             MutationResult.Success(child(parent, name))
 
         override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult {
-            val ref = child(parent, name)
+            val ref = when (parent) {
+                is FileRef.Direct -> child(parent, name)
+                is FileRef.Saf -> FileRef.Saf("${parent.documentUri.trimEnd('/')}/$name")
+                is FileRef.Child -> child(parent, name)
+            }
             if (!pretendWriteWithoutBytes) files[ref.rawValue()] = content.toByteArray()
             return MutationResult.Success(ref)
         }
