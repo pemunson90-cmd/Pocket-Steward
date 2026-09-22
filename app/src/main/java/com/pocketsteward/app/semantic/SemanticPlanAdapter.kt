@@ -90,7 +90,7 @@ object SemanticPlanAdapter {
             }
 
             val candidate = candidates.first { it.stableRef == stableRef }
-            if (SortScope.isProtected(candidate, protectedFolders)) {
+            if (SortScope.isProtected(candidate, protectedFolders, candidates)) {
                 skipped += SemanticSkip(stableRef, "File is inside a protected folder.")
                 continue
             }
