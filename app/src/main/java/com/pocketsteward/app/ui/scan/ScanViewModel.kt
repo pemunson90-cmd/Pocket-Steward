@@ -30,6 +30,8 @@ import com.pocketsteward.app.content.index.ContentSearchView
 import com.pocketsteward.app.content.index.IndexedExtractionStatus
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskJournalProgress
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
 import com.pocketsteward.app.dedupe.DuplicateGroup
@@ -96,6 +98,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -475,6 +478,15 @@ class ScanViewModel(
 
     val favoriteDestinations: StateFlow<List<FavoriteDestination>> = settingsRepository.favoriteDestinations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val taskRuns: StateFlow<List<TaskRun>> =
+        container.database.taskRunDao().observeAll()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val taskProgress: StateFlow<Map<Long, TaskJournalProgress>> =
+        container.database.mutationRecordDao().observeTaskProgress()
+            .map { rows -> rows.associateBy(TaskJournalProgress::taskRunId) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _selectedTargets = MutableStateFlow<List<ScanTarget>>(emptyList())
     val selectedTargets: StateFlow<List<ScanTarget>> = _selectedTargets
@@ -3291,6 +3303,16 @@ class ScanViewModel(
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
         }
+    }
+
+    fun pauseTaskExecution() {
+        runCatching { container.pauseForegroundTask() }
+            .onFailure { _error.value = it.message ?: it.javaClass.simpleName }
+    }
+
+    fun resumeTaskExecution(taskRunId: Long) {
+        runCatching { container.startForegroundTask(taskRunId) }
+            .onFailure { _error.value = it.message ?: it.javaClass.simpleName }
     }
 
     fun undoTask(taskRunId: Long) {
