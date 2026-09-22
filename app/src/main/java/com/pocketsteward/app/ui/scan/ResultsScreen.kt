@@ -214,7 +214,6 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                             Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it })
                         }
                     }
-                }
 
                 item { SectionHeader("Find") }
                 item {
