@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -22,6 +23,7 @@ import com.pocketsteward.app.plan.PlannedOperation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -46,6 +48,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val busy by viewModel.busy.collectAsState()
 
     val preview = state
+    var confirmBulkRed by rememberSaveable { mutableStateOf(false) }
+
     ScanFlowScaffold(
         title = "Review changes",
         onBack = onBack,
@@ -97,7 +101,13 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     Text("Safe only")
                 }
                 OutlinedButton(
-                    onClick = viewModel::selectAllPlanOperations,
+                    onClick = {
+                        if (redCount > 0) {
+                            confirmBulkRed = true
+                        } else {
+                            viewModel.selectAllPlanOperations()
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("All")
@@ -273,6 +283,38 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
         }
+    }
+
+    if (confirmBulkRed && preview != null) {
+        val redCount = preview.accepted.count {
+            it.safetyClass() == MutationSafetyClass.RED
+        }
+        AlertDialog(
+            onDismissRequest = { confirmBulkRed = false },
+            title = { Text("Include $redCount quarantine action(s)?") },
+            text = {
+                Text(
+                    "These actions move files to Pocket Steward's recoverable Trash. " +
+                        "Nothing is permanently deleted, but the files leave their current folders. " +
+                        "You can still deselect any row before Run.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.selectAllPlanOperations()
+                        confirmBulkRed = false
+                    },
+                ) {
+                    Text("Include all")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBulkRed = false }) {
+                    Text("Keep unchecked")
+                }
+            },
+        )
     }
 }
 
