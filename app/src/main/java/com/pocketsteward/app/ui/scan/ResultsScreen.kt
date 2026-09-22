@@ -78,6 +78,28 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                     )
                                 }
                             }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text("Files ≥ 500 MB", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${state.largeFileCount}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text("Uncategorized", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${state.uncategorizedCount}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
