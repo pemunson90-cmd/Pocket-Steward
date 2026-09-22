@@ -152,6 +152,14 @@ class CleanupSuggestionWorker(
         }
 
         if (newFiles > 0) {
+            container.settingsRepository.setPendingCleanupSuggestion(
+                PendingCleanupSuggestion(
+                    createdAtEpochMs = System.currentTimeMillis(),
+                    roots = roots.map { it.rawValue() },
+                    newFileCount = newFiles,
+                    obviousMatchCount = newObviousFiles,
+                ),
+            )
             postSuggestion(newFiles, newObviousFiles)
         }
         return Result.success()
@@ -172,7 +180,7 @@ class CleanupSuggestionWorker(
             applicationContext,
             0,
             Intent(applicationContext, MainActivity::class.java).apply {
-                data = Uri.parse("pocketsteward://explore")
+                data = Uri.parse("pocketsteward://scheduled")
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
