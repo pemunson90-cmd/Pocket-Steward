@@ -66,7 +66,10 @@ class AppContainer(context: Context) {
     fun contentInspector(mode: StorageAccessMode): ContentInspector =
         ContentInspector(
             gateway = gatewayFor(mode),
-            pdfExtractor = if (mode == StorageAccessMode.DIRECT) AndroidPdfContentExtractor(appContext) else null,
+            // The PDF extractor consumes an InputStream and stages it in the
+            // app cache, so it works for both direct paths and persisted SAF
+            // document URIs. Storage access stays behind the gateway.
+            pdfExtractor = AndroidPdfContentExtractor(appContext),
         )
 
     fun contentIndexRepository(mode: StorageAccessMode): ContentIndexRepository =
