@@ -136,6 +136,61 @@ class SafPlanExecutorRoundTripTest {
             .isEqualTo(TaskRunStatus.UNDONE)
     }
 
+    @Test
+    fun selectedTree_trashTask_undoRestoresOriginalFile() = runBlocking {
+        val written = gateway.writeTextFile(root, "duplicate.txt", "same-bytes")
+        assertThat(written).isInstanceOf(MutationResult.Success::class.java)
+        val concreteSource = (written as MutationResult.Success).resultRef
+
+        FileScanner(
+            gateway = gateway,
+            fileRecordDao = db.fileRecordDao(),
+            scanCheckpointDao = db.scanCheckpointDao(),
+        ).scan(root)
+
+        val executor = PlanExecutor(
+            gateway = gateway,
+            fileRecordDao = db.fileRecordDao(),
+            taskRunDao = db.taskRunDao(),
+            mutationRecordDao = db.mutationRecordDao(),
+        )
+        val summary = executor.execute(
+            plan = AgentPlan(
+                goal = "Quarantine one selected-tree duplicate",
+                operations = listOf(
+                    PlannedOperation.Trash(
+                        source = concreteSource,
+                        reason = "duplicate quarantine acceptance",
+                    ),
+                ),
+            ),
+            scopeRootRef = root.rawValue(),
+            storageAccessMode = StorageAccessMode.SAF,
+        )
+
+        assertThat(summary.failed).isEqualTo(0)
+        assertThat(summary.filesTrashed).isEqualTo(1)
+        assertThat(gateway.exists(concreteSource)).isFalse()
+
+        val record = db.mutationRecordDao().getForTaskRun(summary.taskRunId).single()
+        val trashedRef = requireNotNull(record.destinationAfter)
+            .let(com.pocketsteward.app.storage.FileRefJournalCodec::decode)
+        assertThat(gateway.exists(trashedRef)).isTrue()
+        assertThat(readText(trashedRef)).isEqualTo("same-bytes")
+
+        val undo = UndoExecutor(
+            fileRecordDao = db.fileRecordDao(),
+            taskRunDao = db.taskRunDao(),
+            mutationRecordDao = db.mutationRecordDao(),
+            gatewayFor = { gateway },
+        ).undo(summary.taskRunId)
+
+        assertThat(undo.complete).isTrue()
+        val restored = FileRef.Child(root, "duplicate.txt")
+        assertThat(gateway.exists(restored)).isTrue()
+        assertThat(readText(restored)).isEqualTo("same-bytes")
+    }
+
     private suspend fun readText(ref: FileRef): String =
         gateway.openRead(ref).use { input ->
             String(input.readBytes(), StandardCharsets.UTF_8)
