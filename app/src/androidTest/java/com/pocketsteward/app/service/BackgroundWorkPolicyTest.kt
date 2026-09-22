@@ -11,21 +11,21 @@ class BackgroundWorkPolicyTest {
     @Test
     fun contentIndex_waitsForBatteryAndStorageHealth() {
         val constraints = BackgroundWorkPolicy.contentIndexConstraints()
-        assertTrue(constraints.requiresBatteryNotLow)
-        assertTrue(constraints.requiresStorageNotLow)
+        assertTrue(constraints.requiresBatteryNotLow())
+        assertTrue(constraints.requiresStorageNotLow())
     }
 
     @Test
     fun scheduledSuggestions_waitForBatteryAndStorageHealth() {
         val constraints = BackgroundWorkPolicy.scheduledSuggestionConstraints()
-        assertTrue(constraints.requiresBatteryNotLow)
-        assertTrue(constraints.requiresStorageNotLow)
+        assertTrue(constraints.requiresBatteryNotLow())
+        assertTrue(constraints.requiresStorageNotLow())
     }
 
     @Test
     fun approvedFileMutations_onlyRequireStorageHeadroom() {
         val constraints = BackgroundWorkPolicy.fileMutationConstraints()
-        assertFalse(constraints.requiresBatteryNotLow)
-        assertTrue(constraints.requiresStorageNotLow)
+        assertFalse(constraints.requiresBatteryNotLow())
+        assertTrue(constraints.requiresStorageNotLow())
     }
 }
