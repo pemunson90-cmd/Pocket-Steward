@@ -26,7 +26,10 @@ class ContentIndexWorker(
             .orEmpty()
         if (roots.isEmpty()) return Result.success()
 
-        val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+        val mode = inputData.getString(KEY_MODE)
+            ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
+            ?: StorageAccessMode.DIRECT
+        val repository = container.contentIndexRepository(mode)
         var activeRoot: String? = null
 
         return try {
@@ -66,5 +69,6 @@ class ContentIndexWorker(
     companion object {
         const val WORK_TAG = "pocket-steward-content-index"
         const val KEY_ROOTS = "source_roots"
+        const val KEY_MODE = "storage_mode"
     }
 }
