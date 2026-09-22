@@ -3,7 +3,6 @@ package com.pocketsteward.app.report
 import com.pocketsteward.app.data.db.MutationRecordDao
 import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskRunDao
-import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.FileRefJournalCodec
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
@@ -92,9 +91,6 @@ class TaskManifestService(
         // `MutationRecord.sourceBefore`/`destinationAfter`. Decoding it here
         // would throw "Unknown durable FileRef encoding" on every export.
         val parent = parseFileRef(scopeRootRef)
-        if (parent !is FileRef.Direct) {
-            return ExportResult.Failed("Exporting a manifest needs full file-manager access.")
-        }
         val result = VerifiedManifestExporter.export(
             gateway = gateway,
             parent = parent,
