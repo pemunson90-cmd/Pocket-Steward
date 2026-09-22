@@ -219,7 +219,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         supporting = if (hasBroadAccess) {
                             "Find byte-identical copies and choose what to keep."
                         } else {
-                            "Find byte-identical copies by SHA-256. Review is read-only in this access mode."
+                            "Find byte-identical copies by SHA-256, choose the keeper, and review any move to the granted tree's recoverable Trash."
                         },
                         onClick = { viewModel.findDuplicates(state) },
                     )
@@ -296,15 +296,13 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     )
                 }
 
-                if (hasBroadAccess) {
-                    item { SectionHeader("Protect") }
-                    item {
-                        ActionCard(
-                            title = "Protect folders",
-                            supporting = "Keep selected folders and everything inside them out of automated organization.",
-                            onClick = { viewModel.reviewFolderProtection(state) },
-                        )
-                    }
+                item { SectionHeader("Protect") }
+                item {
+                    ActionCard(
+                        title = "Protect folders",
+                        supporting = "Keep selected folders and everything inside them out of automated organization. Protection is a visible marker file and is reversible.",
+                        onClick = { viewModel.reviewFolderProtection(state) },
+                    )
                 }
 
                 item {
