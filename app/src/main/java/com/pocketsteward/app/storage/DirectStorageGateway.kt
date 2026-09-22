@@ -20,13 +20,14 @@ import java.security.MessageDigest
  */
 class DirectStorageGateway(
     private val context: Context,
+    private val externalRoot: File = Environment.getExternalStorageDirectory(),
 ) : StorageGateway {
 
     override suspend fun rootOf(scope: StorageScope): FileRef {
         check(scope is StorageScope.Broad) {
             "DirectStorageGateway only serves StorageScope.Broad, got $scope"
         }
-        return FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath)
+        return FileRef.Direct(externalRoot.absolutePath)
     }
 
     override suspend fun listChildren(directory: FileRef): List<FileEntry> {
@@ -174,13 +175,13 @@ class DirectStorageGateway(
      */
     override suspend fun trashDestination(source: FileRef): FileRef {
         val sourceFile = File(source.requirePath())
-        val externalRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+        val rootPath = externalRoot.absolutePath.trimEnd('/')
         val sourcePath = sourceFile.absolutePath
-        require(sourcePath.startsWith("$externalRoot/")) {
+        require(sourcePath.startsWith("$rootPath/")) {
             "Source is outside external storage, can't compute a Trash path: $sourcePath"
         }
-        val relativePath = sourcePath.removePrefix("$externalRoot/")
-        return FileRef.Direct(File(File(externalRoot, TRASH_RELATIVE_ROOT), relativePath).absolutePath)
+        val relativePath = sourcePath.removePrefix("$rootPath/")
+        return FileRef.Direct(File(File(rootPath, TRASH_RELATIVE_ROOT), relativePath).absolutePath)
     }
 
     override suspend fun trash(source: FileRef): MutationResult {
@@ -224,8 +225,8 @@ class DirectStorageGateway(
      * paths must still arrive with every parent explicitly planned/journaled.
      */
     private fun prepareAppManagedTrashParent(parent: File): MutationResult {
-        val externalRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
-        val trashRoot = File(externalRoot, TRASH_RELATIVE_ROOT).absolutePath.trimEnd('/')
+        val rootPath = externalRoot.absolutePath.trimEnd('/')
+        val trashRoot = File(rootPath, TRASH_RELATIVE_ROOT).absolutePath.trimEnd('/')
         val target = parent.absolutePath.trimEnd('/')
         if (target != trashRoot && !target.startsWith("$trashRoot/")) {
             return MutationResult.Failure(
