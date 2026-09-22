@@ -237,7 +237,10 @@ class SafStorageGateway(
         )
 
     override suspend fun trash(source: FileRef): MutationResult =
-        unsupportedMutation("move files to Trash")
+        MutationResult.Failure(
+            "Selected-folder access cannot move files into Pocket Steward Trash safely yet. " +
+                "Use full file-manager access for Trash operations.",
+        )
 
     override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
         val doc = runCatching { resolve(ref) }.getOrElse {
