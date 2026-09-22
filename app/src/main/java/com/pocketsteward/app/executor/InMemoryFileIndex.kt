@@ -4,6 +4,7 @@ import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.parseFileRef
+import com.pocketsteward.app.storage.knownParentOrNull
 import com.pocketsteward.app.storage.rawValue
 
 /**
@@ -41,6 +42,10 @@ class InMemoryFileIndex(records: List<FileRecord>) : FileIndex {
         }
         else -> byStableRef[ref.rawValue()]?.isDirectory == true
     }
+
+    override fun parentOf(ref: FileRef): FileRef? =
+        ref.knownParentOrNull()
+            ?: byStableRef[ref.rawValue()]?.parentRef?.let(::parseFileRef)
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
         val candidates = byParentAndLowerName[collisionKey(directory.rawValue(), name)] ?: return null
