@@ -132,6 +132,7 @@ data class ProtectableFolder(
     val displayName: String,
     val fileCount: Int,
     val isProtected: Boolean,
+    val markerStableRef: String? = null,
     val scope: ScanScope,
 )
 
@@ -1721,26 +1722,36 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Reading folders", "Checking which are already protected")
             try {
-                if (summary.scopes.any { it.root !is FileRef.Direct }) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
-
                 val folders = summary.scopes.flatMap { scope ->
-                    val root = scope.root as FileRef.Direct
+                    val root = scope.root
                     val records = container.database.fileRecordDao().getAllUnderScopeRoot(root.rawValue())
                     withContext(Dispatchers.Default) {
                         val protectedFolders = SortScope.protectedFolders(records.map { it.toSortCandidate() })
                         val fileCounts = records.filter { !it.isDirectory }.groupingBy { it.parentRef }.eachCount()
+                        val markerByParent = records
+                            .filter { !it.isDirectory && it.displayName == DO_NOT_SORT_MARKER }
+                            .mapNotNull { marker ->
+                                marker.parentRef?.let { parent -> parent to marker.stableRef }
+                            }
+                            .toMap()
                         records
                             .filter { it.isDirectory && it.stableRef != root.rawValue() }
                             .sortedBy { it.stableRef }
                             .map { folder ->
+                                val display = when (root) {
+                                    is FileRef.Direct ->
+                                        folder.stableRef
+                                            .removePrefix(root.absolutePath.trimEnd('/'))
+                                            .trimStart('/')
+                                            .ifBlank { folder.displayName }
+                                    else -> folder.displayName
+                                }
                                 ProtectableFolder(
                                     stableRef = folder.stableRef,
-                                    displayName = folder.stableRef.removePrefix(root.absolutePath.trimEnd('/')).trimStart('/'),
+                                    displayName = display,
                                     fileCount = fileCounts[folder.stableRef] ?: 0,
                                     isProtected = folder.stableRef in protectedFolders,
+                                    markerStableRef = markerByParent[folder.stableRef],
                                     scope = scope,
                                 )
                             }
@@ -1770,8 +1781,10 @@ class ScanViewModel(
                     // file, so the ordinary scan-index preview validates
                     // this — unlike the browser, which reaches folders no
                     // scan has walked.
+                    val marker = folder.markerStableRef
+                        ?: error("The protection marker is no longer present in the scan index.")
                     PlannedOperation.Trash(
-                        source = parseFileRef("${folder.stableRef.trimEnd('/')}/$DO_NOT_SORT_MARKER"),
+                        source = parseFileRef(marker),
                         reason = "Removes protection from ${folder.displayName}. The marker file goes to Trash, " +
                             "not deleted, so this is reversible.",
                     )
