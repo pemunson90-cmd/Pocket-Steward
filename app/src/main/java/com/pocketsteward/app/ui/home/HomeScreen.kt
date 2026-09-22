@@ -43,6 +43,7 @@ import com.pocketsteward.app.ui.scan.PostScanAction
 @Composable
 fun HomeScreen(
     onExplore: () -> Unit,
+    onContinueLastScan: () -> Unit,
     onOpenTasks: () -> Unit,
     onNaturalLanguageRequest: (String) -> Unit,
     onQuickAction: (PostScanAction) -> Unit,
@@ -68,6 +69,7 @@ fun HomeScreen(
     val taskProgress by viewModel.taskProgress.collectAsState()
     val savedWorkflows by viewModel.savedWorkflows.collectAsState()
     val savedSearches by viewModel.savedSearches.collectAsState()
+    val lastScanSession by viewModel.lastScanSession.collectAsState()
     val pendingCleanupSuggestion by viewModel.pendingCleanupSuggestion.collectAsState()
     var prompt by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
 
@@ -193,6 +195,28 @@ fun HomeScreen(
                             Text("Dismiss")
                         }
                     }
+                }
+            }
+        }
+
+        lastScanSession?.let { session ->
+            Card(onClick = onContinueLastScan, modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("Continue last scan", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        session.roots.joinToString(" · ") { it.label },
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "Reopens the durable Room inventory without walking storage again.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
