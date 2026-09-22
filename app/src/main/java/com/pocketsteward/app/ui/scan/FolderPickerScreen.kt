@@ -34,6 +34,7 @@ import com.pocketsteward.app.picker.FolderFilters
 import com.pocketsteward.app.picker.FolderPicker
 import com.pocketsteward.app.picker.FolderSort
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.rawValue
 import com.pocketsteward.app.ui.theme.Spacing
 
 /**
@@ -85,10 +86,22 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             filters = filters,
         ).mapNotNull { byPath[it.path] }
 
-        val currentTarget = ScanTarget.CustomFolder(browser.current.absolutePath)
-        val currentSelected = selectedTargets.any {
-            it is ScanTarget.CustomFolder &&
-                it.absolutePath.trimEnd('/') == browser.current.absolutePath.trimEnd('/')
+        val currentTarget: ScanTarget? = when (val current = browser.current) {
+            is FileRef.Direct -> ScanTarget.CustomFolder(current.absolutePath)
+            is FileRef.Saf -> ScanTarget.GrantedSubfolder(
+                documentUri = current.documentUri,
+                label = browser.currentDisplayName,
+            )
+            is FileRef.Child -> null
+        }
+        val currentSelected = currentTarget != null && selectedTargets.any { selected ->
+            when {
+                selected is ScanTarget.CustomFolder && currentTarget is ScanTarget.CustomFolder ->
+                    selected.absolutePath.trimEnd('/') == currentTarget.absolutePath.trimEnd('/')
+                selected is ScanTarget.GrantedSubfolder && currentTarget is ScanTarget.GrantedSubfolder ->
+                    selected.documentUri == currentTarget.documentUri
+                else -> false
+            }
         }
         val activeFilterCount = listOf(hideEmpty, onlyProtected, hideSystem).count { it }
 
@@ -98,7 +111,7 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         ) {
             item {
                 Text(
-                    text = browser.current.absolutePath,
+                    text = browser.current.rawValue(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -207,13 +220,18 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             browser.parent?.let { parent ->
                 item {
                     Card(
-                        onClick = { viewModel.browseFolders(parent) },
+                        onClick = {
+                            viewModel.browseFolders(
+                                startAt = parent,
+                                ancestors = browser.ancestors.dropLast(1),
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(modifier = Modifier.padding(Spacing.base)) {
                             Text("Up one level", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                parent.absolutePath,
+                                parent.rawValue(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -238,7 +256,12 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
             items(rows, key = { it.folder.path }) { row ->
                 Card(
-                    onClick = { viewModel.browseFolders(row.ref) },
+                    onClick = {
+                        viewModel.browseFolders(
+                            startAt = row.ref,
+                            ancestors = browser.ancestors + browser.current,
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
@@ -272,7 +295,8 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(Spacing.tight),
                 ) {
                     OutlinedButton(
-                        onClick = { viewModel.toggleScanTarget(currentTarget) },
+                        onClick = { currentTarget?.let(viewModel::toggleScanTarget) },
+                        enabled = currentTarget != null,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(if (currentSelected) "Remove this folder from selection" else "Add this folder")
