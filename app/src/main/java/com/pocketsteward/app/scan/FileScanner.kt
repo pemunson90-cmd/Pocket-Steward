@@ -128,6 +128,15 @@ class FileScanner(
                 persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.PAUSED, startedAt)
             }
             throw cancel
+        } catch (security: SecurityException) {
+            // A SAF grant or broad-storage permission can disappear while a
+            // scan is running. Nothing about the inventory is corrupt; keep
+            // the durable queue so the same scan can continue after access is
+            // restored instead of starting from zero.
+            withContext(NonCancellable) {
+                persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.PAUSED, startedAt)
+            }
+            throw security
         } catch (t: Throwable) {
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.FAILED, startedAt)
             onProgress(ScanProgress(processedCount, null, ScanPhase.FAILED))
