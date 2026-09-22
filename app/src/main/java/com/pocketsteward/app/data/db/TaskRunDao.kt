@@ -23,6 +23,16 @@ interface TaskRunDao {
     @Query("SELECT * FROM task_runs WHERE status = 'RUNNING' ORDER BY startedAt ASC")
     suspend fun getRunning(): List<TaskRun>
 
+    @Query(
+        "UPDATE task_runs SET status = 'CANCELLED', completedAt = :completedAt, summary = :summary " +
+            "WHERE id = :id AND status = 'RUNNING'",
+    )
+    suspend fun markRunningPaused(
+        id: Long,
+        completedAt: Long,
+        summary: String,
+    ): Int
+
     @Query("SELECT * FROM task_runs WHERE status IN ('RUNNING', 'NEEDS_REVIEW', 'UNDOING', 'UNDO_PARTIAL') ORDER BY startedAt ASC")
     suspend fun getRunsNeedingRecovery(): List<TaskRun>
 }
