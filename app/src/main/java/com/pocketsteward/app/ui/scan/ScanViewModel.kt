@@ -1093,8 +1093,14 @@ class ScanViewModel(
                 )
                 _uiState.value = summary
 
-                targets.filterIsInstance<ScanTarget.CustomFolder>().forEach {
-                    settingsRepository.rememberRecentFolder(it.absolutePath)
+                targets.forEach { target ->
+                    when (target) {
+                        is ScanTarget.CustomFolder ->
+                            settingsRepository.rememberRecentFolder(target.absolutePath)
+                        is ScanTarget.GrantedSubfolder ->
+                            settingsRepository.rememberRecentFolder(target.documentUri)
+                        else -> Unit
+                    }
                 }
 
                 when (thenRun) {
