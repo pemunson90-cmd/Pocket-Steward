@@ -3673,16 +3673,26 @@ class ScanViewModel(
                     return@launch
                 }
 
-                val affectedSourceNames = current.accepted
-                    .filterIsInstance<PlannedOperation.Move>()
-                    .filter { move ->
-                        (move.destination as? FileRef.Direct)
-                            ?.absolutePath
-                            ?.substringBeforeLast('/', missingDelimiterValue = "") == oldDirectory
+                val affectedSourceNames = current.accepted.mapNotNull { operation ->
+                    val source = when (operation) {
+                        is PlannedOperation.Move -> operation.source
+                        is PlannedOperation.Copy -> operation.source
+                        else -> return@mapNotNull null
                     }
-                    .mapNotNull { move ->
-                        (move.source as? FileRef.Direct)?.absolutePath?.substringAfterLast('/')
+                    val destination = when (operation) {
+                        is PlannedOperation.Move -> operation.destination
+                        is PlannedOperation.Copy -> operation.destination
+                        else -> return@mapNotNull null
+                    } as? FileRef.Direct ?: return@mapNotNull null
+
+                    if (destination.absolutePath
+                            .substringBeforeLast('/', missingDelimiterValue = "") == oldDirectory
+                    ) {
+                        (source as? FileRef.Direct)?.absolutePath?.substringAfterLast('/')
+                    } else {
+                        null
                     }
+                }
 
                 val transformed = current.accepted.map { operation ->
                     when (operation) {
@@ -3747,15 +3757,24 @@ class ScanViewModel(
                     mode = StorageAccessMode.DIRECT,
                 )
                 val validated = PlanValidator.validate(transformed, index)
+                if (validated.rejected.isNotEmpty() ||
+                    validated.accepted.size != transformed.size
+                ) {
+                    _error.value = validated.rejected.firstOrNull()?.reason
+                        ?: "The edited destination no longer validates against current storage."
+                    return@launch
+                }
+
                 _preview.value = current.copy(
                     accepted = validated.accepted,
-                    rejected = current.rejected + validated.rejected,
                     acceptedScopeLabels = validated.accepted.map { operation ->
                         scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
                     },
-                    // Destination edits must never silently re-select
-                    // RED operations that were intentionally unchecked.
-                    selectedIndices = PlanSelection.safeSelected(validated.accepted),
+                    // An edit must never change what the user selected.
+                    // Operations stay in the same order because an invalid
+                    // transformed plan is rejected as a whole above.
+                    selectedIndices = current.selectedIndices
+                        .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                     authorizedDestinationRoots = extraRoots,
                 )
                 if (rememberForSimilarFiles) {
