@@ -23,7 +23,7 @@ class DirectStorageGatewayMutationTest {
     fun setUp() {
         root.deleteRecursively()
         check(root.mkdirs())
-        gateway = DirectStorageGateway(context)
+        gateway = DirectStorageGateway(context, root)
     }
 
     @After
@@ -214,6 +214,34 @@ class DirectStorageGatewayMutationTest {
         assertTrue(source.exists())
         assertFalse(missingParent.exists())
         assertFalse(destination.exists())
+    }
+
+    @Test
+    fun trashCreatesOnlyAppManagedQuarantineParentsAndRemainsUndoable() = runBlocking {
+        val original = File(root, "Download/Nested/report.txt").apply {
+            parentFile!!.mkdirs()
+            writeText("recover me")
+        }
+        val originalRef = FileRef.Direct(original.absolutePath)
+        val expectedTrash = gateway.trashDestination(originalRef)
+
+        val result = gateway.trash(originalRef)
+
+        assertTrue(result is MutationResult.Success)
+        assertFalse(original.exists())
+        val trashed = File(expectedTrash.rawValue())
+        assertTrue(trashed.isFile)
+        assertEquals("recover me", trashed.readText())
+        assertTrue(
+            trashed.absolutePath.startsWith(
+                File(root, "PocketSteward/Trash").absolutePath + File.separator,
+            ),
+        )
+
+        val restored = gateway.move(expectedTrash, originalRef)
+        assertTrue(restored is MutationResult.Success)
+        assertTrue(original.isFile)
+        assertEquals("recover me", original.readText())
     }
 
 }
