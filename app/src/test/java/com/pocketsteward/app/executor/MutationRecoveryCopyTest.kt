@@ -22,6 +22,7 @@ import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -74,6 +75,22 @@ class MutationRecoveryCopyTest {
     }
 
     @Test
+    fun pendingCopyWithMismatchedDestination_requiresReview() = runTest {
+        val taskDao = FakeTaskRunDao(task(TaskRunStatus.RUNNING))
+        val mutationDao = FakeMutationDao(
+            pendingCopy().copy(sourceFingerprint = fingerprint(byteArrayOf(9))),
+        )
+        val gateway = FakeGateway(setOf(source, destination))
+
+        MutationRecovery(mutationDao, taskDao) { gateway }.recoverAll()
+
+        val recovered = mutationDao.records.single()
+        assertThat(recovered.status).isEqualTo(MutationStatus.NEEDS_REVIEW)
+        assertThat(recovered.undoState).isEqualTo(UndoState.BLOCKED)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.NEEDS_REVIEW)
+    }
+
+    @Test
     fun interruptedCopyUndoWithDestinationGone_recoversUndone() = runTest {
         val taskDao = FakeTaskRunDao(task(TaskRunStatus.UNDOING))
         val mutationDao = FakeMutationDao(
@@ -116,7 +133,7 @@ class MutationRecoveryCopyTest {
         operationType = MutationOperationType.COPY,
         sourceBefore = FileRefJournalCodec.encode(source),
         destinationAfter = FileRefJournalCodec.encode(destination),
-        sourceFingerprint = null,
+        sourceFingerprint = fingerprint(byteArrayOf(1)),
         status = MutationStatus.PENDING,
         executedAt = null,
         undoState = UndoState.NOT_AVAILABLE,
@@ -124,6 +141,11 @@ class MutationRecoveryCopyTest {
         error = null,
         undoError = null,
     )
+
+    private fun fingerprint(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
 
     private class FakeTaskRunDao(initial: TaskRun) : TaskRunDao {
         var current = initial
