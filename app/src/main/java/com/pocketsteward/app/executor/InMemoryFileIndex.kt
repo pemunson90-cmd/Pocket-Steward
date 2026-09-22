@@ -29,9 +29,18 @@ class InMemoryFileIndex(records: List<FileRecord>) : FileIndex {
     private val byParentAndLowerName: Map<String, List<FileRecord>> =
         records.groupBy { collisionKey(it.parentRef.orEmpty(), it.displayName) }
 
-    override fun exists(ref: FileRef): Boolean = byStableRef.containsKey(ref.rawValue())
+    override fun exists(ref: FileRef): Boolean = when (ref) {
+        is FileRef.Child -> caseInsensitiveMatch(ref.parent, ref.name, excluding = null) != null
+        else -> byStableRef.containsKey(ref.rawValue())
+    }
 
-    override fun isDirectory(ref: FileRef): Boolean = byStableRef[ref.rawValue()]?.isDirectory == true
+    override fun isDirectory(ref: FileRef): Boolean = when (ref) {
+        is FileRef.Child -> {
+            val match = caseInsensitiveMatch(ref.parent, ref.name, excluding = null)
+            match?.let { byStableRef[it.rawValue()]?.isDirectory } == true
+        }
+        else -> byStableRef[ref.rawValue()]?.isDirectory == true
+    }
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
         val candidates = byParentAndLowerName[collisionKey(directory.rawValue(), name)] ?: return null
