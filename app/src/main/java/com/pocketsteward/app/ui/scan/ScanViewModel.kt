@@ -1099,6 +1099,22 @@ class ScanViewModel(
         job.cancel(CancellationException("User paused scan"))
     }
 
+    fun refreshScan(summary: ScanUiState.Summary) {
+        val targets = when (summary.mode) {
+            StorageAccessMode.DIRECT -> summary.scopes.mapNotNull { scope ->
+                (scope.root as? FileRef.Direct)?.let { ScanTarget.CustomFolder(it.absolutePath) }
+            }
+            StorageAccessMode.SAF -> listOf(ScanTarget.GrantedFolder(summary.scopeLabel))
+        }
+
+        if (targets.isEmpty()) {
+            _error.value = "The current scan no longer has a reusable storage scope."
+            return
+        }
+        _selectedTargets.value = targets
+        startScan(targets)
+    }
+
     /**
      * Plan Section 4/9: the rule engine plans, no model involved. Pulls
      * [SettingsRepository.projectKeywords] so a user-configured term like
