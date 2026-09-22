@@ -1402,15 +1402,24 @@ class ScanViewModel(
                 "Resolving the approved destination and validating semantic suggestions",
             )
             try {
-                if (review.scopes.any { it.root !is FileRef.Direct }) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
+                val directScope = review.scopes.all { it.root is FileRef.Direct }
+                if (!directScope && destinationPolicy != DestinationPolicy.ROOT_LOCAL) {
+                    _uiState.value = ScanUiState.Error(
+                        "Selected-folder mode can only build document groups inside the granted tree.",
+                    )
                     return@launch
                 }
 
                 @Suppress("DEPRECATION")
-                val documentsRoot = FileRef.Direct(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).absolutePath,
-                )
+                val documentsRoot = if (directScope) {
+                    FileRef.Direct(
+                        Environment.getExternalStoragePublicDirectory(
+                            Environment.DIRECTORY_DOCUMENTS,
+                        ).absolutePath,
+                    )
+                } else {
+                    null
+                }
 
                 val explicitRoot = if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
                     val path = explicitDestinationPath?.trim()?.trimEnd('/')
@@ -1421,10 +1430,13 @@ class ScanViewModel(
                     val ref = FileRef.Direct(path)
                     val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
                     val valid = withContext(Dispatchers.IO) {
-                        gateway.exists(ref) && runCatching { gateway.stat(ref).isDirectory }.getOrDefault(false)
+                        gateway.exists(ref) &&
+                            runCatching { gateway.stat(ref).isDirectory }.getOrDefault(false)
                     }
                     if (!valid) {
-                        _uiState.value = ScanUiState.Error("That destination folder does not exist or is not a directory.")
+                        _uiState.value = ScanUiState.Error(
+                            "That destination folder does not exist or is not a directory.",
+                        )
                         return@launch
                     }
                     ref
@@ -1446,7 +1458,8 @@ class ScanViewModel(
                 val indexedEvidence = linkedMapOf<String, String>()
                 if (projectKeywords.isNotEmpty()) {
                     val roots = review.scopes.map { it.root.rawValue().trimEnd('/') }
-                    val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+                    val mode = if (directScope) StorageAccessMode.DIRECT else StorageAccessMode.SAF
+                    val repository = container.contentIndexRepository(mode)
                     for (keyword in projectKeywords) {
                         val hits = withContext(Dispatchers.IO) {
                             runCatching {
@@ -1482,7 +1495,7 @@ class ScanViewModel(
                 }
                 val result = withContext(Dispatchers.Default) {
                     SemanticPlanAdapter.build(
-                        scopeRoots = review.scopes.map { it.root as FileRef.Direct },
+                        scopeRoots = review.scopes.map { it.root },
                         records = records,
                         suggestions = groupingDecisions.map { it.suggestion },
                         includeSubfolders = includeSubfolders,
@@ -1507,15 +1520,21 @@ class ScanViewModel(
                 }
 
                 val destinationLabel = when (destinationPolicy) {
-                    DestinationPolicy.ROOT_LOCAL -> "inside each current scan root"
-                    DestinationPolicy.RECOMMENDED_DOCUMENTS -> documentsRoot.absolutePath
-                    DestinationPolicy.EXPLICIT_FOLDER -> explicitRoot!!.absolutePath
+                    DestinationPolicy.ROOT_LOCAL ->
+                        if (directScope) "inside each current scan root" else "inside the selected tree"
+                    DestinationPolicy.RECOMMENDED_DOCUMENTS ->
+                        requireNotNull(documentsRoot).absolutePath
+                    DestinationPolicy.EXPLICIT_FOLDER ->
+                        requireNotNull(explicitRoot).absolutePath
                 }
 
                 val notes = buildList {
                     add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
                     add("Grouping evidence priority: learned corrections → project keywords → repeated filename/title signals → indexed content → model advice.")
                     add("Approved destination: $destinationLabel.")
+                    if (!directScope) {
+                        add("Selected-folder mode cannot escape the granted Android document tree.")
+                    }
                     if (groupingDecisions.isNotEmpty()) {
                         val evidenceSummary = groupingDecisions
                             .groupingBy { it.evidence.name }
@@ -1530,10 +1549,18 @@ class ScanViewModel(
                     if (!includeSubfolders) {
                         add("Files already inside folders were left alone unless nested moves were explicitly enabled.")
                     }
-                    val protected = result.skipped.count { it.reason.contains("protected", ignoreCase = true) }
-                    if (protected > 0) add("$protected file(s) stayed untouched inside protected folders.")
-                    val unsafe = result.skipped.count { it.reason.contains("unsafe", ignoreCase = true) }
-                    if (unsafe > 0) add("$unsafe unsafe or unusable suggested group name(s) were ignored.")
+                    val protected = result.skipped.count {
+                        it.reason.contains("protected", ignoreCase = true)
+                    }
+                    if (protected > 0) {
+                        add("$protected file(s) stayed untouched inside protected folders.")
+                    }
+                    val unsafe = result.skipped.count {
+                        it.reason.contains("unsafe", ignoreCase = true)
+                    }
+                    if (unsafe > 0) {
+                        add("$unsafe unsafe or unusable suggested group name(s) were ignored.")
+                    }
                 }
 
                 showPlanPreview(
