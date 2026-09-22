@@ -7,6 +7,7 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
+import com.pocketsteward.app.storage.rawValue
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import org.junit.Test
@@ -27,6 +28,24 @@ class VerifiedManifestExporterTest {
         )
         assertThat(gateway.files["/Download/POCKETSTEWARD-MANIFEST-task5-123.md"])
             .isEqualTo(document().text.toByteArray())
+    }
+
+    @Test
+    fun verifiedExporterAlsoWorksWithSafStyleRefs() = kotlinx.coroutines.test.runTest {
+        val gateway = FakeGateway()
+        val parent = FileRef.Saf("content://example/tree/root/document/root")
+        val result = VerifiedTextExporter.export(
+            gateway = gateway,
+            parent = parent,
+            finalName = "inventory.json",
+            content = "{\"ok\":true}\n",
+        )
+
+        assertThat(result).isEqualTo(
+            ExportResult.Written("content://example/tree/root/document/root/inventory.json"),
+        )
+        assertThat(gateway.files["content://example/tree/root/document/root/inventory.json"])
+            .isEqualTo("{\"ok\":true}\n".toByteArray())
     }
 
     @Test
@@ -73,7 +92,7 @@ class VerifiedManifestExporterTest {
         override suspend fun listChildren(directory: FileRef): List<FileEntry> = emptyList()
 
         override suspend fun stat(ref: FileRef): FileMetadata {
-            val path = (ref as FileRef.Direct).absolutePath
+            val path = ref.rawValue()
             val bytes = files[path] ?: error("missing")
             return FileMetadata(
                 ref = ref,
@@ -89,18 +108,18 @@ class VerifiedManifestExporterTest {
         }
 
         override suspend fun exists(ref: FileRef): Boolean =
-            files.containsKey((ref as FileRef.Direct).absolutePath)
+            files.containsKey(ref.rawValue())
 
         override suspend fun openRead(ref: FileRef): InputStream =
-            ByteArrayInputStream(files[(ref as FileRef.Direct).absolutePath] ?: error("missing"))
+            ByteArrayInputStream(files[ref.rawValue()] ?: error("missing"))
 
         override suspend fun createDirectory(parent: FileRef, name: String): MutationResult =
-            MutationResult.Success(FileRef.Direct((parent as FileRef.Direct).absolutePath + "/" + name))
+            MutationResult.Success(child(parent, name))
 
         override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult {
-            val path = (parent as FileRef.Direct).absolutePath.trimEnd('/') + "/" + name
-            if (!pretendWriteWithoutBytes) files[path] = content.toByteArray()
-            return MutationResult.Success(FileRef.Direct(path))
+            val ref = child(parent, name)
+            if (!pretendWriteWithoutBytes) files[ref.rawValue()] = content.toByteArray()
+            return MutationResult.Success(ref)
         }
 
         override suspend fun copy(source: FileRef, destination: FileRef): MutationResult =
@@ -110,23 +129,31 @@ class VerifiedManifestExporterTest {
             error("not used")
 
         override suspend fun rename(source: FileRef, newName: String): MutationResult {
-            val sourcePath = (source as FileRef.Direct).absolutePath
-            val parent = sourcePath.substringBeforeLast('/')
-            val destinationPath = "$parent/$newName"
+            val sourcePath = source.rawValue()
+            val parentPath = sourcePath.substringBeforeLast('/')
+            val destination = when (source) {
+                is FileRef.Direct -> FileRef.Direct("$parentPath/$newName")
+                is FileRef.Saf -> FileRef.Saf("$parentPath/$newName")
+            }
             val bytes = files.remove(sourcePath) ?: return MutationResult.Failure("missing")
-            files[destinationPath] = if (corruptOnRename) "bad".toByteArray() else bytes
-            return MutationResult.Success(FileRef.Direct(destinationPath))
+            files[destination.rawValue()] = if (corruptOnRename) "bad".toByteArray() else bytes
+            return MutationResult.Success(destination)
         }
 
         override suspend fun trashDestination(source: FileRef): FileRef =
-            FileRef.Direct("/Trash/" + (source as FileRef.Direct).absolutePath.substringAfterLast('/'))
+            FileRef.Direct("/Trash/" + source.rawValue().substringAfterLast('/'))
 
         override suspend fun trash(source: FileRef): MutationResult {
-            files.remove((source as FileRef.Direct).absolutePath)
+            files.remove(source.rawValue())
             return MutationResult.Success(source)
         }
 
         override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult =
             MutationResult.Success(ref, changed = false)
+
+        private fun child(parent: FileRef, name: String): FileRef = when (parent) {
+            is FileRef.Direct -> FileRef.Direct(parent.absolutePath.trimEnd('/') + "/" + name)
+            is FileRef.Saf -> FileRef.Saf(parent.documentUri.trimEnd('/') + "/" + name)
+        }
     }
 }
