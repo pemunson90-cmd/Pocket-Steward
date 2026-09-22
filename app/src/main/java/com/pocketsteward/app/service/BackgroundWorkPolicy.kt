@@ -10,6 +10,11 @@ import androidx.work.Constraints
  * less conservative configuration.
  */
 object BackgroundWorkPolicy {
+    const val MAX_TRANSIENT_ATTEMPTS: Int = 3
+
+    fun shouldRetry(runAttemptCount: Int): Boolean =
+        runAttemptCount >= 0 && runAttemptCount + 1 < MAX_TRANSIENT_ATTEMPTS
+
     fun fileMutationConstraints(): Constraints =
         Constraints.Builder()
             .setRequiresStorageNotLow(true)
