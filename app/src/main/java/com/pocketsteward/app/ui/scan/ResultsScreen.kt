@@ -259,6 +259,13 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         onClick = { viewModel.exportInventory(state) },
                     )
                 }
+                item {
+                    ActionCard(
+                        title = "Export unresolved problem set",
+                        supporting = "Write verified metadata-only Markdown and JSON for files Pocket Steward left unclassified, ready to share manually if you want outside help.",
+                        onClick = { viewModel.exportProblemSet(state) },
+                    )
+                }
 
                 item { SectionHeader("Understand") }
                 item {
