@@ -22,8 +22,8 @@ android {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 32
-        versionName = "1.0.0-rc2"
+        versionCode = 34
+        versionName = "1.1.0-rc2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
