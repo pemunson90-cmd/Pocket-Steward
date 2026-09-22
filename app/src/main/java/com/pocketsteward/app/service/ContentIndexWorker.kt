@@ -56,6 +56,16 @@ class ContentIndexWorker(
                 }
             }
             throw cancel
+        } catch (security: SecurityException) {
+            withContext(NonCancellable) {
+                activeRoot?.let {
+                    repository.markPaused(
+                        it,
+                        "Storage access is unavailable. Restore access to resume indexing.",
+                    )
+                }
+            }
+            Result.failure()
         } catch (t: Throwable) {
             withContext(NonCancellable) {
                 activeRoot?.let {
