@@ -2,6 +2,7 @@ package com.pocketsteward.app.plan
 
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.knownParentOrNull
 
 /**
  * Selection rules for an already-validated plan preview.
@@ -137,8 +138,5 @@ object PlanSelection {
 private fun PlannedOperation.CreateDirectory.createdDirectoryRaw(): String =
     "${parent.rawValue().trimEnd('/')}/$name"
 
-private fun FileRef.parentRaw(): String? {
-    val raw = rawValue().trimEnd('/')
-    val parent = raw.substringBeforeLast('/', missingDelimiterValue = "")
-    return parent.takeIf { it.isNotBlank() }
-}
+private fun FileRef.parentRaw(): String? =
+    knownParentOrNull()?.rawValue()
