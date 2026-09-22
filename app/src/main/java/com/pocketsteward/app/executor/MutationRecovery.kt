@@ -62,22 +62,41 @@ class MutationRecovery(
                     // change, so the source/destination reasoning the move
                     // cases use doesn't apply.
                     MutationOperationType.WRITE_TEXT_FILE -> when {
-                        destinationExists -> record.copy(
-                            status = MutationStatus.COMMITTED,
-                            executedAt = record.executedAt ?: System.currentTimeMillis(),
-                            undoState = UndoState.AVAILABLE,
-                            error = "Recovered after interruption: written file exists.",
-                        )
-                        else -> record.copy(
+                        !destinationExists -> record.copy(
                             status = MutationStatus.FAILED,
                             executedAt = record.executedAt ?: System.currentTimeMillis(),
                             undoState = UndoState.NOT_AVAILABLE,
                             error = "Recovered after interruption: the file was never written.",
                         )
+                        record.sourceFingerprint == null -> record.copy(
+                            status = MutationStatus.NEEDS_REVIEW,
+                            undoState = UndoState.BLOCKED,
+                            error = "Interrupted written file has no content proof; manual review required.",
+                        )
+                        else -> {
+                            val actual = runCatching {
+                                StorageDigest.sha256(gateway, destination)
+                            }.getOrNull()
+                            if (actual != null &&
+                                actual.equals(record.sourceFingerprint, ignoreCase = true)
+                            ) {
+                                record.copy(
+                                    status = MutationStatus.COMMITTED,
+                                    executedAt = record.executedAt ?: System.currentTimeMillis(),
+                                    undoState = UndoState.AVAILABLE,
+                                    error = "Recovered after interruption: written file matches its approved SHA-256.",
+                                )
+                            } else {
+                                record.copy(
+                                    status = MutationStatus.NEEDS_REVIEW,
+                                    undoState = UndoState.BLOCKED,
+                                    error = "Interrupted written file exists but does not match its approved SHA-256.",
+                                )
+                            }
+                        }
                     }
                     MutationOperationType.MOVE,
                     MutationOperationType.RENAME,
-                    MutationOperationType.TRASH,
                     -> when {
                         !sourceExists && destinationExists -> record.copy(
                             status = MutationStatus.COMMITTED,
@@ -97,24 +116,85 @@ class MutationRecovery(
                             error = "Interrupted mutation is ambiguous (source/destination state cannot prove outcome).",
                         )
                     }
-                    MutationOperationType.COPY -> when {
-                        sourceExists && destinationExists -> record.copy(
-                            status = MutationStatus.COMMITTED,
-                            executedAt = record.executedAt ?: System.currentTimeMillis(),
-                            undoState = UndoState.AVAILABLE,
-                            error = "Recovered after interruption: copied destination exists and source remains.",
-                        )
+                    MutationOperationType.TRASH -> when {
                         sourceExists && !destinationExists -> record.copy(
+                            status = MutationStatus.FAILED,
+                            executedAt = record.executedAt ?: System.currentTimeMillis(),
+                            undoState = UndoState.NOT_AVAILABLE,
+                            error = "Recovered after interruption: source remains and Trash destination is absent.",
+                        )
+                        !sourceExists && destinationExists && record.sourceFingerprint == null ->
+                            record.copy(
+                                status = MutationStatus.COMMITTED,
+                                executedAt = record.executedAt ?: System.currentTimeMillis(),
+                                undoState = UndoState.AVAILABLE,
+                                error = "Recovered after interruption: Trash destination exists and source is gone.",
+                            )
+                        !sourceExists && destinationExists -> {
+                            val actual = runCatching {
+                                StorageDigest.sha256(gateway, destination)
+                            }.getOrNull()
+                            if (actual != null &&
+                                actual.equals(record.sourceFingerprint, ignoreCase = true)
+                            ) {
+                                record.copy(
+                                    status = MutationStatus.COMMITTED,
+                                    executedAt = record.executedAt ?: System.currentTimeMillis(),
+                                    undoState = UndoState.AVAILABLE,
+                                    error = "Recovered after interruption: trashed file matches the approved duplicate SHA-256.",
+                                )
+                            } else {
+                                record.copy(
+                                    status = MutationStatus.NEEDS_REVIEW,
+                                    undoState = UndoState.BLOCKED,
+                                    error = "Trash destination exists but its bytes do not match the approved duplicate SHA-256.",
+                                )
+                            }
+                        }
+                        else -> record.copy(
+                            status = MutationStatus.NEEDS_REVIEW,
+                            undoState = UndoState.BLOCKED,
+                            error = "Interrupted Trash mutation is ambiguous.",
+                        )
+                    }
+                    MutationOperationType.COPY -> when {
+                        !sourceExists -> record.copy(
+                            status = MutationStatus.NEEDS_REVIEW,
+                            undoState = UndoState.BLOCKED,
+                            error = "Interrupted copy is ambiguous because COPY must preserve its source.",
+                        )
+                        !destinationExists -> record.copy(
                             status = MutationStatus.FAILED,
                             executedAt = record.executedAt ?: System.currentTimeMillis(),
                             undoState = UndoState.NOT_AVAILABLE,
                             error = "Recovered after interruption: source remains and copied destination is absent.",
                         )
-                        else -> record.copy(
+                        record.sourceFingerprint == null -> record.copy(
                             status = MutationStatus.NEEDS_REVIEW,
                             undoState = UndoState.BLOCKED,
-                            error = "Interrupted copy is ambiguous because the source no longer exists.",
+                            error = "Interrupted copy has no source SHA-256; path existence alone cannot prove success.",
                         )
+                        else -> {
+                            val actual = runCatching {
+                                StorageDigest.sha256(gateway, destination)
+                            }.getOrNull()
+                            if (actual != null &&
+                                actual.equals(record.sourceFingerprint, ignoreCase = true)
+                            ) {
+                                record.copy(
+                                    status = MutationStatus.COMMITTED,
+                                    executedAt = record.executedAt ?: System.currentTimeMillis(),
+                                    undoState = UndoState.AVAILABLE,
+                                    error = "Recovered after interruption: copied bytes match the source SHA-256.",
+                                )
+                            } else {
+                                record.copy(
+                                    status = MutationStatus.NEEDS_REVIEW,
+                                    undoState = UndoState.BLOCKED,
+                                    error = "Copied destination exists but its bytes do not match the source SHA-256.",
+                                )
+                            }
+                        }
                     }
                 }
             }
