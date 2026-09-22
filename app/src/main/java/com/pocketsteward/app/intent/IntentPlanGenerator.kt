@@ -12,6 +12,8 @@ import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.parseFileRef
+import com.pocketsteward.app.storage.child
+import com.pocketsteward.app.storage.rawValue
 
 /**
  * Converts a parsed organize/group/archive request into ordinary typed
@@ -19,7 +21,7 @@ import com.pocketsteward.app.storage.parseFileRef
  */
 object IntentPlanGenerator {
     fun generate(
-        scopeRoot: FileRef.Direct,
+        scopeRoot: FileRef,
         records: List<FileRecord>,
         projectKeywords: List<ProjectKeyword>,
         intent: BoundedIntent,
@@ -28,7 +30,7 @@ object IntentPlanGenerator {
 
         val partition = SortScope.partition(
             candidates = records.map { it.toSortCandidate() },
-            scopeRoot = scopeRoot.absolutePath,
+            scopeRoot = scopeRoot.rawValue(),
             includeSubfolders = intent.includeSubfolders,
         )
         val sortableRefs = partition.sortable.mapTo(mutableSetOf()) { it.stableRef }
@@ -61,9 +63,7 @@ object IntentPlanGenerator {
             )
             operations += PlannedOperation.Move(
                 source = parseFileRef(record.stableRef),
-                destination = FileRef.Direct(
-                    "${destinationFolder.absolutePath.trimEnd('/')}/${record.displayName}",
-                ),
+                destination = destinationFolder.child(record.displayName),
                 reason = classification.reason,
             )
             sorted++
@@ -90,27 +90,28 @@ object IntentPlanGenerator {
     }
 
     private fun ensureDirectoryTree(
-        root: FileRef.Direct,
+        root: FileRef,
         segments: List<String>,
         operations: MutableList<PlannedOperation>,
         plannedDirectories: MutableSet<String>,
         reason: String,
-    ): FileRef.Direct {
+    ): FileRef {
         var parent = root
         for (rawSegment in segments) {
             val segment = rawSegment.trim()
             require(segment.isNotBlank() && '/' !in segment && '\\' !in segment && segment != "..") {
                 "Unsafe destination folder name: $rawSegment"
             }
-            val path = "${parent.absolutePath.trimEnd('/')}/$segment"
-            if (plannedDirectories.add(path)) {
+            val child = parent.child(segment)
+            val key = child.rawValue()
+            if (plannedDirectories.add(key)) {
                 operations += PlannedOperation.CreateDirectory(
                     parent = parent,
                     name = segment,
                     reason = reason,
                 )
             }
-            parent = FileRef.Direct(path)
+            parent = child
         }
         return parent
     }
