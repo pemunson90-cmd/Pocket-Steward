@@ -2,6 +2,12 @@ package com.pocketsteward.app
 
 import android.content.Intent
 import android.os.Bundle
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import com.pocketsteward.app.ui.onboarding.StorageAccessGrantPolicy
+import com.pocketsteward.app.storage.StorageAccessMode
+import androidx.lifecycle.lifecycleScope
+import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,6 +28,31 @@ class MainActivity : ComponentActivity() {
         // Static launcher shortcuts can arrive while the task already exists.
         // Recompose from the shortcut target rather than silently ignoring it.
         render()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch {
+            val container = (application as PocketStewardApplication).container
+            val state = container.settingsRepository.storageAccessState.first()
+            if (state.mode == null) return@launch
+
+            val safGrant = state.safTreeUri?.let { saved ->
+                contentResolver.persistedUriPermissions.firstOrNull {
+                    it.uri.toString() == saved
+                }
+            }
+            val usable = StorageAccessGrantPolicy.isUsable(
+                state = state,
+                broadAccessGranted = Environment.isExternalStorageManager(),
+                safReadGranted = safGrant?.isReadPermission == true,
+                safWriteGranted = safGrant?.isWritePermission == true,
+            )
+            if (!usable) {
+                container.settingsRepository.clearStorageAccessChoice()
+                render()
+            }
+        }
     }
 
     private fun render() {
