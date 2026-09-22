@@ -276,11 +276,7 @@ private fun PlanOperationEditControls(
                 Text(if (editing) "Hide editor" else "Edit destination")
             }
             if (editing) {
-                val current = when (operation) {
-                    is PlannedOperation.Move -> (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
-                    is PlannedOperation.Copy -> (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
-                    else -> ""
-                }
+                val current = directDestination.absolutePath
                 var destination by remember(operation) { mutableStateOf(current) }
                 OutlinedTextField(
                     value = destination,
