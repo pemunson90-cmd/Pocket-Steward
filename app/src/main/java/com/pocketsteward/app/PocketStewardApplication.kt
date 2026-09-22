@@ -4,6 +4,7 @@ import android.app.Application
 import com.pocketsteward.app.content.index.ContentIndexJobStatus
 import com.pocketsteward.app.content.index.ContentSearchDatabase
 import com.pocketsteward.app.di.AppContainer
+import com.pocketsteward.app.executor.StartupRecoveryPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,15 @@ class PocketStewardApplication : Application() {
         // NEEDS_REVIEW rather than being guessed.
         appScope.launch {
             runCatching { container.mutationRecovery.recoverAll() }
+            val running = runCatching {
+                container.database.taskRunDao().getRunning()
+            }.getOrDefault(emptyList())
+            StartupRecoveryPolicy.taskToAutoResume(running)?.let { task ->
+                // This task was already explicitly approved before the process
+                // died. AppContainer falls back to WorkManager if Android
+                // refuses a foreground-service launch from startup.
+                runCatching { container.startForegroundTask(task.id) }
+            }
         }
 
         // A process death during read-only indexing leaves the current job
