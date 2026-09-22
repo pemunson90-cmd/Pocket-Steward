@@ -966,6 +966,11 @@ class ScanViewModel(
     fun toggleScanTarget(target: ScanTarget) {
         val key = target.selectionKey()
         val current = _selectedTargets.value
+        if (target is ScanTarget.GrantedFolder || target is ScanTarget.GrantedSubfolder) {
+            _selectedTargets.value =
+                if (current.any { it.selectionKey() == key }) emptyList() else listOf(target)
+            return
+        }
         _selectedTargets.value = if (current.any { it.selectionKey() == key }) {
             current.filterNot { it.selectionKey() == key }
         } else {
