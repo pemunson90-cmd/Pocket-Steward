@@ -13,8 +13,14 @@ interface FileRecordDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(record: FileRecord): Long
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAllRecords(records: List<FileRecord>): List<Long>
+
     @Update
     suspend fun update(record: FileRecord): Int
+
+    @Update
+    suspend fun updateAllRecords(records: List<FileRecord>): Int
 
     @Transaction
     suspend fun upsert(record: FileRecord): Long {
@@ -42,9 +48,50 @@ interface FileRecordDao {
         }
     }
 
+    /**
+     * Batch Level-0 scan merge.
+     *
+     * The old implementation performed a SELECT + UPDATE/INSERT per file.
+     * On a 20k-file phone that made Room chatter thousands of times even
+     * though the scanner already hands us one complete directory batch.
+     * Resolve existing rows once, merge in memory, then issue one bulk update
+     * and one bulk insert inside this transaction.
+     */
     @Transaction
-    suspend fun upsertAllFromScan(records: List<FileRecord>): List<Long> =
-        records.map { upsertFromScan(it) }
+    suspend fun upsertAllFromScan(records: List<FileRecord>): List<Long> {
+        if (records.isEmpty()) return emptyList()
+
+        val existingByRef = getByStableRefs(records.map { it.stableRef })
+            .associateBy { it.stableRef }
+
+        val updates = mutableListOf<FileRecord>()
+        val inserts = mutableListOf<FileRecord>()
+        records.forEach { scanned ->
+            val existing = existingByRef[scanned.stableRef]
+            if (existing == null) {
+                inserts += scanned
+            } else {
+                updates += mergeScanRecord(existing, scanned)
+            }
+        }
+
+        if (updates.isNotEmpty()) updateAllRecords(updates)
+
+        val insertedIds = if (inserts.isEmpty()) {
+            emptyList()
+        } else {
+            insertAllRecords(inserts)
+        }
+        val insertedByRef = inserts.indices.associate { index ->
+            inserts[index].stableRef to insertedIds[index]
+        }
+
+        return records.map { record ->
+            existingByRef[record.stableRef]?.id
+                ?: insertedByRef[record.stableRef]
+                ?: error("Scan upsert lost row id for " + record.stableRef)
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertScopeTag(scope: FileScope)
@@ -75,6 +122,9 @@ interface FileRecordDao {
 
     @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
     suspend fun getByStableRef(stableRef: String): FileRecord?
+
+    @Query("SELECT * FROM file_records WHERE stableRef IN (:stableRefs)")
+    suspend fun getByStableRefs(stableRefs: List<String>): List<FileRecord>
 
 
     @Query("UPDATE file_records SET quickFingerprint = :value WHERE stableRef = :stableRef")
