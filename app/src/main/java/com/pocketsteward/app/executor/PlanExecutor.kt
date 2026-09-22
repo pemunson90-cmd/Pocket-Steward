@@ -17,6 +17,8 @@ import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.plan.SourcePrecondition
+import com.pocketsteward.app.plan.SourcePreconditions
 import com.pocketsteward.app.plan.ValidatedPlan
 import com.pocketsteward.app.storage.FileMetadata
 import com.pocketsteward.app.storage.FileRef
@@ -115,6 +117,8 @@ class PlanExecutor(
             "Approved task validation did not preserve every selected operation."
         }
 
+        val sourcePreconditions = captureApprovalPreconditions(validated.accepted)
+
         val startedAt = System.currentTimeMillis()
         return taskRunDao.insert(
             TaskRun(
@@ -123,7 +127,7 @@ class PlanExecutor(
                 completedAt = null,
                 status = TaskRunStatus.RUNNING,
                 scanSnapshotId = null,
-                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted),
+                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted, sourcePreconditions),
                 summary = "Queued · 0 of ${validated.accepted.size} operations",
                 scopeRootRef = scopeRootRef,
                 storageAccessMode = storageAccessMode,
@@ -153,6 +157,7 @@ class PlanExecutor(
     ): ExecutionSummary {
         val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, effectiveIndex)
+        val sourcePreconditions = captureApprovalPreconditions(validated.accepted)
 
         val startedAt = System.currentTimeMillis()
         val taskRunId = taskRunDao.insert(
@@ -162,7 +167,7 @@ class PlanExecutor(
                 completedAt = null,
                 status = TaskRunStatus.RUNNING,
                 scanSnapshotId = null,
-                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted),
+                planJson = DurablePlanCodec.encode(plan.goal, validated.accepted, sourcePreconditions),
                 summary = null,
                 scopeRootRef = scopeRootRef,
                 storageAccessMode = storageAccessMode,
@@ -181,6 +186,18 @@ class PlanExecutor(
         val createdFolders = mutableListOf<String>()
 
         validated.accepted.forEachIndexed { sequence, operation ->
+            val approvalFailure = approvalPreconditionFailure(
+                operation = operation,
+                expected = sourcePreconditions[sequence],
+            )
+            if (approvalFailure != null) {
+                recordPreflightFailure(taskRunId, sequence, operation, approvalFailure)
+                failures += operation.toFailure(sequence, approvalFailure)
+                failed++
+                onProgress(sequence + 1, validated.accepted.size)
+                return@forEachIndexed
+            }
+
             val expectedDestination = try {
                 expectedDestination(operation)
             } catch (t: Throwable) {
@@ -473,6 +490,17 @@ class PlanExecutor(
                 return paused
             }
 
+            val approvalFailure = approvalPreconditionFailure(
+                operation = operation,
+                expected = durable.sourcePreconditions[sequence],
+            )
+            if (approvalFailure != null) {
+                recordPreflightFailure(taskRunId, sequence, operation, approvalFailure)
+                failures += operation.toFailure(sequence, approvalFailure)
+                failed++
+                onProgress(sequence + 1, operations.size)
+                continue
+            }
             val expectedDestination = try {
                 expectedDestination(operation)
             } catch (t: Throwable) {
@@ -624,6 +652,43 @@ class PlanExecutor(
         return finishedSummary
     }
 
+    private suspend fun captureApprovalPreconditions(
+        operations: List<PlannedOperation>,
+    ): Map<Int, SourcePrecondition> {
+        val result = linkedMapOf<Int, SourcePrecondition>()
+        for ((sequence, operation) in operations.withIndex()) {
+            val source = operation.preconditionSource() ?: continue
+            if (!gateway.exists(source)) continue
+
+            val current = SourcePreconditions.from(gateway.stat(source)) ?: continue
+            val indexed = fileRecordDao.getByStableRef(source.rawValue())
+                ?.let(SourcePreconditions::from)
+            if (indexed != null && !SourcePreconditions.matches(indexed, current)) {
+                error("Source changed since the scan and must be reviewed again: ${source.rawValue()}")
+            }
+            result[sequence] = current
+        }
+        return result
+    }
+
+    private suspend fun approvalPreconditionFailure(
+        operation: PlannedOperation,
+        expected: SourcePrecondition?,
+    ): String? {
+        if (expected == null) return null
+        val source = operation.preconditionSource()
+            ?: return "Approved source precondition has no source operation."
+        if (!gateway.exists(source)) {
+            return "Source disappeared after approval; refusing to apply the operation: ${source.rawValue()}"
+        }
+        val current = SourcePreconditions.from(gateway.stat(source))
+            ?: return "Source type changed after approval; refusing to apply the operation: ${source.rawValue()}"
+        return if (SourcePreconditions.matches(expected, current)) {
+            null
+        } else {
+            "Source changed after approval; refusing to apply the operation: ${source.rawValue()}"
+        }
+    }
     private suspend fun recordPreflightFailure(
         taskRunId: Long,
         sequence: Int,
@@ -937,6 +1002,15 @@ class PlanExecutor(
     }
 }
 
+private fun PlannedOperation.preconditionSource(): FileRef? = when (this) {
+    is PlannedOperation.Move -> source
+    is PlannedOperation.Copy -> source
+    is PlannedOperation.Rename -> source
+    is PlannedOperation.Trash -> source
+    is PlannedOperation.CreateDirectory,
+    is PlannedOperation.WriteTextFile,
+    -> null
+}
 private fun PlannedOperation.sourceRef(): FileRef = when (this) {
     is PlannedOperation.CreateDirectory -> parent
     is PlannedOperation.Move -> source
