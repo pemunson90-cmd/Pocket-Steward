@@ -12,10 +12,14 @@ class FileRefCodecTest {
     }
 
     @Test
-    fun `round-trips a mix of Direct and Saf refs, including a URI with colons`() {
+    fun `round-trips Direct Saf and symbolic child refs`() {
         val refs = listOf(
             FileRef.Direct("/storage/emulated/0/Download"),
             FileRef.Saf("content://com.android.externalstorage.documents/tree/primary%3ADownload"),
+            FileRef.Child(
+                FileRef.Saf("content://com.android.externalstorage.documents/tree/primary%3ADownload"),
+                "Nested folder",
+            ),
             FileRef.Direct("/storage/emulated/0/Download/sub folder"),
         )
 
