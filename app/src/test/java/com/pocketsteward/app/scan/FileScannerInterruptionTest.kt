@@ -115,6 +115,66 @@ class FileScannerInterruptionTest {
         assertThat(finalA.width).isEqualTo(123)
     }
 
+    @Test
+    fun failedRefreshPreservesPreviousScopeSnapshot() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        records.seed(file(stale, parent = root, lastScannedAt = 1L), root.raw())
+
+        val gateway = TreeGateway(
+            children = mapOf(
+                root to listOf(
+                    FileEntry(a, "a.txt", isDirectory = false, parentRef = root),
+                    FileEntry(sub, "sub", isDirectory = true, parentRef = root),
+                ),
+            ),
+            failOnList = sub,
+        )
+
+        val scanner = FileScanner(gateway, records, checkpoints)
+        runCatching { scanner.scan(root) }
+
+        assertThat(checkpoints.get(root.raw())!!.status).isEqualTo(ScanStatus.FAILED)
+
+        // Failure is not proof that an unseen old file disappeared. Pruning
+        // happens only after a fully completed walk.
+        assertThat(records.getByStableRef(stale.raw())).isNotNull()
+        assertThat(records.scopesFor(stale.raw())).contains(root.raw())
+    }
+
+    @Test
+    fun overlappingRootsShareRecordWithoutStealingScopeMembership() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(
+            children = mapOf(
+                root to listOf(
+                    FileEntry(a, "a.txt", isDirectory = false, parentRef = root),
+                    FileEntry(sub, "sub", isDirectory = true, parentRef = root),
+                ),
+                sub to listOf(
+                    FileEntry(b, "b.txt", isDirectory = false, parentRef = sub),
+                ),
+            ),
+        )
+        val scanner = FileScanner(gateway, records, checkpoints)
+
+        scanner.scan(root)
+        scanner.scan(sub)
+
+        assertThat(records.allRecords().count { it.stableRef == b.raw() }).isEqualTo(1)
+        assertThat(records.scopesFor(b.raw())).containsExactly(root.raw(), sub.raw())
+
+        // Refreshing the nested scope with b removed must detach only the
+        // nested membership. The outer root still owns the same record.
+        gateway.replaceChildren(sub, emptyList())
+        checkpoints.clear(sub.raw())
+        scanner.scan(sub)
+
+        assertThat(records.getByStableRef(b.raw())).isNotNull()
+        assertThat(records.scopesFor(b.raw())).containsExactly(root.raw())
+    }
+
     private fun FileRef.raw(): String = (this as FileRef.Direct).absolutePath
 
     private fun file(
@@ -137,14 +197,21 @@ class FileScannerInterruptionTest {
     )
 
     private inner class TreeGateway(
-        private val children: Map<FileRef, List<FileEntry>>,
+        children: Map<FileRef, List<FileEntry>>,
+        private val failOnList: FileRef? = null,
     ) : StorageGateway {
+        private val children = children.toMutableMap()
         val listCount = mutableMapOf<FileRef, Int>()
+
+        fun replaceChildren(directory: FileRef, value: List<FileEntry>) {
+            children[directory] = value
+        }
 
         override suspend fun rootOf(scope: StorageScope): FileRef = root
 
         override suspend fun listChildren(directory: FileRef): List<FileEntry> {
             listCount[directory] = (listCount[directory] ?: 0) + 1
+            if (directory == failOnList) error("synthetic provider failure")
             return children[directory].orEmpty()
         }
 
