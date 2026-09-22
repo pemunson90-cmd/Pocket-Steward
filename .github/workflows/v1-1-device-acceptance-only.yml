@@ -1,0 +1,94 @@
+name: V1.1 Device Acceptance Only
+
+on:
+  push:
+    branches:
+      - test/v1.1-device-acceptance
+  workflow_dispatch:
+
+jobs:
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run executable V1.1 acceptance flow
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -eu
+            ./gradlew connectedDebugAndroidTest --stacktrace
+            ./gradlew installDebug installDebugAndroidTest --stacktrace
+            adb shell cmd connectivity airplane-mode enable || true
+            adb shell svc wifi disable || true
+            adb shell svc data disable || true
+            sleep 2
+            adb shell am instrument -w               -e class com.pocketsteward.app.V1EndToEndAcceptanceTest               com.pocketsteward.app.test/androidx.test.runner.AndroidJUnitRunner
+            adb shell cmd connectivity airplane-mode disable || true
+            adb shell svc wifi enable || true
+            ./gradlew installDebug --stacktrace
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell input keyevent KEYCODE_HOME
+            sleep 2
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+            mkdir -p app/build/reports/adaptive-smoke
+            adb shell wm size 720x1600
+            sleep 2
+            adb exec-out screencap -p > app/build/reports/adaptive-smoke/compact.png
+            adb shell wm size 1600x1200
+            sleep 2
+            adb exec-out screencap -p > app/build/reports/adaptive-smoke/wide.png
+            adb shell wm reset
+            adb shell input keyevent KEYCODE_POWER
+            sleep 2
+            adb shell input keyevent KEYCODE_POWER
+            adb shell input keyevent KEYCODE_MENU
+            sleep 2
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+            adb shell appops set com.pocketsteward.app MANAGE_EXTERNAL_STORAGE deny || true
+            adb shell am force-stop com.pocketsteward.app
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell pidof com.pocketsteward.app >/dev/null
+            adb shell appops set com.pocketsteward.app MANAGE_EXTERNAL_STORAGE allow || true
+            adb shell am force-stop com.pocketsteward.app
+            adb reboot
+            adb wait-for-device
+            for i in $(seq 1 90); do
+              if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+                break
+              fi
+              sleep 1
+            done
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+            adb logcat -d > app/build/reports/v1-1-post-reboot-logcat.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-1-device-acceptance
+          path: |
+            app/build/reports/androidTests/connected/**
+            app/build/outputs/androidTest-results/connected/**
+            app/build/reports/v1-1-post-reboot-logcat.txt
+            app/build/reports/adaptive-smoke/**
+          if-no-files-found: warn
