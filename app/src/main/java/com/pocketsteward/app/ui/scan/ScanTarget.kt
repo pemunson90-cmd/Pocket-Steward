@@ -25,21 +25,18 @@ sealed interface ScanTarget {
         override val label = "All accessible files"
     }
 
-    /** The one SAF-granted folder, when access mode is SAF rather than broad. */
-    // In SafStorageGateway.kt and ScanTarget.GrantedFolder
-
-/**
- * 2026-09-19 (M8 Spec): SAF mode and storage gateway are retained intact as a browser 
- * fallback only. It is not supported for file mutations. Do not route operations here 
- * and do not remove SAF_UNSUPPORTED UI fencing.
- */
-
+    /** The root of the persisted SAF grant. */
     data class GrantedFolder(override val label: String) : ScanTarget
 
+    /** A concrete subfolder inside the persisted SAF tree. */
+    data class GrantedSubfolder(
+        val documentUri: String,
+        override val label: String,
+    ) : ScanTarget
+
     /**
-     * Spec 6c: any folder the user picked through the in-app browser.
-     * Direct mode only — SAF reaches exactly one granted tree, and narrowing
-     * within it is what [GrantedFolder] already is.
+     * Spec 6c: any direct-storage folder the user picked through the in-app browser.
+     * SAF subfolders use [GrantedSubfolder] so provider URIs remain typed.
      *
      * The label is the folder's own name rather than its full path, because
      * it appears in a scan summary header and in every plan goal string; the
