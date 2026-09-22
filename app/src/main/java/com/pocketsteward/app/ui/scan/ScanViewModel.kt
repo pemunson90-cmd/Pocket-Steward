@@ -156,6 +156,8 @@ sealed interface ScanUiState {
         val totalFiles: Int,
         val totalBytes: Long,
         val byCategory: Map<FileCategory, CategoryStat>,
+        val largeFileCount: Int = 0,
+        val uncategorizedCount: Int = 0,
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A scan summary needs at least one scope." }
@@ -1001,12 +1003,24 @@ class ScanViewModel(
                         CategoryStat(fileCount = files.size, totalBytes = files.sumOf { it.sizeBytes })
                     }
 
+                val projectKeywords = settingsRepository.projectKeywords.first()
                 val summary = ScanUiState.Summary(
                     scopes = scopes,
                     mode = mode,
                     totalFiles = records.size,
                     totalBytes = records.sumOf { it.sizeBytes },
                     byCategory = byCategory,
+                    largeFileCount = records.count {
+                        !it.isDirectory && it.sizeBytes >= LARGE_FILE_SUMMARY_BYTES
+                    },
+                    uncategorizedCount = records.count {
+                        !it.isDirectory &&
+                            RuleEngine.classify(
+                                it.displayName,
+                                it.extension,
+                                projectKeywords,
+                            ).isUncategorized()
+                    },
                 )
                 _uiState.value = summary
 
