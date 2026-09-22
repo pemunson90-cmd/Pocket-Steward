@@ -36,7 +36,8 @@ class DirectStorageGatewayCopyTest {
         val source = File(root, "source.bin").apply {
             writeBytes(ByteArray(32 * 1024) { index -> (index % 251).toByte() })
         }
-        val destination = File(root, "nested/copied.bin")
+        val destinationParent = File(root, "nested").apply { mkdirs() }
+        val destination = File(destinationParent, "copied.bin")
 
         val result = gateway.copy(
             FileRef.Direct(source.absolutePath),
@@ -77,4 +78,21 @@ class DirectStorageGatewayCopyTest {
         assertTrue(result is MutationResult.Failure)
         assertFalse(destination.exists())
     }
+    @Test
+    fun copyRefusesMissingParentInsteadOfCreatingUnjournaledDirectory() = runBlocking {
+        val source = File(root, "source.txt").apply { writeText("source") }
+        val missingParent = File(root, "missing")
+        val destination = File(missingParent, "copy.txt")
+
+        val result = gateway.copy(
+            FileRef.Direct(source.absolutePath),
+            FileRef.Direct(destination.absolutePath),
+        )
+
+        assertTrue(result is MutationResult.Failure)
+        assertTrue(source.exists())
+        assertFalse(missingParent.exists())
+        assertFalse(destination.exists())
+    }
+
 }
