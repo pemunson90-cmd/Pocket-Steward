@@ -250,7 +250,6 @@ class UndoExecutor(
                     matchingScopeRoots(restored, knownScopes).map { FileScope(restoredRecord.stableRef, it) },
                 )
             }
-            MutationOperationType.COPY -> Unit
         }
     }
 }
