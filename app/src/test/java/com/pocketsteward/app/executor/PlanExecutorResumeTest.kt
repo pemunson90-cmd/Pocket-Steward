@@ -110,6 +110,54 @@ class PlanExecutorResumeTest {
         assertThat(files.getByStableRef(destinationB.absolutePath)).isNotNull()
     }
 
+    @Test
+    fun gatewayFailureThatLeavesDestination_stopsTaskForReview() = runTest {
+        val operation = PlannedOperation.Move(sourceA, destinationA, "ambiguous move")
+        val task = TaskRun(
+            id = 8,
+            requestText = "ambiguous move",
+            startedAt = 1L,
+            completedAt = null,
+            status = TaskRunStatus.RUNNING,
+            scanSnapshotId = null,
+            planJson = DurablePlanCodec.encode("ambiguous move", listOf(operation)),
+            summary = null,
+            scopeRootRef = "/Download",
+            storageAccessMode = StorageAccessMode.DIRECT,
+            undoCompletedAt = null,
+        )
+        val taskDao = FakeTaskRunDao(task)
+        val mutationDao = FakeMutationDao(mutableListOf())
+        val files = FakeFileRecordDao().apply {
+            seed(fileRecord(sourceA), "/Download")
+        }
+        val gateway = FakeGateway(
+            existing = mutableSetOf(
+                FileRef.Direct("/Download"),
+                FileRef.Direct("/Documents"),
+                sourceA,
+            ),
+            failMoveAfterCreatingDestination = true,
+        )
+
+        val summary = PlanExecutor(
+            gateway = gateway,
+            fileRecordDao = files,
+            taskRunDao = taskDao,
+            mutationRecordDao = mutationDao,
+        ).resume(task.id)
+
+        assertThat(summary.failed).isEqualTo(1)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.NEEDS_REVIEW)
+        assertThat(gateway.exists(sourceA)).isTrue()
+        assertThat(gateway.exists(destinationA)).isTrue()
+
+        val journal = mutationDao.records.single()
+        assertThat(journal.status).isEqualTo(MutationStatus.NEEDS_REVIEW)
+        assertThat(journal.undoState).isEqualTo(UndoState.BLOCKED)
+        assertThat(journal.error).contains("stopped for review")
+    }
+
     private fun fileRecord(ref: FileRef.Direct) = FileRecord(
         stableRef = ref.absolutePath,
         displayName = ref.absolutePath.substringAfterLast('/'),
@@ -127,6 +175,7 @@ class PlanExecutorResumeTest {
 
     private class FakeGateway(
         private val existing: MutableSet<FileRef>,
+        private val failMoveAfterCreatingDestination: Boolean = false,
     ) : StorageGateway {
         val moveCalls = mutableListOf<Pair<FileRef, FileRef>>()
 
@@ -169,6 +218,10 @@ class PlanExecutorResumeTest {
             moveCalls += source to destination
             if (source !in existing) return MutationResult.Failure("source missing")
             if (destination in existing) return MutationResult.Failure("destination exists")
+            if (failMoveAfterCreatingDestination) {
+                existing += destination
+                return MutationResult.Failure("synthetic provider failed after creating destination")
+            }
             existing -= source
             existing += destination
             return MutationResult.Success(destination)
