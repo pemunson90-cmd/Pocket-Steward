@@ -244,6 +244,8 @@ class DirectStorageGateway(
     }
 }
 
-private fun FileRef.requirePath(): String =
-    (this as? FileRef.Direct)?.absolutePath
-        ?: error("DirectStorageGateway received a non-Direct FileRef: $this")
+private fun FileRef.requirePath(): String = when (this) {
+    is FileRef.Direct -> absolutePath
+    is FileRef.Child -> File(parent.requirePath(), name).absolutePath
+    is FileRef.Saf -> error("DirectStorageGateway received a SAF FileRef: $this")
+}
