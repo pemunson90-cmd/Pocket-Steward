@@ -191,7 +191,14 @@ class DirectStorageGateway(
         } catch (t: Throwable) {
             return MutationResult.Failure(t.message ?: "Could not resolve Trash destination", t)
         }
-        return moveFile(sourceFile, File(destination.requirePath()))
+        val destinationFile = File(destination.requirePath())
+        val trashParent = destinationFile.parentFile
+            ?: return MutationResult.Failure("Cannot determine Trash parent for " + destinationFile.absolutePath)
+        when (val prepared = prepareAppManagedTrashParent(trashParent)) {
+            is MutationResult.Failure -> return prepared
+            is MutationResult.Success -> Unit
+        }
+        return moveFile(sourceFile, destinationFile)
     }
 
     override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
@@ -210,6 +217,34 @@ class DirectStorageGateway(
         }
     }
 
+    /**
+     * Trash is the one mutation allowed to create missing destination parents
+     * internally. These are app-owned quarantine infrastructure under
+     * PocketSteward/Trash, not user organization folders. Ordinary move/copy
+     * paths must still arrive with every parent explicitly planned/journaled.
+     */
+    private fun prepareAppManagedTrashParent(parent: File): MutationResult {
+        val externalRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+        val trashRoot = File(externalRoot, TRASH_RELATIVE_ROOT).absolutePath.trimEnd('/')
+        val target = parent.absolutePath.trimEnd('/')
+        if (target != trashRoot && !target.startsWith("$trashRoot/")) {
+            return MutationResult.Failure(
+                "Refusing to create a non-Trash parent implicitly: " + parent.absolutePath,
+            )
+        }
+        if (parent.exists()) {
+            return if (parent.isDirectory) {
+                MutationResult.Success(FileRef.Direct(parent.absolutePath), changed = false)
+            } else {
+                MutationResult.Failure("Trash parent is occupied by a file: " + parent.absolutePath)
+            }
+        }
+        return if (parent.mkdirs()) {
+            MutationResult.Success(FileRef.Direct(parent.absolutePath), changed = true)
+        } else {
+            MutationResult.Failure("Could not create app-managed Trash path: " + parent.absolutePath)
+        }
+    }
     private fun moveFile(sourceFile: File, destinationFile: File): MutationResult {
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
         if (destinationFile.exists()) return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
