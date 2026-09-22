@@ -18,6 +18,7 @@ import com.pocketsteward.app.storage.SafStorageGateway
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.TestSafDocumentsProvider
+import com.pocketsteward.app.storage.rawValue
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.runBlocking
 import org.junit.After
