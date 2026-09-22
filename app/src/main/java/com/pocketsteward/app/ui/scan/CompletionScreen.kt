@@ -17,6 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.pocketsteward.app.data.db.TaskJournalProgress
+import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.ui.theme.Spacing
@@ -32,6 +35,8 @@ import com.pocketsteward.app.ui.theme.Spacing
 fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
     val state by viewModel.completion.collectAsState()
     val undoing by viewModel.undoProgress.collectAsState()
+    val taskRuns by viewModel.taskRuns.collectAsState()
+    val taskProgress by viewModel.taskProgress.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
 
@@ -74,6 +79,10 @@ fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
             )
             is ScanUiState.ExecutionQueued -> ExecutionQueued(
                 state = current,
+                task = taskRuns.firstOrNull { it.id == current.taskRunId },
+                progress = taskProgress[current.taskRunId],
+                onPause = viewModel::pauseTaskExecution,
+                onResume = { viewModel.resumeTaskExecution(current.taskRunId) },
                 onDone = onDone,
                 modifier = contentModifier,
             )
@@ -86,34 +95,93 @@ fun CompletionScreen(viewModel: ScanViewModel, onDone: () -> Unit) {
 @Composable
 private fun ExecutionQueued(
     state: ScanUiState.ExecutionQueued,
+    task: TaskRun?,
+    progress: TaskJournalProgress?,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
+    val total = state.operationCount.coerceAtLeast(1)
+    val completed = progress?.journaledCount?.coerceAtMost(total.toLong())?.toInt() ?: 0
+    val failed = progress?.failedCount ?: 0L
+    val status = task?.status
+
+    val headline = when (status) {
+        TaskRunStatus.CANCELLED -> "Paused"
+        TaskRunStatus.COMPLETED -> "Done"
+        TaskRunStatus.PARTIAL -> "Partly done"
+        TaskRunStatus.FAILED -> "Nothing went through"
+        TaskRunStatus.NEEDS_REVIEW -> "Needs review"
+        else -> "Working"
+    }
+
     Column(modifier = modifier.fillMaxWidth()) {
         ScreenHeadline(
-            text = "Running in background",
-            supporting = "${state.operationCount} approved operation(s) · task #${state.taskRunId}",
+            text = headline,
+            supporting = buildString {
+                append("$completed of ${state.operationCount} operations recorded")
+                if (failed > 0) append(" · $failed failed")
+                append(" · task #${state.taskRunId}")
+            },
         )
+
+        LinearProgressIndicator(
+            progress = { (completed.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Card(modifier = Modifier.fillMaxWidth().padding(top = Spacing.base)) {
             Column(modifier = Modifier.padding(Spacing.base)) {
                 Text(
-                    "Pocket Steward saved the exact approved plan before starting.",
+                    task?.requestText ?: "Approved Pocket Steward task",
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    "You can leave this screen or the app. Progress and Pause live in the foreground notification, and the task remains visible in Tasks. If Android stops it, Resume continues from the journal instead of replaying finished operations.",
+                    task?.summary ?: "The approved plan is journaled before each filesystem mutation.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = Spacing.tight),
                 )
+                if (status == TaskRunStatus.RUNNING || status == null) {
+                    Text(
+                        "You can leave this screen. Progress is durable, and Android can switch between the foreground service and background worker without replaying completed operations.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.tight),
+                    )
+                }
             }
         }
+
         ActionRow {
-            Button(onClick = onDone) { Text("Done") }
+            when (status) {
+                TaskRunStatus.RUNNING, null -> {
+                    OutlinedButton(onClick = onPause) { Text("Pause") }
+                }
+                TaskRunStatus.CANCELLED -> {
+                    Button(onClick = onResume) { Text("Resume") }
+                }
+                else -> Unit
+            }
+            Button(onClick = onDone) {
+                Text(
+                    if (status in setOf(
+                            TaskRunStatus.COMPLETED,
+                            TaskRunStatus.PARTIAL,
+                            TaskRunStatus.FAILED,
+                            TaskRunStatus.NEEDS_REVIEW,
+                        )
+                    ) {
+                        "Done"
+                    } else {
+                        "Leave running"
+                    },
+                )
+            }
         }
     }
 }
-
 @Composable
 private fun ExecutionDone(
     summary: ExecutionSummary,
