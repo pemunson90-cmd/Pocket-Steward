@@ -64,6 +64,25 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 },
             )
 
+            val redCount = preview.accepted.count {
+                it.safetyClass() == MutationSafetyClass.RED
+            }
+            if (redCount > 0) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
+                ) {
+                    Text(
+                        "$redCount quarantine/trash action(s) are intentionally unchecked by default. " +
+                            "Select them deliberately, or use All if you have reviewed the whole set.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(Spacing.base),
+                    )
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
