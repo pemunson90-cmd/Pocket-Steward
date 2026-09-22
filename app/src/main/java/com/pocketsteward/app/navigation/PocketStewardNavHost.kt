@@ -37,6 +37,7 @@ object Routes {
     fun scanFlowWithSavedSearch(searchId: String): String = ScanFlow.entryWithSavedSearch(searchId)
     fun scanFlowWithImportedPlan(cachePath: String): String = ScanFlow.entryWithImportedPlan(cachePath)
     fun scanFlowScheduledReview(): String = ScanFlow.entryWithScheduledReview()
+    fun scanFlowLastScan(): String = ScanFlow.entryWithLastScan()
     fun historyTask(taskId: Long): String = "history/task/$taskId"
 }
 
@@ -64,6 +65,7 @@ fun PocketStewardNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 onExplore = { navController.navigate(Routes.SCAN_FLOW) },
+                onContinueLastScan = { navController.navigate(Routes.scanFlowLastScan()) },
                 onOpenTasks = { navController.navigate(Routes.HISTORY) },
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
                 onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
