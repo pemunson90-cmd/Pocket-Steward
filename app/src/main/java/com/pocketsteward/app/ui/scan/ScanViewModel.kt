@@ -1932,7 +1932,10 @@ class ScanViewModel(
             try {
                 val mode = summary.mode
                 val records = filesForScopes(summary.scopes)
-                val detector = DuplicateDetector(container.gatewayFor(mode))
+                val detector = DuplicateDetector(
+                    gateway = container.gatewayFor(mode),
+                    fileRecordDao = container.database.fileRecordDao(),
+                )
                 val groups = withContext(Dispatchers.IO) {
                     detector.findDuplicates(records) { progress ->
                         _uiState.value = ScanUiState.Working(
