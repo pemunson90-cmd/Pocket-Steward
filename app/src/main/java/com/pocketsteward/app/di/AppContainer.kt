@@ -177,23 +177,28 @@ class AppContainer(context: Context) {
         }
     }
 
-    fun startContentIndexing(sourceRoots: List<String>) {
+    fun startContentIndexing(sourceRoots: List<String>, mode: StorageAccessMode) {
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         if (roots.isEmpty()) return
 
         try {
             ContextCompat.startForegroundService(
                 appContext,
-                ContentIndexForegroundService.runIntent(appContext, roots),
+                ContentIndexForegroundService.runIntent(appContext, roots, mode),
             )
         } catch (_: IllegalStateException) {
-            enqueueContentIndexFallback(roots)
+            enqueueContentIndexFallback(roots, mode)
         }
     }
 
-    private fun enqueueContentIndexFallback(roots: List<String>) {
+    private fun enqueueContentIndexFallback(roots: List<String>, mode: StorageAccessMode) {
         val request = OneTimeWorkRequestBuilder<ContentIndexWorker>()
-            .setInputData(workDataOf(ContentIndexWorker.KEY_ROOTS to roots.toTypedArray()))
+            .setInputData(
+                workDataOf(
+                    ContentIndexWorker.KEY_ROOTS to roots.toTypedArray(),
+                    ContentIndexWorker.KEY_MODE to mode.name,
+                ),
+            )
             .setConstraints(
                 Constraints.Builder()
                     .setRequiresBatteryNotLow(true)
