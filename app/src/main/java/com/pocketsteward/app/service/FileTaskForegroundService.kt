@@ -133,6 +133,16 @@ class FileTaskForegroundService : Service() {
             // state here: MutationRecovery will resolve any PENDING row and
             // the durable plan still identifies every missing sequence.
             throw cancel
+        } catch (security: SecurityException) {
+            container.database.taskRunDao().markRunningPaused(
+                id = taskRunId,
+                completedAt = System.currentTimeMillis(),
+                summary = "Paused because storage access is unavailable. Restore access, then Resume from Tasks.",
+            )
+            postTerminalNotification(
+                title = "Pocket Steward needs storage access",
+                text = "The approved task is saved. Restore access, then Resume from Tasks.",
+            )
         } catch (t: Throwable) {
             postTerminalNotification(
                 title = "Pocket Steward stopped",
