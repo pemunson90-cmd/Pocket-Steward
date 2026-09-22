@@ -5,7 +5,8 @@
             android:name="com.pocketsteward.app.storage.TestSafDocumentsProvider"
             android:authorities="com.pocketsteward.app.test.saf"
             android:exported="true"
-            android:grantUriPermissions="true">
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
             <intent-filter>
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
