@@ -636,8 +636,13 @@ class ScanViewModel(
      * killing the graph-scoped ViewModel; the indexed inventory is durable,
      * so an empty screen should not force a 20k-file rescan.
      */
-    fun restoreLastScanSummaryIfAvailable() {
-        if (_summary.value != null || scanJob?.isActive == true) return
+    fun restoreLastScanSummaryIfAvailable(navigateToResults: Boolean = false) {
+        if (_summary.value != null || scanJob?.isActive == true) {
+            if (navigateToResults && _summary.value != null) {
+                viewModelScope.launch { navChannel.send(ScanRoute.RESULTS) }
+            }
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -674,7 +679,7 @@ class ScanViewModel(
                         )
                     }
 
-                _summary.value = ScanUiState.Summary(
+                val restored = ScanUiState.Summary(
                     scopes = scopes,
                     mode = session.mode,
                     totalFiles = records.size,
@@ -692,10 +697,21 @@ class ScanViewModel(
                             ).isUncategorized()
                     },
                 )
+                if (navigateToResults) {
+                    _uiState.value = restored
+                } else {
+                    _summary.value = restored
+                }
             } catch (t: Throwable) {
                 _error.value = t.message ?: "Could not restore the previous scan."
             }
         }
+    }
+
+    fun startLastScanSession() {
+        if (autoStarted) return
+        autoStarted = true
+        restoreLastScanSummaryIfAvailable(navigateToResults = true)
     }
 
     /**
