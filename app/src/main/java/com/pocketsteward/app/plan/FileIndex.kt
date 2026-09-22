@@ -1,6 +1,7 @@
 package com.pocketsteward.app.plan
 
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.knownParentOrNull
 
 /**
  * Everything [PlanValidator] needs to know about the current state of
@@ -12,6 +13,12 @@ import com.pocketsteward.app.storage.FileRef
 interface FileIndex {
     fun exists(ref: FileRef): Boolean
     fun isDirectory(ref: FileRef): Boolean
+
+    /**
+     * Parent identity from the trusted snapshot. Direct and symbolic refs can
+     * answer structurally; concrete SAF refs need the indexed parentRef.
+     */
+    fun parentOf(ref: FileRef): FileRef? = ref.knownParentOrNull()
 
     /**
      * The existing entry directly under [directory] named [name], matched
