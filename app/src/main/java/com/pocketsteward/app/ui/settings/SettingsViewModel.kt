@@ -173,8 +173,11 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.setOnDeviceAiEnabled(enabled) }
     }
 
-    fun clearStorageAccessChoice() {
-        viewModelScope.launch { settingsRepository.clearStorageAccessChoice() }
+    fun clearStorageAccessChoice(onCleared: () -> Unit = {}) {
+        viewModelScope.launch {
+            settingsRepository.clearStorageAccessChoice()
+            onCleared()
+        }
     }
 
     fun setScheduledCleanup(
