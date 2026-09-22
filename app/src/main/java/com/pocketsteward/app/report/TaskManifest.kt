@@ -148,8 +148,8 @@ object TaskManifest {
             appendLine()
         }
 
-        appendLine("Nothing in this run was deleted. Trashed files were moved under PocketSteward/Trash/,")
-        appendLine("mirroring their original folder structure, and are still there until removed by hand.")
+        appendLine("Nothing in this run was permanently deleted. Quarantined files were moved under a PocketSteward/Trash folder")
+        appendLine("inside the authorized storage area, and remain recoverable through the journal until removed by hand.")
     }
 
     /**
