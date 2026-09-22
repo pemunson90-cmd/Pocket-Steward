@@ -35,7 +35,7 @@ import com.pocketsteward.app.ui.theme.Spacing
 fun CompletionScreen(
     viewModel: ScanViewModel,
     onDone: () -> Unit,
-    onOpenTasks: () -> Unit,
+    onOpenTask: (Long) -> Unit,
 ) {
     val state by viewModel.completion.collectAsState()
     val undoing by viewModel.undoProgress.collectAsState()
@@ -78,7 +78,7 @@ fun CompletionScreen(
             is ScanUiState.ExecutionDone -> ExecutionDone(
                 summary = current.summary,
                 onUndo = { viewModel.undoTask(current.summary.taskRunId) },
-                onOpenTasks = onOpenTasks,
+                onOpenTask = { onOpenTask(current.summary.taskRunId) },
                 onDone = onDone,
                 modifier = contentModifier,
             )
@@ -89,7 +89,7 @@ fun CompletionScreen(
                 onPause = viewModel::pauseTaskExecution,
                 onResume = { viewModel.resumeTaskExecution(current.taskRunId) },
                 onUndo = { viewModel.undoTask(current.taskRunId) },
-                onOpenTasks = onOpenTasks,
+                onOpenTask = { onOpenTask(current.taskRunId) },
                 onDone = onDone,
                 modifier = contentModifier,
             )
@@ -107,7 +107,7 @@ private fun ExecutionQueued(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onUndo: () -> Unit,
-    onOpenTasks: () -> Unit,
+    onOpenTask: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
@@ -193,7 +193,7 @@ private fun ExecutionQueued(
                 }
                 else -> Unit
             }
-            OutlinedButton(onClick = onOpenTasks) {
+            OutlinedButton(onClick = onOpenTask) {
                 Text("Open Tasks")
             }
             Button(onClick = onDone) {
@@ -218,7 +218,7 @@ private fun ExecutionQueued(
 private fun ExecutionDone(
     summary: ExecutionSummary,
     onUndo: () -> Unit,
-    onOpenTasks: () -> Unit,
+    onOpenTask: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier,
 ) {
@@ -320,7 +320,7 @@ private fun ExecutionDone(
             if (summary.succeededTotal > 0) {
                 OutlinedButton(onClick = onUndo) { Text("Undo this task") }
             }
-            OutlinedButton(onClick = onOpenTasks) { Text("Review task") }
+            OutlinedButton(onClick = onOpenTask) { Text("Review task") }
             Button(onClick = onDone) { Text("Done") }
         }
     }
