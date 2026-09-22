@@ -303,11 +303,17 @@ class FileScannerInterruptionTest {
             return id
         }
 
+        override suspend fun insertAllRecords(records: List<FileRecord>): List<Long> =
+            records.map { insert(it) }
+
         override suspend fun update(record: FileRecord): Int {
             if (record.stableRef !in records) return 0
             records[record.stableRef] = record
             return 1
         }
+
+        override suspend fun updateAllRecords(records: List<FileRecord>): Int =
+            records.sumOf { update(it) }
 
         override suspend fun insertScopeTag(scope: FileScope) {
             scopes += scope
@@ -345,6 +351,9 @@ class FileScannerInterruptionTest {
 
         override suspend fun getByStableRef(stableRef: String): FileRecord? =
             records[stableRef]
+
+        override suspend fun getByStableRefs(stableRefs: List<String>): List<FileRecord> =
+            stableRefs.mapNotNull(records::get)
 
         override suspend fun updateQuickFingerprint(stableRef: String, value: String) {
             records[stableRef]?.let { records[stableRef] = it.copy(quickFingerprint = value) }
