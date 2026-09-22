@@ -102,29 +102,35 @@ class SafPlanValidatorTest {
     }
     @Test
     fun `rejects recursive SAF directory move`() {
-        val root = FileRef.Saf("content://provider/tree/root/document/root")
         val folder = FileRef.Saf("content://provider/tree/root/document/root%2FProject")
-        val child = FileRef.Child(folder, "Nested")
-        val destination = FileRef.Child(child, "Project")
-        val index = FakeSafIndex(
-            existing = setOf(root, folder),
-            directories = setOf(root, folder),
-            parents = mapOf(folder to root),
+        val nested = FileRef.Child(folder, "Nested")
+        val destination = FileRef.Child(nested, "Project")
+        val operations = listOf(
+            PlannedOperation.CreateDirectory(
+                parent = folder,
+                name = "Nested",
+                reason = "planned nested folder",
+            ),
+            PlannedOperation.Move(
+                source = folder,
+                destination = destination,
+                reason = "recursive move",
+            ),
         )
-
         val result = PlanValidator.validate(
-            listOf(
-                PlannedOperation.Move(
-                    source = folder,
-                    destination = destination,
-                    reason = "recursive move",
+            operations,
+            index(
+                FileEntry(
+                    ref = folder,
+                    displayName = "Project",
+                    isDirectory = true,
+                    parentRef = root,
                 ),
             ),
-            index,
         )
 
-        assertThat(result.accepted).isEmpty()
+        assertThat(result.accepted).containsExactly(operations.first())
+        assertThat(result.rejected).hasSize(1)
         assertThat(result.rejected.single().reason).contains("recursive move")
     }
-
 }
