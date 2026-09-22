@@ -116,5 +116,10 @@ private fun AppDestination.matches(destination: NavDestination?): Boolean {
         return destination.hierarchy.any { it.route == ScanFlow.GRAPH }
     }
     if (route == Routes.SETTINGS && destination.route == Routes.TRASH) return true
+    if (route == Routes.HISTORY &&
+        destination.hierarchy.any { it.route == Routes.HISTORY_TASK }
+    ) {
+        return true
+    }
     return destination.hierarchy.any { it.route == route }
 }
