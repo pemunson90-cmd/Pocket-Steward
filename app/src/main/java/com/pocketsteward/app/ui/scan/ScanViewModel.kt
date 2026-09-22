@@ -3364,6 +3364,10 @@ class ScanViewModel(
                                 reason = original.reason,
                             )
                             newDestinationPath != null -> {
+                                if (original.destination !is FileRef.Direct) {
+                                    _error.value = "Selected-tree destinations are edited by group, not by raw path."
+                                    return@launch
+                                }
                                 val path = newDestinationPath.trim().trimEnd('/')
                                 if (path.isBlank()) {
                                     _error.value = "Move destination cannot be blank."
@@ -3383,6 +3387,10 @@ class ScanViewModel(
                                 reason = original.reason,
                             )
                             newDestinationPath != null -> {
+                                if (original.destination !is FileRef.Direct) {
+                                    _error.value = "Selected-tree destinations are edited by group, not by raw path."
+                                    return@launch
+                                }
                                 val path = newDestinationPath.trim().trimEnd('/')
                                 if (path.isBlank()) {
                                     _error.value = "Copy destination cannot be blank."
@@ -3453,10 +3461,15 @@ class ScanViewModel(
                     }
                     .distinctBy { it.absolutePath.trimEnd('/') }
 
+                val editMode = if (current.scopes.all { it.root is FileRef.Direct }) {
+                    StorageAccessMode.DIRECT
+                } else {
+                    StorageAccessMode.SAF
+                }
                 val index = buildAuthorizedPlanIndex(
                     scopes = current.scopes,
-                    destinationRoots = extraRoots,
-                    mode = StorageAccessMode.DIRECT,
+                    destinationRoots = if (editMode == StorageAccessMode.DIRECT) extraRoots else emptyList(),
+                    mode = editMode,
                 )
                 val validated = PlanValidator.validate(transformed, index)
                 if (validated.rejected.isNotEmpty() ||
@@ -3481,6 +3494,140 @@ class ScanViewModel(
                 _error.value = t.message ?: t.javaClass.simpleName
             }
         }
+    }
+
+    fun editSafPlanDestinationGroup(
+        groupDirectory: FileRef.Child,
+        newGroupName: String,
+        rememberForSimilarFiles: Boolean = false,
+    ) {
+        val current = _preview.value ?: return
+        viewModelScope.launch {
+            try {
+                require(current.scopes.any { it.root is FileRef.Saf }) {
+                    "Selected-tree destination editing requires a selected-tree scan."
+                }
+                val targetGroup = SemanticPlanAdapter.sanitizeGroup(newGroupName)
+                    ?: run {
+                        _error.value = "Group name is blank or contains an unsafe path separator."
+                        return@launch
+                    }
+                val replacement = FileRef.Child(groupDirectory.parent, targetGroup)
+                if (replacement == groupDirectory) return@launch
+
+                val records = allRecordsForScopes(current.scopes)
+                val displayNameByRef = records.associate { it.stableRef to it.displayName }
+                val affectedSourceNames = current.accepted.mapNotNull { operation ->
+                    val source = when (operation) {
+                        is PlannedOperation.Move -> operation.source
+                        is PlannedOperation.Copy -> operation.source
+                        else -> return@mapNotNull null
+                    }
+                    val destination = when (operation) {
+                        is PlannedOperation.Move -> operation.destination
+                        is PlannedOperation.Copy -> operation.destination
+                        else -> return@mapNotNull null
+                    }
+                    if (destination.knownParentOrNull()?.rawValue() == groupDirectory.rawValue()) {
+                        displayNameByRef[source.rawValue()]
+                    } else {
+                        null
+                    }
+                }
+
+                val transformed = current.accepted.map { operation ->
+                    when (operation) {
+                        is PlannedOperation.CreateDirectory -> {
+                            val created = operation.parent.child(operation.name)
+                            when {
+                                created.rawValue() == groupDirectory.rawValue() ->
+                                    operation.copy(
+                                        parent = replacement.parent,
+                                        name = replacement.name,
+                                    )
+                                else -> {
+                                    val parent = rebasePlannedDestination(
+                                        operation.parent,
+                                        groupDirectory,
+                                        replacement,
+                                    )
+                                    if (parent == operation.parent) operation else operation.copy(parent = parent)
+                                }
+                            }
+                        }
+
+                        is PlannedOperation.Move -> {
+                            val destination = rebasePlannedDestination(
+                                operation.destination,
+                                groupDirectory,
+                                replacement,
+                            )
+                            if (destination == operation.destination) operation else operation.copy(destination = destination)
+                        }
+
+                        is PlannedOperation.Copy -> {
+                            val destination = rebasePlannedDestination(
+                                operation.destination,
+                                groupDirectory,
+                                replacement,
+                            )
+                            if (destination == operation.destination) operation else operation.copy(destination = destination)
+                        }
+
+                        is PlannedOperation.WriteTextFile -> {
+                            val parent = rebasePlannedDestination(
+                                operation.parent,
+                                groupDirectory,
+                                replacement,
+                            )
+                            if (parent == operation.parent) operation else operation.copy(parent = parent)
+                        }
+
+                        is PlannedOperation.Rename,
+                        is PlannedOperation.Trash,
+                        -> operation
+                    }
+                }
+
+                val validated = PlanValidator.validate(
+                    transformed,
+                    InMemoryFileIndex(records),
+                )
+                if (validated.rejected.isNotEmpty() || validated.accepted.size != transformed.size) {
+                    _error.value = validated.rejected.firstOrNull()?.reason
+                        ?: "The edited selected-tree destination no longer validates."
+                    return@launch
+                }
+
+                _preview.value = current.copy(
+                    accepted = validated.accepted,
+                    acceptedScopeLabels = validated.accepted.map { operation ->
+                        scopeForOperation(operation, current.scopes)?.label ?: current.scopeLabel
+                    },
+                    selectedIndices = current.selectedIndices
+                        .filterTo(linkedSetOf()) { it in validated.accepted.indices },
+                )
+
+                if (rememberForSimilarFiles) {
+                    learnableFilenameTerm(affectedSourceNames)?.let { term ->
+                        settingsRepository.addCorrectionRule(term, targetGroup)
+                    }
+                }
+            } catch (t: Throwable) {
+                _error.value = t.message ?: t.javaClass.simpleName
+            }
+        }
+    }
+
+    private fun rebasePlannedDestination(
+        ref: FileRef,
+        oldBase: FileRef.Child,
+        newBase: FileRef.Child,
+    ): FileRef {
+        if (ref.rawValue() == oldBase.rawValue()) return newBase
+        if (ref !is FileRef.Child) return ref
+        val parent = rebasePlannedDestination(ref.parent, oldBase, newBase)
+        return if (parent == ref.parent) ref else FileRef.Child(parent, ref.name)
     }
 
     fun editPlanDestinationGroup(
