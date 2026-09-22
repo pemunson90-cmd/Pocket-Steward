@@ -7,6 +7,7 @@ import com.pocketsteward.app.data.db.TaskJournalProgress
 import com.pocketsteward.app.data.db.TaskRun
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.settings.SettingsRepository
+import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.SavedWorkflow
 import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
@@ -34,6 +35,9 @@ class HomeViewModel(
 
     val savedSearches: StateFlow<List<SavedSearch>> = settingsRepository.savedSearches
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val lastScanSession: StateFlow<LastScanSession?> = settingsRepository.lastScanSession
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val pendingCleanupSuggestion: StateFlow<PendingCleanupSuggestion?> =
         settingsRepository.pendingCleanupSuggestion
