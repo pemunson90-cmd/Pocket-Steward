@@ -126,6 +126,7 @@ class CleanupSuggestionWorker(
         val projectKeywords = container.settingsRepository.projectKeywords.first()
         var newObviousFiles = 0
         var newFiles = 0
+        val newFileRefs = linkedSetOf<String>()
 
         for (root in roots) {
             if (isStopped) return Result.retry()
@@ -148,6 +149,10 @@ class CleanupSuggestionWorker(
             }
             val added = after.filter { it.stableRef !in before && !it.isHidden }
             newFiles += added.size
+            added.asSequence()
+                .map { it.stableRef }
+                .take(MAX_PERSISTED_NEW_REFS - newFileRefs.size)
+                .forEach(newFileRefs::add)
             newObviousFiles += added.count { record ->
                 !RuleEngine.classify(
                     record.displayName,
@@ -164,6 +169,7 @@ class CleanupSuggestionWorker(
                     roots = roots.map { it.rawValue() },
                     newFileCount = newFiles,
                     obviousMatchCount = newObviousFiles,
+                    newFileRefs = newFileRefs.toList(),
                 ),
             )
             postSuggestion(newFiles, newObviousFiles)
@@ -227,5 +233,6 @@ class CleanupSuggestionWorker(
     private companion object {
         const val CHANNEL_ID = "pocket_steward_cleanup_suggestions"
         const val NOTIFICATION_ID = 1401
+        const val MAX_PERSISTED_NEW_REFS = 1_000
     }
 }
