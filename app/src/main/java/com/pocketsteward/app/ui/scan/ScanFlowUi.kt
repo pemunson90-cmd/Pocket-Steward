@@ -215,8 +215,16 @@ fun operationSummary(operation: PlannedOperation): String = when (operation) {
  * showing only the basename made every row in the preview read
  * "X.apk to X.apk" with no way to tell what actually changed.
  */
-fun FileRef.shortPath(): String =
-    rawValue().split('/').filter { it.isNotEmpty() }.takeLast(2).joinToString("/")
+fun FileRef.shortPath(): String = when (this) {
+    is FileRef.Direct ->
+        absolutePath.split('/').filter { it.isNotEmpty() }.takeLast(2).joinToString("/")
+    is FileRef.Saf ->
+        documentUri.substringAfterLast('/').let { android.net.Uri.decode(it) }
+    is FileRef.Child -> {
+        val parentLabel = parent.shortPath().substringAfterLast('/')
+        listOf(parentLabel, name).filter { it.isNotBlank() }.joinToString("/")
+    }
+}
 
 fun formatBytes(bytes: Long): String {
     val units = listOf("B", "KB", "MB", "GB", "TB")
