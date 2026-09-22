@@ -3545,7 +3545,9 @@ class ScanViewModel(
                     acceptedScopeLabels = validated.accepted.map { operation ->
                         scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
                     },
-                    selectedIndices = PlanSelection.allSelected(validated.accepted),
+                    // Destination edits must never silently re-select
+                    // RED operations that were intentionally unchecked.
+                    selectedIndices = PlanSelection.safeSelected(validated.accepted),
                     authorizedDestinationRoots = extraRoots,
                 )
                 if (rememberForSimilarFiles) {
