@@ -2437,35 +2437,6 @@ class ScanViewModel(
             return
         }
 
-        if (summary.mode == StorageAccessMode.SAF) {
-            val records = filesForScopes(summary.scopes).filter { record ->
-                !record.isDirectory &&
-                    (requestedCategories.isEmpty() ||
-                        classifyByExtension(record.extension) in requestedCategories)
-            }
-            val inspector = container.contentInspector(StorageAccessMode.SAF)
-            val result = withContext(Dispatchers.IO) {
-                inspector.search(records, query) { processed, total ->
-                    _uiState.value = ScanUiState.Working(
-                        label = "Searching selected-folder contents",
-                        detail = "Read-only local inspection",
-                        processed = processed,
-                        total = total,
-                    )
-                }
-            }
-            _uiState.value = ScanUiState.ContentSearchReview(
-                title = "Content matches for “$query”",
-                query = query,
-                matches = result.matches,
-                inspectedFiles = result.inspectedFiles,
-                unsupportedFiles = result.unsupportedFiles,
-                failedFiles = result.failedFiles,
-                truncatedResults = result.truncatedResults,
-            )
-            return
-        }
-
         val roots = summary.scopes.map { it.root.rawValue().trimEnd('/') }.distinct()
         val records = filesForScopes(summary.scopes)
         val candidates = records.mapNotNull { record ->
@@ -2532,6 +2503,7 @@ class ScanViewModel(
         watchIndexedSearch(
             query = query,
             roots = roots,
+            mode = summary.mode,
             savedSearchId = savedSearchId,
         )
     }
@@ -2539,11 +2511,12 @@ class ScanViewModel(
     private fun watchIndexedSearch(
         query: String,
         roots: List<String>,
+        mode: StorageAccessMode,
         savedSearchId: String?,
     ) {
         indexSearchWatchJob?.cancel()
         indexSearchWatchJob = viewModelScope.launch {
-            val repository = container.contentIndexRepository(StorageAccessMode.DIRECT)
+            val repository = container.contentIndexRepository(mode)
             while (true) {
                 delay(1_000)
 
