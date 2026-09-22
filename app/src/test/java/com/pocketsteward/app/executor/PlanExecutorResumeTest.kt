@@ -328,6 +328,14 @@ class PlanExecutorResumeTest {
         override suspend fun getByStableRef(stableRef: String): FileRecord? =
             records[stableRef]
 
+        override suspend fun updateQuickFingerprint(stableRef: String, value: String) {
+            records[stableRef]?.let { records[stableRef] = it.copy(quickFingerprint = value) }
+        }
+
+        override suspend fun updateSha256(stableRef: String, value: String) {
+            records[stableRef]?.let { records[stableRef] = it.copy(sha256 = value) }
+        }
+
         override suspend fun deleteByStableRef(stableRef: String) {
             records.remove(stableRef)
             scopes.removeAll { it.fileRef == stableRef }
