@@ -89,6 +89,7 @@ import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.child
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -2664,20 +2665,40 @@ class ScanViewModel(
                             IntentAction.MOVE,
                             IntentAction.COPY,
                             -> {
-                                if (summary.mode != StorageAccessMode.DIRECT ||
-                                    summary.scopes.any { it.root !is FileRef.Direct }
-                                ) {
-                                    _uiState.value = ScanUiState.Error(
-                                        "Move and copy requests currently require full file-manager access.",
-                                    )
-                                    return@launch
-                                }
-
                                 val destinationText = intent.destinationFolder
                                     ?: run {
                                         _uiState.value = ScanUiState.Error("Choose a destination folder.")
                                         return@launch
                                     }
+
+                                if (summary.mode == StorageAccessMode.SAF) {
+                                    val transfer = prepareSafTransfer(
+                                        summary = summary,
+                                        intent = intent,
+                                        destinationText = destinationText,
+                                    )
+                                    if (transfer.operations.isEmpty()) {
+                                        _uiState.value = ScanUiState.Error(
+                                            "The request was understood, but no matching files were found.",
+                                        )
+                                        return@launch
+                                    }
+                                    showPlanPreview(
+                                        goal = intent.rawRequest,
+                                        operations = transfer.operations,
+                                        scopes = summary.scopes,
+                                        scopeNotes = listOf(
+                                            "Selected-tree destination: ${transfer.destinationLabel}",
+                                            if (intent.action == IntentAction.COPY) {
+                                                "Copy keeps the original file in place. Undo quarantines only the created copy."
+                                            } else {
+                                                "Move removes the original only after the copied destination is verified."
+                                            },
+                                        ),
+                                    )
+                                    return@launch
+                                }
+
                                 val transfer = prepareExplicitTransfer(
                                     summary = summary,
                                     intent = intent,
@@ -2836,6 +2857,90 @@ class ScanViewModel(
         val authorizedRoot: FileRef.Direct,
         val destinationDirectory: FileRef.Direct,
     )
+
+    private data class PreparedSafTransfer(
+        val operations: List<PlannedOperation>,
+        val destinationLabel: String,
+    )
+
+    private suspend fun prepareSafTransfer(
+        summary: ScanUiState.Summary,
+        intent: BoundedIntent,
+        destinationText: String,
+    ): PreparedSafTransfer {
+        require(summary.mode == StorageAccessMode.SAF) {
+            "Selected-tree transfer helper requires SAF mode."
+        }
+        val root = summary.scopes.singleOrNull()?.root
+            ?: error("Selected-folder mode must have exactly one granted tree.")
+
+        val raw = destinationText.trim().trim('/')
+        require(raw.isNotBlank() && !raw.startsWith("content:", ignoreCase = true)) {
+            "Choose a folder inside the selected tree, for example \"Archive\" or \"Projects/NSTL\"."
+        }
+        val segments = raw.split('/')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        require(segments.isNotEmpty() && segments.none {
+            it == "." || it == ".." || '\\' in it || it.any(Char::isISOControl)
+        }) {
+            "Destination contains an unsafe folder segment."
+        }
+
+        val createOperations = mutableListOf<PlannedOperation>()
+        var parent: FileRef = root
+        for (segment in segments) {
+            createOperations += PlannedOperation.CreateDirectory(
+                parent = parent,
+                name = segment,
+                reason = "Destination inside the selected Android document tree",
+            )
+            parent = parent.child(segment)
+        }
+        val destinationDirectory = parent
+
+        val rootRaw = root.rawValue().trimEnd('/')
+        val records = filesForScopes(summary.scopes)
+            .asSequence()
+            .filter { !it.isDirectory }
+            .filter { record ->
+                intent.includeSubfolders ||
+                    record.parentRef?.trimEnd('/') == rootRaw
+            }
+            .filter { record ->
+                intent.categories.isEmpty() ||
+                    classifyByExtension(record.extension) in intent.categories
+            }
+            .filter { record ->
+                intent.findTerm.isNullOrBlank() ||
+                    record.displayName.contains(intent.findTerm, ignoreCase = true)
+            }
+            .toList()
+
+        val matching = applyIntentCriteria(records, intent)
+        val transferOperations = matching.map { record ->
+            val source = parseFileRef(record.stableRef)
+            val destination = destinationDirectory.child(record.displayName)
+            when (intent.action) {
+                IntentAction.MOVE -> PlannedOperation.Move(
+                    source = source,
+                    destination = destination,
+                    reason = "Explicit natural-language move inside selected tree",
+                )
+                IntentAction.COPY -> PlannedOperation.Copy(
+                    source = source,
+                    destination = destination,
+                    reason = "Explicit natural-language copy inside selected tree",
+                )
+                else -> error("SAF transfer helper called for ${intent.action}.")
+            }
+        }
+
+        return PreparedSafTransfer(
+            operations = createOperations + transferOperations,
+            destinationLabel = segments.joinToString("/"),
+        )
+    }
 
     private suspend fun prepareExplicitTransfer(
         summary: ScanUiState.Summary,
