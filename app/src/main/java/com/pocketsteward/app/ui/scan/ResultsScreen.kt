@@ -49,7 +49,8 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
             return@ScanFlowScaffold
         }
 
-        val canChangeFiles = state.mode == StorageAccessMode.DIRECT
+        val hasBroadAccess = state.mode == StorageAccessMode.DIRECT
+        val canOrganizeFiles = true
 
         Column(modifier = contentModifier.fillMaxWidth()) {
             ScreenHeadline(
@@ -104,11 +105,12 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     }
                 }
 
-                if (!canChangeFiles) {
+                if (!hasBroadAccess) {
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "This access mode allows browsing and read-only analysis. Change storage access in Settings to organize, move, trash, or export files.",
+                                "Selected-folder mode can organize, rename, copy, quarantine, and undo inside this granted tree. " +
+                                    "Destinations outside the tree still require full file-manager access.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.base),
                             )
@@ -141,7 +143,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
 
-                if (canChangeFiles) {
+                if (hasBroadAccess) {
                     item { SectionHeader("Save this setup") }
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
@@ -178,7 +180,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     }
                 }
 
-                if (canChangeFiles) {
+                if (canOrganizeFiles) {
                     item { SectionHeader("Organize") }
                     item {
                         ActionCard(
@@ -214,7 +216,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 item {
                     ActionCard(
                         title = "Duplicates",
-                        supporting = if (canChangeFiles) {
+                        supporting = if (hasBroadAccess) {
                             "Find byte-identical copies and choose what to keep."
                         } else {
                             "Find byte-identical copies by SHA-256. Review is read-only in this access mode."
@@ -285,7 +287,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 item {
                     ActionCard(
                         title = "Document audit",
-                        supporting = if (canChangeFiles) {
+                        supporting = if (hasBroadAccess) {
                             "Analyze a representative document sample with local extraction and on-device intelligence, then optionally build a reviewed organization proposal."
                         } else {
                             "Analyze a representative document sample locally. Findings are read-only in selected-folder mode."
@@ -294,7 +296,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     )
                 }
 
-                if (canChangeFiles) {
+                if (hasBroadAccess) {
                     item { SectionHeader("Protect") }
                     item {
                         ActionCard(
