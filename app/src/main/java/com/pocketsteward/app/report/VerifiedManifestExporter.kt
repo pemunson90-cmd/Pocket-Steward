@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets
 object VerifiedTextExporter {
     suspend fun export(
         gateway: StorageGateway,
-        parent: FileRef.Direct,
+        parent: FileRef,
         finalName: String,
         content: String,
     ): ExportResult {
@@ -75,7 +75,7 @@ object VerifiedTextExporter {
 object VerifiedManifestExporter {
     suspend fun export(
         gateway: StorageGateway,
-        parent: FileRef.Direct,
+        parent: FileRef,
         document: TaskManifestDocument,
         exportedAtEpochMs: Long = System.currentTimeMillis(),
         format: ManifestFormat = ManifestFormat.MARKDOWN,
