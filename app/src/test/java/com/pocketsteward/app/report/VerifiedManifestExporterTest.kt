@@ -8,6 +8,7 @@ import com.pocketsteward.app.storage.MutationResult
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.child
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import org.junit.Test
@@ -134,6 +135,7 @@ class VerifiedManifestExporterTest {
             val destination = when (source) {
                 is FileRef.Direct -> FileRef.Direct("$parentPath/$newName")
                 is FileRef.Saf -> FileRef.Saf("$parentPath/$newName")
+                is FileRef.Child -> source.parent.child(newName)
             }
             val bytes = files.remove(sourcePath) ?: return MutationResult.Failure("missing")
             files[destination.rawValue()] = if (corruptOnRename) "bad".toByteArray() else bytes
@@ -151,9 +153,7 @@ class VerifiedManifestExporterTest {
         override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult =
             MutationResult.Success(ref, changed = false)
 
-        private fun child(parent: FileRef, name: String): FileRef = when (parent) {
-            is FileRef.Direct -> FileRef.Direct(parent.absolutePath.trimEnd('/') + "/" + name)
-            is FileRef.Saf -> FileRef.Saf(parent.documentUri.trimEnd('/') + "/" + name)
-        }
+        private fun child(parent: FileRef, name: String): FileRef =
+            parent.child(name)
     }
 }
