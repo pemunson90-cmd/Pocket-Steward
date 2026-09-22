@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,12 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
     var workflowName by rememberSaveable { mutableStateOf("") }
 
     val state = summary
+    LaunchedEffect(state) {
+        if (state == null) {
+            viewModel.restoreLastScanSummaryIfAvailable()
+        }
+    }
+
     ScanFlowScaffold(
         title = "Explore",
         onBack = onBack,
@@ -45,7 +52,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
         busy = busy,
     ) { contentModifier ->
         if (state == null) {
-            EmptyState("Nothing scanned yet.", contentModifier)
+            EmptyState("Restoring the previous scan…", contentModifier)
             return@ScanFlowScaffold
         }
 
