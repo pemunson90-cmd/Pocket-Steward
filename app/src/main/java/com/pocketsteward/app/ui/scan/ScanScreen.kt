@@ -39,6 +39,7 @@ fun ScanScreen(
     autoSavedSearchId: String?,
     autoImportedPlanPath: String?,
     autoScheduledReview: Boolean,
+    autoRestoreLast: Boolean,
     onOpenPicker: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -49,9 +50,19 @@ fun ScanScreen(
     val recents by viewModel.recentFolders.collectAsState()
     val selectedTargets by viewModel.selectedTargets.collectAsState()
 
-    LaunchedEffect(autoAction, autoRequest, autoWorkflowId, autoSavedSearchId, autoImportedPlanPath, autoScheduledReview, accessState) {
+    LaunchedEffect(
+        autoAction,
+        autoRequest,
+        autoWorkflowId,
+        autoSavedSearchId,
+        autoImportedPlanPath,
+        autoScheduledReview,
+        autoRestoreLast,
+        accessState,
+    ) {
         if (accessState?.mode != null) {
             when {
+                autoRestoreLast -> viewModel.startLastScanSession()
                 autoScheduledReview -> viewModel.startScheduledSuggestion()
                 !autoImportedPlanPath.isNullOrBlank() -> viewModel.startImportedReviewedPlan(autoImportedPlanPath)
                 !autoSavedSearchId.isNullOrBlank() -> viewModel.startSavedSearch(autoSavedSearchId)
