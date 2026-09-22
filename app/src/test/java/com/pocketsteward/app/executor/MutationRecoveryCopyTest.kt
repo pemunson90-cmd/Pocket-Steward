@@ -167,6 +167,20 @@ class MutationRecoveryCopyTest {
         override suspend fun getRunning(): List<TaskRun> =
             listOf(current).filter { it.status == TaskRunStatus.RUNNING }
 
+        override suspend fun markRunningPaused(
+            id: Long,
+            completedAt: Long,
+            summary: String,
+        ): Int {
+            if (current.id != id || current.status != TaskRunStatus.RUNNING) return 0
+            current = current.copy(
+                status = TaskRunStatus.CANCELLED,
+                completedAt = completedAt,
+                summary = summary,
+            )
+            return 1
+        }
+
         override suspend fun getRunsNeedingRecovery(): List<TaskRun> =
             listOf(current).filter {
                 it.status in setOf(
