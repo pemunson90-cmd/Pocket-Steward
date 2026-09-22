@@ -137,6 +137,61 @@ class V1FilesystemRoundTripTest {
         )
     }
 
+    @Test
+    fun sourceChangedAfterApprovalFailsClosedBeforeFilesystemMutation() = runBlocking {
+        val source = File(root, "mutable.txt").apply { writeText("approved") }
+        val destinationDirectory = File(root, "Documents").apply { mkdirs() }
+        val destination = File(destinationDirectory, source.name)
+
+        val sourceRef = FileRef.Direct(source.absolutePath)
+        val destinationRef = FileRef.Direct(destination.absolutePath)
+        val records = listOf(
+            record(root, parent = root.parentFile),
+            record(source, parent = root),
+            record(destinationDirectory, parent = root),
+        )
+        val fileDao = database.fileRecordDao()
+        records.forEach { record ->
+            fileDao.upsert(record)
+            fileDao.insertScopeTag(FileScope(record.stableRef, root.absolutePath))
+        }
+
+        val operation = PlannedOperation.Move(
+            source = sourceRef,
+            destination = destinationRef,
+            reason = "approval precondition acceptance test",
+        )
+        val executor = PlanExecutor(
+            gateway = gateway,
+            fileRecordDao = fileDao,
+            taskRunDao = database.taskRunDao(),
+            mutationRecordDao = database.mutationRecordDao(),
+        )
+
+        val taskRunId = executor.enqueueApproved(
+            plan = AgentPlan("Move only if unchanged", listOf(operation)),
+            scopeRootRef = root.absolutePath,
+            storageAccessMode = StorageAccessMode.DIRECT,
+            index = InMemoryFileIndex(records),
+        )
+
+        // Simulate another app/user editing the source after approval but
+        // before the durable runner gets CPU time.
+        source.writeText("changed after approval and intentionally longer")
+
+        val summary = executor.resume(taskRunId)
+
+        assertEquals(0, summary.filesMoved)
+        assertEquals(1, summary.failed)
+        assertTrue(source.isFile)
+        assertFalse(destination.exists())
+        assertTrue(summary.failures.single().reason.contains("changed after approval"))
+        assertEquals(
+            TaskRunStatus.FAILED,
+            database.taskRunDao().getById(taskRunId)?.status,
+        )
+    }
+
     private fun record(file: File, parent: File?): FileRecord = FileRecord(
         stableRef = file.absolutePath,
         displayName = file.name,
