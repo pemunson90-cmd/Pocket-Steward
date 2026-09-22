@@ -2742,13 +2742,53 @@ class ScanViewModel(
         }
     }
 
-    fun handleNaturalLanguage(summary: ScanUiState.Summary, request: String) {
+    fun handleNaturalLanguage(
+        summary: ScanUiState.Summary,
+        request: String,
+        allowModelFallback: Boolean = true,
+    ) {
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Understanding request", "Offline deterministic parser")
             try {
                 when (val parsed = DeterministicIntentParser.parse(request, lastBoundedIntent)) {
                     is IntentParseResult.Unsupported -> {
-                        _uiState.value = ScanUiState.Error(parsed.reason)
+                        if (!allowModelFallback) {
+                            _uiState.value = ScanUiState.Error(parsed.reason)
+                            return@launch
+                        }
+
+                        val privacy = settingsRepository.privacySettings.first()
+                        if (!privacy.onDeviceAiEnabled ||
+                            container.agentModel.availability() != AgentModelAvailability.AVAILABLE
+                        ) {
+                            _uiState.value = ScanUiState.Error(
+                                parsed.reason +
+                                    " Enable on-device intelligence in Settings for a local language fallback.",
+                            )
+                            return@launch
+                        }
+
+                        _uiState.value = ScanUiState.Working(
+                            "Understanding request",
+                            "Trying the on-device language model, then re-validating with the deterministic parser",
+                        )
+                        val normalized = container.agentModel.normalizeIntentRequest(request)
+                        if (normalized.isNullOrBlank()) {
+                            _uiState.value = ScanUiState.Error(
+                                parsed.reason + " The on-device model could not translate it safely either.",
+                            )
+                            return@launch
+                        }
+
+                        // The model gets no filesystem authority. Its output
+                        // re-enters this function once with model fallback
+                        // disabled, so only DeterministicIntentParser can
+                        // produce the typed BoundedIntent used below.
+                        handleNaturalLanguage(
+                            summary = summary,
+                            request = normalized,
+                            allowModelFallback = false,
+                        )
                     }
 
                     is IntentParseResult.Parsed -> {
