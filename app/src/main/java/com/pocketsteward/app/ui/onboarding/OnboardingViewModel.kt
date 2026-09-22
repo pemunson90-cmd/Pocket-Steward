@@ -20,4 +20,10 @@ class OnboardingViewModel(private val settingsRepository: SettingsRepository) : 
             settingsRepository.setStorageAccessMode(StorageAccessMode.SAF)
         }
     }
+
+    fun onStorageAccessInvalid() {
+        viewModelScope.launch {
+            settingsRepository.clearStorageAccessChoice()
+        }
+    }
 }
