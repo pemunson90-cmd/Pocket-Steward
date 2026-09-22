@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
         val afterOnboarding = when (intent?.data?.host?.lowercase()) {
             "explore", "search" -> Routes.SCAN_FLOW
             "tasks" -> Routes.HISTORY
+            "scheduled" -> Routes.scanFlowScheduledReview()
             else -> Routes.HOME
         }
         setContent {
