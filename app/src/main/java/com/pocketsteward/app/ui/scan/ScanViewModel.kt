@@ -1493,14 +1493,9 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning cleanup", "Classifying files under ${summary.scopeLabel}")
             try {
-                if (summary.scopes.any { it.root !is FileRef.Direct }) {
-                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                    return@launch
-                }
-
                 val projectKeywords = settingsRepository.projectKeywords.first()
                 val generatedByScope = summary.scopes.map { scope ->
-                    val root = scope.root as FileRef.Direct
+                    val root = scope.root
                     val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
                     val generated = withContext(Dispatchers.Default) {
                         RuleBasedPlanSource.proposePlan(
@@ -1834,10 +1829,12 @@ class ScanViewModel(
         scopeNotes: List<String> = emptyList(),
         authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
     ) {
+        val mode = settingsRepository.storageAccessState.first().mode
+            ?: error("No storage access mode is active.")
         val index = buildAuthorizedPlanIndex(
             scopes = scopes,
             destinationRoots = authorizedDestinationRoots,
-            mode = StorageAccessMode.DIRECT,
+            mode = mode,
         )
         val validated = PlanValidator.validate(operations, index)
         _uiState.value = ScanUiState.PlanPreview(
@@ -1964,12 +1961,6 @@ class ScanViewModel(
         viewModelScope.launch {
             _uiState.value = ScanUiState.Working("Planning", "Building the trash plan")
             try {
-                if (review.scopes.any { it.root !is FileRef.Direct }) {
-                    _uiState.value = ScanUiState.Error(
-                        "Duplicate review works with selected-folder access, but moving extra copies to Trash requires full file-manager access.",
-                    )
-                    return@launch
-                }
                 // `extras` is every copy except the keeper, and the keeper was
                 // chosen deterministically by KeeperSelector when the group was
                 // built — not "whichever one came back first", which used to
@@ -2695,11 +2686,6 @@ class ScanViewModel(
                             }
 
                             IntentAction.RENAME -> {
-                                if (summary.mode != StorageAccessMode.DIRECT) {
-                                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                                    return@launch
-                                }
-
                                 val batchTerm = intent.renameMatchTerm
                                 val batchTemplate = intent.renameTemplate
                                 if (batchTerm != null && batchTemplate != null) {
@@ -2782,16 +2768,9 @@ class ScanViewModel(
                             IntentAction.GROUP,
                             IntentAction.ARCHIVE,
                             -> {
-                                if (summary.mode != StorageAccessMode.DIRECT ||
-                                    summary.scopes.any { it.root !is FileRef.Direct }
-                                ) {
-                                    _uiState.value = ScanUiState.Error(SAF_UNSUPPORTED)
-                                    return@launch
-                                }
-
                                 val projectKeywords = settingsRepository.projectKeywords.first()
                                 val generatedByScope = summary.scopes.map { scope ->
-                                    val root = scope.root as FileRef.Direct
+                                    val root = scope.root
                                     val records = container.database.fileRecordDao()
                                         .getFilesUnderScopeRoot(root.rawValue())
                                     scope to IntentPlanGenerator.generate(
@@ -3477,8 +3456,8 @@ class ScanViewModel(
          * deliberately fenced, so every path that changes files says the same thing.
          */
         const val SAF_UNSUPPORTED =
-            "This changes files and needs full file-manager access. In selected-folder mode Pocket Steward can " +
-                "scan, browse, hash, search contents, and run read-only analysis, but it won't move, rename, copy, trash, or write files."
+            "This action needs a filesystem path outside the selected Android document tree. " +
+                "Within the granted tree Pocket Steward can now organize, rename, copy, move, quarantine, undo, hash, and inspect files."
 
         const val COHERENCE_EXCERPT_CHARS = 1_800
         const val COHERENCE_BATCH_SIZE = 12
