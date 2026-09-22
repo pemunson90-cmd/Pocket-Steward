@@ -65,7 +65,11 @@ class FileScanner(
             queue.addAll(FileRefCodec.decodeList(resumable.pendingDirectoriesJson))
             processedCount = resumable.processedCount
         } else {
-            fileRecordDao.clearScopeRoot(scopeKey)
+            // Keep the previous scope snapshot while the new walk is in
+            // progress. Every file we actually see gets lastScannedAt >=
+            // startedAt. Only after a fully completed walk do we remove scope
+            // tags whose records were not seen this time. A cancelled/crashed
+            // scan therefore never destroys the last known-good inventory.
             // The walk below only ever indexes *children* it discovers via
             // listChildren — the root itself was never getting a FileRecord
             // of its own. That left a real blind spot: PlanValidator checks
@@ -77,7 +81,7 @@ class FileScanner(
             // this scope) closes that for every future check against it,
             // not just this one plan.
             val rootRecord = gateway.stat(root).toFileRecord(parent = null)
-            fileRecordDao.upsert(rootRecord)
+            fileRecordDao.upsertFromScan(rootRecord)
             fileRecordDao.insertScopeTag(FileScope(rootRecord.stableRef, scopeKey))
             queue.add(root)
             processedCount = 0
@@ -96,7 +100,7 @@ class FileScanner(
                     meta.toFileRecord(parent = directory)
                 }
                 if (batch.isNotEmpty()) {
-                    fileRecordDao.upsertAll(batch)
+                    fileRecordDao.upsertAllFromScan(batch)
                     fileRecordDao.insertScopeTags(batch.map { FileScope(it.stableRef, scopeKey) })
                 }
                 processedCount += batch.size
@@ -104,6 +108,14 @@ class FileScanner(
                 persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
                 onProgress(ScanProgress(processedCount, directory.rawValue(), ScanPhase.SCANNING))
             }
+
+            // All records seen in this scan carry a lastScannedAt at or
+            // after startedAt, including records processed before a pause and
+            // then resumed from the durable queue. Anything older was not
+            // observed by the completed walk and can now be detached from
+            // this scope without touching records shared by another scope.
+            fileRecordDao.removeStaleScopeTags(scopeKey, startedAt)
+            fileRecordDao.deleteOrphanedFiles()
 
             persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.COMPLETED, startedAt)
             onProgress(ScanProgress(processedCount, null, ScanPhase.COMPLETED))
