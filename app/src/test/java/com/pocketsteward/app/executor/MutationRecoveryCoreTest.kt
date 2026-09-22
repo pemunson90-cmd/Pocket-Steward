@@ -22,6 +22,7 @@ import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -88,12 +89,36 @@ class MutationRecoveryCoreTest {
     fun interruptedWrite_destinationExists_recoversCommitted() = runTest {
         val operation = PlannedOperation.WriteTextFile(parent, "generated.txt", "hello", "write")
         val record = pending(operation, MutationOperationType.WRITE_TEXT_FILE, parent, written)
-        val harness = harness(operation, record, setOf(parent, written))
+            .copy(sourceFingerprint = fingerprint("hello".toByteArray()))
+        val harness = harness(
+            operation,
+            record,
+            setOf(parent, written),
+            bytesByRef = mapOf(written to "hello".toByteArray()),
+        )
 
         harness.recover()
 
         assertThat(harness.record.status).isEqualTo(MutationStatus.COMMITTED)
         assertThat(harness.record.undoState).isEqualTo(UndoState.AVAILABLE)
+    }
+
+    @Test
+    fun interruptedWrite_wrongBytes_requiresReview() = runTest {
+        val operation = PlannedOperation.WriteTextFile(parent, "generated.txt", "hello", "write")
+        val record = pending(operation, MutationOperationType.WRITE_TEXT_FILE, parent, written)
+            .copy(sourceFingerprint = fingerprint("hello".toByteArray()))
+        val harness = harness(
+            operation,
+            record,
+            setOf(parent, written),
+            bytesByRef = mapOf(written to "partial".toByteArray()),
+        )
+
+        harness.recover()
+
+        assertThat(harness.record.status).isEqualTo(MutationStatus.NEEDS_REVIEW)
+        assertThat(harness.record.undoState).isEqualTo(UndoState.BLOCKED)
     }
 
     @Test
@@ -180,6 +205,11 @@ class MutationRecoveryCoreTest {
         assertThat(harness.task.status).isEqualTo(TaskRunStatus.UNDO_PARTIAL)
     }
 
+    private fun fingerprint(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+
     private fun pending(
         operation: PlannedOperation,
         type: MutationOperationType,
@@ -206,6 +236,7 @@ class MutationRecoveryCoreTest {
         record: MutationRecord,
         existing: Set<FileRef>,
         status: TaskRunStatus = TaskRunStatus.RUNNING,
+        bytesByRef: Map<FileRef, ByteArray> = emptyMap(),
     ): Harness {
         val task = TaskRun(
             id = 7,
@@ -223,7 +254,7 @@ class MutationRecoveryCoreTest {
         return Harness(
             FakeTaskRunDao(task),
             FakeMutationDao(record),
-            FakeGateway(existing),
+            FakeGateway(existing, bytesByRef),
         )
     }
 
@@ -307,6 +338,7 @@ class MutationRecoveryCoreTest {
 
     private class FakeGateway(
         private val existing: Set<FileRef>,
+        private val bytesByRef: Map<FileRef, ByteArray> = emptyMap(),
     ) : StorageGateway {
         override suspend fun rootOf(scope: StorageScope): FileRef = FileRef.Direct("/")
         override suspend fun listChildren(directory: FileRef): List<FileEntry> = emptyList()
@@ -324,7 +356,8 @@ class MutationRecoveryCoreTest {
         )
 
         override suspend fun exists(ref: FileRef): Boolean = ref in existing
-        override suspend fun openRead(ref: FileRef): InputStream = ByteArrayInputStream(byteArrayOf(1))
+        override suspend fun openRead(ref: FileRef): InputStream =
+            ByteArrayInputStream(bytesByRef[ref] ?: byteArrayOf(1))
         override suspend fun createDirectory(parent: FileRef, name: String): MutationResult = error("not used")
         override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult = error("not used")
         override suspend fun copy(source: FileRef, destination: FileRef): MutationResult = error("not used")
