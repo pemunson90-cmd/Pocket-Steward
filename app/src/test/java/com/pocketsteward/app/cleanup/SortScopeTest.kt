@@ -175,4 +175,47 @@ class CleanupScopeReportTest {
             "1 file left alone inside existing folders",
         ).inOrder()
     }
+    @Test
+    fun protectedAncestorUsesParentGraphWhenRefsAreOpaque() {
+        val root = "content://provider/tree/root/document/root"
+        val protected = "content://provider/tree/root/document/id-A"
+        val nested = "content://provider/tree/root/document/id-B"
+        val file = "content://provider/tree/root/document/id-C"
+        val candidates = listOf(
+            SortCandidate(
+                stableRef = protected,
+                parentRef = root,
+                displayName = "Project",
+                isDirectory = true,
+            ),
+            SortCandidate(
+                stableRef = "content://provider/tree/root/document/marker",
+                parentRef = protected,
+                displayName = DO_NOT_SORT_MARKER,
+                isDirectory = false,
+            ),
+            SortCandidate(
+                stableRef = nested,
+                parentRef = protected,
+                displayName = "Nested",
+                isDirectory = true,
+            ),
+            SortCandidate(
+                stableRef = file,
+                parentRef = nested,
+                displayName = "notes.md",
+                isDirectory = false,
+            ),
+        )
+
+        val partition = SortScope.partition(
+            candidates = candidates,
+            scopeRoot = root,
+            includeSubfolders = true,
+        )
+
+        assertThat(partition.sortable.map { it.stableRef }).doesNotContain(file)
+        assertThat(partition.skippedByProtection).isEqualTo(1)
+    }
+
 }
