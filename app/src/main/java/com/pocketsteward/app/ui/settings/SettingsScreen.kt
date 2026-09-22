@@ -46,7 +46,11 @@ import com.pocketsteward.app.ai.AgentModelAvailability
 import com.pocketsteward.app.storage.StorageAccessMode
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenTrash: () -> Unit,
+    onChangeStorageAccess: () -> Unit,
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: SettingsViewModel = viewModel(
@@ -147,7 +151,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Button(
-                    onClick = viewModel::clearStorageAccessChoice,
+                    onClick = {
+                        viewModel.clearStorageAccessChoice(onChangeStorageAccess)
+                    },
                     modifier = Modifier.padding(top = 10.dp),
                 ) {
                     Text("Change access")
