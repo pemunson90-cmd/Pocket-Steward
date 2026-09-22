@@ -61,7 +61,12 @@ interface FileRecordDao {
     suspend fun upsertAllFromScan(records: List<FileRecord>): List<Long> {
         if (records.isEmpty()) return emptyList()
 
-        val existingByRef = getByStableRefs(records.map { it.stableRef })
+        // Keep each IN() below conservative SQLite bind limits. A flat
+        // Downloads directory can easily contain thousands of files.
+        val existingByRef = records
+            .map { it.stableRef }
+            .chunked(SCAN_LOOKUP_CHUNK)
+            .flatMap { refs -> getByStableRefs(refs) }
             .associateBy { it.stableRef }
 
         val updates = mutableListOf<FileRecord>()
@@ -159,4 +164,7 @@ interface FileRecordDao {
 
     @Query("DELETE FROM file_records")
     suspend fun clearAll()
+    companion object {
+        const val SCAN_LOOKUP_CHUNK = 500
+    }
 }
