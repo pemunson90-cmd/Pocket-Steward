@@ -57,6 +57,7 @@ import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.report.ExportResult
 import com.pocketsteward.app.report.InventoryExport
+import com.pocketsteward.app.report.ProblemSetExport
 import com.pocketsteward.app.report.VerifiedTextExporter
 import com.pocketsteward.app.report.duplicateTrashReason
 import com.pocketsteward.app.picker.PickerFolder
@@ -1988,6 +1989,87 @@ class ScanViewModel(
                     return@launch
                 }
                 showPlanPreview("Trash duplicate files under ${review.scopeLabel}", operations, review.scopes)
+            } catch (t: Throwable) {
+                _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun exportProblemSet(summary: ScanUiState.Summary) {
+        viewModelScope.launch {
+            try {
+                val timestamp = System.currentTimeMillis()
+                val written = mutableListOf<String>()
+                val errors = mutableListOf<String>()
+                val gateway = container.gatewayFor(summary.mode)
+                val projectKeywords = settingsRepository.projectKeywords.first()
+
+                for ((scopeIndex, scope) in summary.scopes.withIndex()) {
+                    _uiState.value = ScanUiState.Working(
+                        label = "Exporting unresolved problem set",
+                        detail = scope.label,
+                        processed = scopeIndex,
+                        total = summary.scopes.size,
+                    )
+                    val records = withContext(Dispatchers.IO) {
+                        container.database.fileRecordDao()
+                            .getFilesUnderScopeRoot(scope.root.rawValue())
+                    }
+                    val unresolved = records.filter { record ->
+                        RuleEngine.classify(
+                            record.displayName,
+                            record.extension,
+                            projectKeywords,
+                        ).isUncategorized()
+                    }
+                    if (unresolved.isEmpty()) continue
+
+                    val base = "POCKETSTEWARD-PROBLEM-SET-${timestamp}"
+                    val exports = listOf(
+                        "${base}.md" to ProblemSetExport.markdown(scope.label, unresolved),
+                        "${base}.json" to ProblemSetExport.json(scope.label, unresolved),
+                    )
+                    for ((name, body) in exports) {
+                        when (val result = withContext(Dispatchers.IO) {
+                            VerifiedTextExporter.export(
+                                gateway = gateway,
+                                parent = scope.root,
+                                finalName = name,
+                                content = body,
+                            )
+                        }) {
+                            is ExportResult.Written -> {
+                                written += result.path
+                                if (result.path.startsWith("/")) {
+                                    container.notifyExternalFileCreated(
+                                        result.path,
+                                        if (result.path.endsWith(".json")) {
+                                            "application/json"
+                                        } else {
+                                            "text/markdown"
+                                        },
+                                    )
+                                }
+                            }
+                            is ExportResult.Failed -> {
+                                errors += "${scope.label}: ${name} · ${result.reason}"
+                            }
+                        }
+                    }
+                }
+
+                if (written.isEmpty() && errors.isEmpty()) {
+                    _uiState.value = ScanUiState.Error(
+                        "No unresolved files were found in this scan.",
+                    )
+                    return@launch
+                }
+
+                _uiState.value = ScanUiState.ArtifactExportReview(
+                    title = "Unresolved problem set",
+                    paths = written,
+                    errors = errors,
+                )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
