@@ -39,10 +39,11 @@ object ScanFlow {
     const val ARG_SAVED_SEARCH = "savedSearch"
     const val ARG_IMPORTED_PLAN = "importedPlan"
     const val ARG_SCHEDULED_REVIEW = "scheduledReview"
+    const val ARG_RESTORE_LAST = "restoreLast"
 
     /** Entry route, optionally carrying a Home action, bounded request, or saved workflow id. */
     const val ENTRY =
-        "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}&$ARG_REQUEST={$ARG_REQUEST}&$ARG_WORKFLOW={$ARG_WORKFLOW}&$ARG_SAVED_SEARCH={$ARG_SAVED_SEARCH}&$ARG_IMPORTED_PLAN={$ARG_IMPORTED_PLAN}&$ARG_SCHEDULED_REVIEW={$ARG_SCHEDULED_REVIEW}"
+        "scan_flow/scan?$ARG_ACTION={$ARG_ACTION}&$ARG_REQUEST={$ARG_REQUEST}&$ARG_WORKFLOW={$ARG_WORKFLOW}&$ARG_SAVED_SEARCH={$ARG_SAVED_SEARCH}&$ARG_IMPORTED_PLAN={$ARG_IMPORTED_PLAN}&$ARG_SCHEDULED_REVIEW={$ARG_SCHEDULED_REVIEW}&$ARG_RESTORE_LAST={$ARG_RESTORE_LAST}"
 
     fun entryWith(action: PostScanAction): String = "scan_flow/scan?$ARG_ACTION=${action.name}"
     fun entryWithRequest(request: String): String = "scan_flow/scan?$ARG_REQUEST=${Uri.encode(request)}"
@@ -50,6 +51,7 @@ object ScanFlow {
     fun entryWithSavedSearch(searchId: String): String = "scan_flow/scan?$ARG_SAVED_SEARCH=${Uri.encode(searchId)}"
     fun entryWithImportedPlan(cachePath: String): String = "scan_flow/scan?$ARG_IMPORTED_PLAN=${Uri.encode(cachePath)}"
     fun entryWithScheduledReview(): String = "scan_flow/scan?$ARG_SCHEDULED_REVIEW=1"
+    fun entryWithLastScan(): String = "scan_flow/scan?$ARG_RESTORE_LAST=1"
 }
 
 fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: () -> Unit) {
@@ -87,6 +89,11 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(ScanFlow.ARG_RESTORE_LAST) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             val viewModel = scanViewModel(navController)
@@ -99,6 +106,7 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                 autoSavedSearchId = entry.arguments?.getString(ScanFlow.ARG_SAVED_SEARCH),
                 autoImportedPlanPath = entry.arguments?.getString(ScanFlow.ARG_IMPORTED_PLAN),
                 autoScheduledReview = entry.arguments?.getString(ScanFlow.ARG_SCHEDULED_REVIEW) == "1",
+                autoRestoreLast = entry.arguments?.getString(ScanFlow.ARG_RESTORE_LAST) == "1",
                 onOpenPicker = { viewModel.browseFolders() },
                 onBack = onExitFlow,
             )
