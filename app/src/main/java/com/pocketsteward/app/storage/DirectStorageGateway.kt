@@ -93,7 +93,16 @@ class DirectStorageGateway(
             target.writeText(content)
             MutationResult.Success(FileRef.Direct(target.absolutePath), changed = true)
         } catch (t: Throwable) {
-            MutationResult.Failure(t.message ?: "Failed to write ${target.absolutePath}", t)
+            val removed = !target.exists() || target.delete()
+            MutationResult.Failure(
+                buildString {
+                    append(t.message ?: "Failed to write ${target.absolutePath}")
+                    if (!removed) {
+                        append(". A partial file remains and needs review: ${target.absolutePath}")
+                    }
+                },
+                t,
+            )
         }
     }
 
@@ -217,16 +226,30 @@ class DirectStorageGateway(
             }
 
             if (!sourceFile.delete()) {
-                // Data isn't lost — the verified copy landed — but leaving
-                // the original in place and reporting failure is safer than
-                // pretending a move completed.
+                // Restore the pre-move shape if the provider/filesystem lets
+                // us. A failed move should not silently manufacture a second
+                // durable copy that the journal considers FAILED.
+                val rolledBack = destinationFile.delete()
                 return MutationResult.Failure(
-                    "Copied and verified the destination but could not remove the original: ${sourceFile.absolutePath}",
+                    if (rolledBack) {
+                        "Copied and verified the destination but could not remove the original; the destination copy was removed and the source was kept."
+                    } else {
+                        "Copied and verified the destination but could not remove the original, and the destination copy could not be removed. Both paths now exist and need review."
+                    },
                 )
             }
             MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
         } catch (t: Throwable) {
-            MutationResult.Failure("Copy+verify+delete fallback failed: ${t.message}", t)
+            val removed = !destinationFile.exists() || destinationFile.delete()
+            MutationResult.Failure(
+                buildString {
+                    append("Copy+verify+delete fallback failed: ${t.message}")
+                    if (!removed) {
+                        append(". A destination copy remains and needs review: ${destinationFile.absolutePath}")
+                    }
+                },
+                t,
+            )
         }
     }
 
