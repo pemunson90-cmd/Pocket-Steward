@@ -2,6 +2,8 @@ package com.pocketsteward.app.intent
 
 import com.google.common.truth.Truth.assertThat
 import com.pocketsteward.app.data.db.FileRecord
+import com.pocketsteward.app.executor.InMemoryFileIndex
+import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.FileRef
@@ -46,6 +48,33 @@ class V1AcceptanceIntentTest {
             generated.plan.operations.filterIsInstance<PlannedOperation.CreateDirectory>()
                 .map { it.name },
         ).containsAtLeast("APKs", "Documents", "Images")
+
+        val rootRecord = FileRecord(
+            stableRef = root.absolutePath,
+            displayName = "Download",
+            extension = "",
+            mimeType = null,
+            absolutePathOrUri = root.absolutePath,
+            parentRef = "/storage/emulated/0",
+            sizeBytes = 0,
+            createdAt = null,
+            modifiedAt = 1,
+            lastScannedAt = 1,
+            isDirectory = true,
+            isHidden = false,
+        )
+        val validated = PlanValidator.validate(
+            generated.plan.operations,
+            InMemoryFileIndex(listOf(rootRecord, apk, pdf, image, uncertain)),
+        )
+
+        assertThat(validated.rejected).isEmpty()
+        assertThat(validated.accepted).containsExactlyElementsIn(generated.plan.operations).inOrder()
+        assertThat(
+            validated.accepted
+                .filterIsInstance<PlannedOperation.Move>()
+                .none { it.source == FileRef.Direct(uncertain.stableRef) },
+        ).isTrue()
     }
 
     private fun record(name: String, extension: String) = FileRecord(
