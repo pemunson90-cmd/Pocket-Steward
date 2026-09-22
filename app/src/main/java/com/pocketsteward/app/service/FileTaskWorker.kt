@@ -69,7 +69,7 @@ class FileTaskWorker(
         taskRunId: Long,
         reason: String,
     ): Result {
-        if (runAttemptCount + 1 < MAX_ATTEMPTS) {
+        if (BackgroundWorkPolicy.shouldRetry(runAttemptCount)) {
             return Result.retry()
         }
 
@@ -78,7 +78,7 @@ class FileTaskWorker(
             container.database.taskRunDao().markRunningPaused(
                 id = taskRunId,
                 completedAt = System.currentTimeMillis(),
-                summary = "Paused after $MAX_ATTEMPTS background attempts. $reason Open Tasks to review and resume.",
+                summary = "Paused after ${BackgroundWorkPolicy.MAX_TRANSIENT_ATTEMPTS} background attempts. $reason Open Tasks to review and resume.",
             )
         }
         return Result.failure()
@@ -87,7 +87,6 @@ class FileTaskWorker(
     companion object {
         const val KEY_TASK_RUN_ID = "task_run_id"
         const val WORK_TAG = "pocket-steward-file-task"
-        const val MAX_ATTEMPTS = 3
 
         fun uniqueName(taskRunId: Long): String =
             "pocket-steward-file-task-$taskRunId"
