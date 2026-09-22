@@ -1,6 +1,8 @@
 package com.pocketsteward.app.plan
 
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.child
+import com.pocketsteward.app.storage.knownParentOrNull
 import com.pocketsteward.app.storage.rawValue
 
 data class RejectedOperation(val operation: PlannedOperation, val reason: String)
@@ -82,7 +84,7 @@ object PlanValidator {
             null
         } else {
             index.caseInsensitiveMatch(op.parent, op.name)
-                ?: directRef(op.parent, op.name)?.takeIf { index.exists(it) }
+                ?: childRef(op.parent, op.name)?.takeIf { index.exists(it) }
         }
         // Creating a directory that already exists as a directory is a
         // harmless no-op, not a collision — repeated organize runs need
@@ -141,7 +143,7 @@ object PlanValidator {
         if (op.newName.isBlank()) return "New name is blank."
 
         val parent = parentOf(op.source) ?: return "Cannot determine parent for rename."
-        val destination = directRef(parent, op.newName) ?: op.source
+        val destination = childRef(parent, op.newName) ?: op.source
 
         if (index.caseInsensitiveMatch(parent, op.newName, excluding = op.source) != null) {
             return "A differently-cased entry with that name already exists."
@@ -174,7 +176,7 @@ object PlanValidator {
         if (index.caseInsensitiveMatch(op.parent, op.name) != null) {
             return "A file with that name already exists here."
         }
-        val destination = directRef(op.parent, op.name) ?: return "Cannot determine destination path."
+        val destination = childRef(op.parent, op.name) ?: return "Cannot determine destination path."
         return checkDestinationFree(destination, index, claimedDestinations)
     }
 
@@ -192,19 +194,11 @@ object PlanValidator {
         return null
     }
 
-    /** [name] as a direct child of [parent], only where that's derivable (Direct paths). */
-    private fun directRef(parent: FileRef, name: String): FileRef? = when (parent) {
-        is FileRef.Direct -> FileRef.Direct("${parent.absolutePath.trimEnd('/')}/$name")
-        is FileRef.Saf -> null
-    }
+    private fun childRef(parent: FileRef, name: String): FileRef =
+        parent.child(name)
 
-    private fun parentOf(ref: FileRef): FileRef? = when (ref) {
-        is FileRef.Direct -> {
-            val parentPath = ref.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
-            if (parentPath.isBlank()) null else FileRef.Direct(parentPath)
-        }
-        is FileRef.Saf -> null // Not decomposable from the URI alone.
-    }
+    private fun parentOf(ref: FileRef): FileRef? =
+        ref.knownParentOrNull()
 
     private fun isNestedUnder(candidate: FileRef, ancestor: FileRef): Boolean {
         if (candidate !is FileRef.Direct || ancestor !is FileRef.Direct) return false
@@ -234,11 +228,11 @@ object PlanValidator {
     private fun hasTraversalSegment(value: String): Boolean = value.split('/').any { it == ".." }
 
     private fun destinationOf(operation: PlannedOperation): FileRef? = when (operation) {
-        is PlannedOperation.CreateDirectory -> directRef(operation.parent, operation.name)
+        is PlannedOperation.CreateDirectory -> childRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
         is PlannedOperation.Copy -> operation.destination
-        is PlannedOperation.Rename -> parentOf(operation.source)?.let { directRef(it, operation.newName) }
+        is PlannedOperation.Rename -> parentOf(operation.source)?.let { childRef(it, operation.newName) }
         is PlannedOperation.Trash -> null
-        is PlannedOperation.WriteTextFile -> directRef(operation.parent, operation.name)
+        is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
 }
