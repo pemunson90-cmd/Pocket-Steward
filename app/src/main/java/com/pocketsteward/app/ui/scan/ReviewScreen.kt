@@ -1504,14 +1504,7 @@ private fun ArtifactExportReview(
         }
         items(state.paths, key = { it }) { path ->
             Card(
-                onClick = {
-                    openDirectFile(
-                        context = context,
-                        path = path,
-                        displayName = path.substringAfterLast('/'),
-                        extension = path.substringAfterLast('.', ""),
-                    )
-                },
+                onClick = { ManifestFileActions.open(context, path) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(modifier = Modifier.padding(Spacing.base)) {
