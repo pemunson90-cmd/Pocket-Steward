@@ -41,6 +41,18 @@ data class CoherenceAuditResult(
     val limited: Boolean,
 )
 
+data class FolderProtectionCandidate(
+    val id: String,
+    val displayName: String,
+    val sampleEntries: List<String>,
+)
+
+data class FolderProtectionSuggestion(
+    val id: String,
+    val shouldProtect: Boolean,
+    val reason: String,
+)
+
 interface AgentModel {
     suspend fun availability(): AgentModelAvailability
     fun download(): kotlinx.coroutines.flow.Flow<AgentModelDownloadState>
@@ -48,6 +60,16 @@ interface AgentModel {
         scopeLabel: String,
         documents: List<SemanticDocument>,
     ): CoherenceAuditResult
+
+    /**
+     * Read-only folder-coherence suggestion. The model returns advice only.
+     * A caller that turns a suggestion into a marker file must still build a
+     * PlannedOperation.WriteTextFile and pass validator -> preview -> executor.
+     */
+    suspend fun suggestFolderProtection(
+        scopeLabel: String,
+        folders: List<FolderProtectionCandidate>,
+    ): List<FolderProtectionSuggestion> = emptyList()
 
     /**
      * Optional language-only fallback. The model may rewrite an unsupported
