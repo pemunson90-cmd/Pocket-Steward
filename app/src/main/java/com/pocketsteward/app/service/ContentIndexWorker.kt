@@ -72,7 +72,7 @@ class ContentIndexWorker(
                     repository.markPaused(it, t.message ?: "Background indexing stopped.")
                 }
             }
-            if (runAttemptCount + 1 < MAX_ATTEMPTS) {
+            if (BackgroundWorkPolicy.shouldRetry(runAttemptCount)) {
                 Result.retry()
             } else {
                 Result.failure()
@@ -84,6 +84,5 @@ class ContentIndexWorker(
         const val WORK_TAG = "pocket-steward-content-index"
         const val KEY_ROOTS = "source_roots"
         const val KEY_MODE = "storage_mode"
-        const val MAX_ATTEMPTS = 3
     }
 }
