@@ -17,6 +17,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
 import com.pocketsteward.app.PocketStewardApplication
+import com.pocketsteward.app.navigation.Routes
 
 /**
  * The scan flow as a real back stack.
@@ -131,6 +132,7 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
             ScanFlowNavEffect(navController, viewModel)
             CompletionScreen(
                 viewModel = viewModel,
+                onOpenTasks = { navController.navigate(Routes.HISTORY) },
                 onDone = {
                     // Done means the task is finished with, not that the scan
                     // is. Popping back to the results keeps the index and lets
