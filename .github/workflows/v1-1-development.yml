@@ -77,7 +77,38 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: ./gradlew connectedDebugAndroidTest --stacktrace
+          script: |
+            set -euo pipefail
+            ./gradlew connectedDebugAndroidTest --stacktrace
+
+            # Keep a target APK installed for lifecycle/reboot smoke after the
+            # instrumentation runner has finished.
+            ./gradlew installDebug --stacktrace
+
+            # Background -> foreground must preserve a launchable task.
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell input keyevent KEYCODE_HOME
+            sleep 2
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+
+            # A real emulator reboot exercises manifest boot wiring and cold
+            # startup against the already-created Room/DataStore files.
+            adb reboot
+            adb wait-for-device
+            for i in $(seq 1 90); do
+              if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+                break
+              fi
+              sleep 1
+            done
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+
+            # Capture post-reboot logs so lifecycle failures remain inspectable
+            # even when the UI itself survives.
+            adb logcat -d > app/build/reports/v1-1-post-reboot-logcat.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -85,4 +116,5 @@ jobs:
           path: |
             app/build/reports/androidTests/connected/**
             app/build/outputs/androidTest-results/connected/**
+            app/build/reports/v1-1-post-reboot-logcat.txt
           if-no-files-found: warn
