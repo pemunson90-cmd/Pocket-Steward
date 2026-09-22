@@ -3,6 +3,7 @@ package com.pocketsteward.app.storage
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import java.io.RandomAccessFile
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -139,4 +140,60 @@ class DirectStorageGatewayMutationTest {
         assertTrue(removed is MutationResult.Success)
         assertFalse(dir.exists())
     }
+
+    @Test
+    fun longUnicodeFilenameCanBeWrittenRenamedAndCopiedWithoutTruncation() = runBlocking {
+        val rootRef = FileRef.Direct(root.absolutePath)
+        val longBase = buildString {
+            repeat(18) { append("資料🦇") }
+        }
+        val originalName = "$longBase.txt"
+        val renamedName = "$longBase-renamed.txt"
+
+        val written = gateway.writeTextFile(rootRef, originalName, "long-name")
+        assertTrue(written is MutationResult.Success)
+
+        val renamed = gateway.rename((written as MutationResult.Success).resultRef, renamedName)
+        assertTrue(renamed is MutationResult.Success)
+
+        val copiedPath = File(root, "copies/$renamedName")
+        val copied = gateway.copy(
+            (renamed as MutationResult.Success).resultRef,
+            FileRef.Direct(copiedPath.absolutePath),
+        )
+
+        assertTrue(copied is MutationResult.Success)
+        assertEquals("long-name", copiedPath.readText())
+        assertTrue(File((renamed as MutationResult.Success).resultRef.rawValue()).exists())
+    }
+
+    @Test
+    fun sparseLargeFileCopyPreservesLengthAndBoundaryBytes() = runBlocking {
+        val source = File(root, "sparse-large.bin")
+        RandomAccessFile(source, "rw").use { raf ->
+            raf.write(byteArrayOf(1, 2, 3, 4))
+            raf.setLength(64L * 1024L * 1024L)
+            raf.seek(raf.length() - 4)
+            raf.write(byteArrayOf(5, 6, 7, 8))
+        }
+        val destination = File(root, "copies/sparse-large.bin")
+
+        val result = gateway.copy(
+            FileRef.Direct(source.absolutePath),
+            FileRef.Direct(destination.absolutePath),
+        )
+
+        assertTrue(result is MutationResult.Success)
+        assertEquals(source.length(), destination.length())
+        RandomAccessFile(destination, "r").use { raf ->
+            val first = ByteArray(4)
+            raf.readFully(first)
+            assertEquals(listOf<Byte>(1, 2, 3, 4), first.toList())
+            raf.seek(raf.length() - 4)
+            val last = ByteArray(4)
+            raf.readFully(last)
+            assertEquals(listOf<Byte>(5, 6, 7, 8), last.toList())
+        }
+    }
+
 }
