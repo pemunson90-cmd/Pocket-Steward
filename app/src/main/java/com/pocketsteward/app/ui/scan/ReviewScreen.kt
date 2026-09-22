@@ -12,6 +12,7 @@ import androidx.compose.ui.text.withStyle
 import com.pocketsteward.app.navigation.AdaptiveLayoutPolicy
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -1009,17 +1010,31 @@ private fun openDirectFile(
     displayName: String,
     extension: String,
 ) {
-    val file = File(path)
-    if (!file.exists()) {
-        Toast.makeText(context, "That file is no longer at this path.", Toast.LENGTH_SHORT).show()
-        return
+    val uri = if (path.startsWith("content://")) {
+        Uri.parse(path)
+    } else {
+        val file = File(path)
+        if (!file.exists()) {
+            Toast.makeText(context, "That file is no longer available.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file,
+            )
+        }.getOrElse {
+            Toast.makeText(
+                context,
+                "Pocket Steward could not expose this file to another app.",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
     }
+
     val opened = runCatching {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file,
-        )
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, ContentSearchPresentation.mimeType(extension))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
