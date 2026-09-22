@@ -713,7 +713,7 @@ class PlanExecutor(
         source: FileRef,
         newName: String,
     ): FileRef = when (source) {
-        is FileRef.Direct -> source.child(newName).let {
+        is FileRef.Direct -> {
             val parent = source.knownParentOrNull()
                 ?: error("Cannot determine rename parent.")
             parent.child(newName)
@@ -863,9 +863,10 @@ class PlanExecutor(
                 isHidden = meta.isHidden,
             )
             fileRecordDao.upsert(copied)
+            val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
+            if (newRef is FileRef.Saf) scopes += scopeRootRef
             fileRecordDao.insertScopeTags(
-                matchingScopeRoots(newRef, knownScopes)
-                    .map { FileScope(copied.stableRef, it) },
+                scopes.map { FileScope(copied.stableRef, it) },
             )
             return
         }
@@ -875,9 +876,10 @@ class PlanExecutor(
         ) {
             val record = meta.toFileRecord(destinationParent)
             fileRecordDao.upsert(record)
+            val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
+            if (newRef is FileRef.Saf) scopes += scopeRootRef
             fileRecordDao.insertScopeTags(
-                matchingScopeRoots(newRef, knownScopes)
-                    .map { FileScope(record.stableRef, it) },
+                scopes.map { FileScope(record.stableRef, it) },
             )
             return
         }
@@ -899,9 +901,10 @@ class PlanExecutor(
             isHidden = meta.isHidden,
         )
         fileRecordDao.upsert(moved)
+        val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
+        if (newRef is FileRef.Saf) scopes += scopeRootRef
         fileRecordDao.insertScopeTags(
-            matchingScopeRoots(newRef, knownScopes)
-                .map { FileScope(newRef.rawValue(), it) },
+            scopes.map { FileScope(newRef.rawValue(), it) },
         )
     }
 
