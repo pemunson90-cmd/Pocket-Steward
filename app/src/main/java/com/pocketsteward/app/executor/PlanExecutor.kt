@@ -350,7 +350,9 @@ class PlanExecutor(
         // than incremental, so the next operation corrects it — but if the
         // *last* operation took one of those paths, nothing would. This makes
         // the final number right regardless of which path ended the run.
-        onProgress(validated.accepted.size, validated.accepted.size)
+        if (!needsReview) {
+            onProgress(validated.accepted.size, validated.accepted.size)
+        }
 
         val summary = ExecutionSummary(
             taskRunId = taskRunId,
@@ -683,7 +685,9 @@ class PlanExecutor(
                     "$filesCopied copied, $filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed",
             ),
         )
-        onProgress(operations.size, operations.size)
+        if (!needsReview) {
+            onProgress(operations.size, operations.size)
+        }
         return finishedSummary
     }
 
