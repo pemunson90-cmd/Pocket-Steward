@@ -78,4 +78,51 @@ class DurablePlanCodecTest {
         assertThat(TaskManifest.reasonsBySequence(encoded))
             .containsExactly(0, "because this belongs there")
     }
+    @Test
+    fun sourcePreconditionsRoundTripInVersionTwoPlan() {
+        val operations = listOf(
+            PlannedOperation.Move(
+                FileRef.Direct("/sd/Download/a.txt"),
+                FileRef.Direct("/sd/Documents/a.txt"),
+                "move",
+            ),
+        )
+        val expected = mapOf(
+            0 to SourcePrecondition(
+                sizeBytes = 42L,
+                modifiedAtEpochMs = 123456789L,
+            ),
+        )
+
+        val encoded = DurablePlanCodec.encode("Move safely", operations, expected)
+        val decoded = DurablePlanCodec.decodeOrNull(encoded)
+
+        assertThat(decoded?.sourcePreconditions).isEqualTo(expected)
+        assertThat(decoded?.operations).containsExactlyElementsIn(operations).inOrder()
+    }
+
+    @Test
+    fun versionOneDurablePlanStillDecodesAfterPreconditionsWereAdded() {
+        val operations = listOf(
+            PlannedOperation.Move(
+                FileRef.Direct("/sd/Download/a.txt"),
+                FileRef.Direct("/sd/Documents/a.txt"),
+                "move",
+            ),
+        )
+        val v1 = DurablePlanCodec.encode("Legacy durable", operations)
+            .replace("@psplan\t2", "@psplan\t1")
+
+        val decoded = DurablePlanCodec.decodeOrNull(v1)
+
+        assertThat(decoded).isEqualTo(
+            DurablePlan(
+                goal = "Legacy durable",
+                operations = operations,
+                sourcePreconditions = emptyMap(),
+            ),
+        )
+        assertThat(DurablePlanCodec.isDurable(v1)).isTrue()
+    }
+
 }
