@@ -137,6 +137,68 @@ class SafPlanExecutorRoundTripTest {
     }
 
     @Test
+    fun selectedTree_copyTask_undoPreservesOriginalAndQuarantinesCreatedCopy() = runBlocking {
+        val written = gateway.writeTextFile(root, "original.txt", "copy-me")
+        assertThat(written).isInstanceOf(MutationResult.Success::class.java)
+        val concreteSource = (written as MutationResult.Success).resultRef
+
+        FileScanner(
+            gateway = gateway,
+            fileRecordDao = db.fileRecordDao(),
+            scanCheckpointDao = db.scanCheckpointDao(),
+        ).scan(root)
+
+        val copies = FileRef.Child(root, "Copies")
+        val copiedDestination = FileRef.Child(copies, "original.txt")
+        val executor = PlanExecutor(
+            gateway = gateway,
+            fileRecordDao = db.fileRecordDao(),
+            taskRunDao = db.taskRunDao(),
+            mutationRecordDao = db.mutationRecordDao(),
+        )
+        val summary = executor.execute(
+            plan = AgentPlan(
+                goal = "Copy one selected-tree file",
+                operations = listOf(
+                    PlannedOperation.CreateDirectory(root, "Copies", "copy destination"),
+                    PlannedOperation.Copy(concreteSource, copiedDestination, "selected-tree copy"),
+                ),
+            ),
+            scopeRootRef = root.rawValue(),
+            storageAccessMode = StorageAccessMode.SAF,
+        )
+
+        assertThat(summary.failed).isEqualTo(0)
+        assertThat(summary.filesCopied).isEqualTo(1)
+        assertThat(gateway.exists(concreteSource)).isTrue()
+        assertThat(gateway.exists(copiedDestination)).isTrue()
+        assertThat(readText(copiedDestination)).isEqualTo("copy-me")
+
+        val undo = UndoExecutor(
+            fileRecordDao = db.fileRecordDao(),
+            taskRunDao = db.taskRunDao(),
+            mutationRecordDao = db.mutationRecordDao(),
+            gatewayFor = { gateway },
+        ).undo(summary.taskRunId)
+
+        assertThat(undo.complete).isTrue()
+        assertThat(gateway.exists(FileRef.Child(root, "original.txt"))).isTrue()
+        assertThat(readText(FileRef.Child(root, "original.txt"))).isEqualTo("copy-me")
+        assertThat(gateway.exists(copies)).isFalse()
+
+        val trashRoot = FileRef.Child(FileRef.Child(root, "PocketSteward"), "Trash")
+        assertThat(gateway.exists(trashRoot)).isTrue()
+        val trashedCopies = gateway.listChildren(trashRoot)
+        assertThat(trashedCopies).isNotEmpty()
+        assertThat(
+            trashedCopies.any { entry ->
+                !entry.isDirectory &&
+                    runCatching { readText(entry.ref) }.getOrNull() == "copy-me"
+            },
+        ).isTrue()
+    }
+
+    @Test
     fun selectedTree_trashTask_undoRestoresOriginalFile() = runBlocking {
         val written = gateway.writeTextFile(root, "duplicate.txt", "same-bytes")
         assertThat(written).isInstanceOf(MutationResult.Success::class.java)
