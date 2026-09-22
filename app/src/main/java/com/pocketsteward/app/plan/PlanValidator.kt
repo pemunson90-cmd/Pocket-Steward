@@ -110,7 +110,7 @@ object PlanValidator {
         if (!parentAuthorized) {
             return "Destination parent is outside the indexed/authorized scope."
         }
-        if (index.isDirectory(op.source) && isNestedUnder(op.destination, op.source)) {
+        if (index.isDirectory(op.source) && isNestedUnder(op.destination, op.source, index)) {
             return "Destination is inside the source directory — recursive move."
         }
         return checkDestinationFree(op.destination, index, claimedDestinations)
@@ -202,10 +202,27 @@ object PlanValidator {
     private fun parentOf(ref: FileRef): FileRef? =
         ref.knownParentOrNull()
 
-    private fun isNestedUnder(candidate: FileRef, ancestor: FileRef): Boolean {
-        if (candidate !is FileRef.Direct || ancestor !is FileRef.Direct) return false
-        val ancestorPrefix = ancestor.absolutePath.trimEnd('/') + "/"
-        return candidate.absolutePath.startsWith(ancestorPrefix)
+    private fun isNestedUnder(
+        candidate: FileRef,
+        ancestor: FileRef,
+        index: FileIndex,
+    ): Boolean {
+        if (candidate == ancestor) return true
+
+        if (candidate is FileRef.Direct && ancestor is FileRef.Direct) {
+            val ancestorPrefix = ancestor.absolutePath.trimEnd('/') + "/"
+            return candidate.absolutePath.startsWith(ancestorPrefix)
+        }
+
+        var current: FileRef? = candidate
+        val seen = linkedSetOf<String>()
+        while (current != null) {
+            if (current == ancestor) return true
+            val key = current.rawValue()
+            if (!seen.add(key)) return false
+            current = index.parentOf(current) ?: current.knownParentOrNull()
+        }
+        return false
     }
 
     private fun traversalRejection(operation: PlannedOperation): String? {
