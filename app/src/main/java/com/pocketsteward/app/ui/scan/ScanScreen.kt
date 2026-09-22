@@ -161,9 +161,16 @@ fun ScanScreen(
                 if (recents.isNotEmpty()) {
                     item { SectionHeader("Recent folders") }
                     items(recents) { path ->
-                        val target = ScanTarget.CustomFolder(path)
+                        val target: ScanTarget = if (path.startsWith("content://")) {
+                            ScanTarget.GrantedSubfolder(
+                                documentUri = path,
+                                label = path.substringAfterLast('/').ifBlank { "Selected subfolder" },
+                            )
+                        } else {
+                            ScanTarget.CustomFolder(path)
+                        }
                         ScopeCard(
-                            title = path.substringAfterLast('/').ifBlank { path },
+                            title = target.label,
                             supporting = path,
                             selected = selectedTargets.containsTarget(target),
                             onClick = { viewModel.toggleScanTarget(target) },
