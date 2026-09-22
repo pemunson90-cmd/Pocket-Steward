@@ -18,8 +18,10 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - name: Release build unit suite and lint
-        run: ./gradlew clean assembleRelease testDebugUnitTest lintDebug --stacktrace
+      - name: Debug unit suite and lint
+        run: ./gradlew clean testDebugUnitTest lintDebug --stacktrace
+      - name: Release build after Room schema generation
+        run: ./gradlew assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-steward-1.1.0-rc3-release
