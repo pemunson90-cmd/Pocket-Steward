@@ -1702,16 +1702,16 @@ private fun DuplicateReview(
             items(state.groups, key = { it.sha256 }) { group -> DuplicateGroupCard(group) }
         }
 
-        val canTrash = state.scopes.all { it.root is FileRef.Direct }
         ActionRow {
-            if (canTrash) {
-                Button(onClick = onTrashDuplicates) { Text("Propose trashing extra copies") }
+            Button(onClick = onTrashDuplicates) {
+                Text("Propose trashing extra copies")
             }
             OutlinedButton(onClick = onBack) { Text("Back") }
         }
-        if (!canTrash) {
+        if (state.scopes.any { it.root is FileRef.Saf }) {
             Text(
-                "Read-only review: switch to full file-manager access if you want Pocket Steward to propose moving duplicate copies to Trash.",
+                "Selected-folder mode uses PocketSteward/Trash inside the granted tree. " +
+                    "The original path and SHA-256 stay in the journal so Undo can restore the copy safely.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Spacing.hairline),
