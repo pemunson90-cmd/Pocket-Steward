@@ -19,6 +19,8 @@ import com.pocketsteward.app.saved.SavedWorkflowCodec
 import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.saved.SavedSearchCodec
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
+import com.pocketsteward.app.scheduled.PendingCleanupSuggestionCodec
 import com.pocketsteward.app.scheduled.ScheduledCleanupCodec
 import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
 import kotlinx.coroutines.flow.Flow
@@ -69,6 +71,7 @@ class SettingsRepository(private val context: Context) {
         val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
         val CORRECTION_RULES = stringPreferencesKey("correction_rules")
         val SCHEDULED_CLEANUP = stringPreferencesKey("scheduled_cleanup")
+        val PENDING_CLEANUP_SUGGESTION = stringPreferencesKey("pending_cleanup_suggestion")
 
         /**
          * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
@@ -126,6 +129,22 @@ class SettingsRepository(private val context: Context) {
 
     val scheduledCleanupSettings: Flow<ScheduledCleanupSettings> = context.dataStore.data.map { prefs ->
         ScheduledCleanupCodec.decode(prefs[Keys.SCHEDULED_CLEANUP])
+    }
+
+    val pendingCleanupSuggestion: Flow<PendingCleanupSuggestion?> = context.dataStore.data.map { prefs ->
+        PendingCleanupSuggestionCodec.decode(prefs[Keys.PENDING_CLEANUP_SUGGESTION])
+    }
+
+    suspend fun setPendingCleanupSuggestion(value: PendingCleanupSuggestion) {
+        context.dataStore.edit {
+            it[Keys.PENDING_CLEANUP_SUGGESTION] = PendingCleanupSuggestionCodec.encode(value)
+        }
+    }
+
+    suspend fun clearPendingCleanupSuggestion() {
+        context.dataStore.edit {
+            it.remove(Keys.PENDING_CLEANUP_SUGGESTION)
+        }
     }
 
     suspend fun setScheduledCleanupSettings(value: ScheduledCleanupSettings) {
