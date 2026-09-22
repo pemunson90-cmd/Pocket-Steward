@@ -668,7 +668,7 @@ class ScanViewModel(
                             )
                             return@launch
                         }
-                        roots.map(::ScanTarget.CustomFolder)
+                        roots.map { ScanTarget.CustomFolder(it) }
                     }
 
                     StorageAccessMode.SAF -> {
@@ -936,7 +936,7 @@ class ScanViewModel(
                 if (normalized.any { it.startsWith("content://") || it.startsWith("ps-child:") }) {
                     null
                 } else {
-                    normalized.map(::ScanTarget.CustomFolder)
+                    normalized.map { ScanTarget.CustomFolder(it) }
                 }
             }
 
@@ -3767,6 +3767,7 @@ class ScanViewModel(
         const val MAX_SIMILARITY_FILES_PER_KIND = 1_000
         const val MAX_SIMHASH_TEXT_CHARS = 100_000
         const val MAX_IMAGE_ANALYSIS_FILES = 250
+        const val LARGE_FILE_SUMMARY_BYTES = 500L * 1024L * 1024L
     }
 
     private suspend fun resolveScopes(
