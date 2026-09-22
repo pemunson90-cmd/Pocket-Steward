@@ -35,6 +35,7 @@ import com.pocketsteward.app.picker.FolderPicker
 import com.pocketsteward.app.picker.FolderSort
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.ui.theme.Spacing
 
 /**
@@ -196,7 +197,7 @@ fun FolderPickerScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 item { SectionHeader("Recent") }
                 items(recents) { path ->
                     Card(
-                        onClick = { viewModel.browseFolders(FileRef.Direct(path)) },
+                        onClick = { viewModel.browseFolders(parseFileRef(path)) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(modifier = Modifier.padding(Spacing.base)) {
