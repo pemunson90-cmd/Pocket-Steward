@@ -3,6 +3,7 @@ package com.pocketsteward.app.plan
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.rawValue
 import com.pocketsteward.app.storage.knownParentOrNull
+import com.pocketsteward.app.storage.child
 
 /**
  * Selection rules for an already-validated plan preview.
@@ -136,7 +137,7 @@ object PlanSelection {
 }
 
 private fun PlannedOperation.CreateDirectory.createdDirectoryRaw(): String =
-    "${parent.rawValue().trimEnd('/')}/$name"
+    parent.child(name).rawValue()
 
 private fun FileRef.parentRaw(): String? =
     knownParentOrNull()?.rawValue()
