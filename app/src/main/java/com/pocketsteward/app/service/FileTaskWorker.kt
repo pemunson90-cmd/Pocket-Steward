@@ -58,16 +58,36 @@ class FileTaskWorker(
         } catch (_: IllegalArgumentException) {
             // Non-resumable or already-finished task. Nothing should be retried.
             Result.failure()
-        } catch (_: IllegalStateException) {
-            Result.retry()
-        } catch (_: Throwable) {
-            Result.retry()
+        } catch (state: IllegalStateException) {
+            retryOrPause(taskRunId, state.message ?: "Task runner state error.")
+        } catch (t: Throwable) {
+            retryOrPause(taskRunId, t.message ?: "Background task runner stopped unexpectedly.")
         }
+    }
+
+    private suspend fun retryOrPause(
+        taskRunId: Long,
+        reason: String,
+    ): Result {
+        if (runAttemptCount + 1 < MAX_ATTEMPTS) {
+            return Result.retry()
+        }
+
+        withContext(NonCancellable) {
+            runCatching { container.mutationRecovery.recoverAll() }
+            container.database.taskRunDao().markRunningPaused(
+                id = taskRunId,
+                completedAt = System.currentTimeMillis(),
+                summary = "Paused after $MAX_ATTEMPTS background attempts. $reason Open Tasks to review and resume.",
+            )
+        }
+        return Result.failure()
     }
 
     companion object {
         const val KEY_TASK_RUN_ID = "task_run_id"
         const val WORK_TAG = "pocket-steward-file-task"
+        const val MAX_ATTEMPTS = 3
 
         fun uniqueName(taskRunId: Long): String =
             "pocket-steward-file-task-$taskRunId"
