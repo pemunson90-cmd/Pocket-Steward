@@ -1,7 +1,11 @@
 package com.pocketsteward.app.service
 
+import com.pocketsteward.app.storage.StorageAccessMode
+
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,6 +38,30 @@ class BackgroundWorkPolicyTest {
         assertTrue(BackgroundWorkPolicy.shouldRetry(1))
         assertFalse(BackgroundWorkPolicy.shouldRetry(2))
         assertFalse(BackgroundWorkPolicy.shouldRetry(3))
+    }
+
+    @Test
+    fun contentIndexWorkIdentityIsOrderIndependentButScopeSensitive() {
+        val a = ContentIndexWorker.uniqueName(
+            StorageAccessMode.DIRECT,
+            listOf("/Download", "/Documents"),
+        )
+        val reordered = ContentIndexWorker.uniqueName(
+            StorageAccessMode.DIRECT,
+            listOf("/Documents/", "/Download"),
+        )
+        val differentRoot = ContentIndexWorker.uniqueName(
+            StorageAccessMode.DIRECT,
+            listOf("/Pictures"),
+        )
+        val differentMode = ContentIndexWorker.uniqueName(
+            StorageAccessMode.SAF,
+            listOf("/Download", "/Documents"),
+        )
+
+        assertEquals(a, reordered)
+        assertNotEquals(a, differentRoot)
+        assertNotEquals(a, differentMode)
     }
 
 }
