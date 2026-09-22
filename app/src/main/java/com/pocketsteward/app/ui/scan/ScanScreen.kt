@@ -67,7 +67,7 @@ fun ScanScreen(
         StorageAccessMode.SAF -> listOf(ScanTarget.GrantedFolder("Granted folder"))
         null -> emptyList()
     }
-    val canBrowse = accessState?.mode == StorageAccessMode.DIRECT
+    val canBrowse = accessState?.mode != null
 
     ScanFlowScaffold(
         title = "Explore",
@@ -146,7 +146,11 @@ fun ScanScreen(
                     item {
                         ScopeCard(
                             title = "Browse folders",
-                            supporting = "Add any folder on your device",
+                            supporting = if (accessState?.mode == StorageAccessMode.SAF) {
+                                "Choose a subfolder inside the granted Android document tree"
+                            } else {
+                                "Add any folder on your device"
+                            },
                             selected = false,
                             showCheckbox = false,
                             onClick = onOpenPicker,
@@ -235,6 +239,8 @@ private fun List<ScanTarget>.containsTarget(target: ScanTarget): Boolean = any {
             candidate.absolutePath.trimEnd('/') == target.absolutePath.trimEnd('/')
         candidate is ScanTarget.GrantedFolder && target is ScanTarget.GrantedFolder ->
             candidate.label == target.label
+        candidate is ScanTarget.GrantedSubfolder && target is ScanTarget.GrantedSubfolder ->
+            candidate.documentUri == target.documentUri
         else -> candidate::class == target::class
     }
 }
