@@ -516,7 +516,6 @@ class ScanViewModel(
     private var indexSearchWatchJob: Job? = null
     private var lastBoundedIntent: BoundedIntent? = null
     private var userScanCancellationRequested: Boolean = false
-    private var consumeScheduledSuggestionOnSummary: Boolean = false
 
     init {
         viewModelScope.launch {
@@ -743,7 +742,6 @@ class ScanViewModel(
                 }
 
                 _selectedTargets.value = targets
-                consumeScheduledSuggestionOnSummary = true
                 startScan(
                     targets = targets,
                     thenScheduledSuggestion = suggestion,
@@ -1261,11 +1259,6 @@ class ScanViewModel(
                     ),
                 )
                 _uiState.value = summary
-
-                if (consumeScheduledSuggestionOnSummary) {
-                    settingsRepository.clearPendingCleanupSuggestion()
-                    consumeScheduledSuggestionOnSummary = false
-                }
 
                 targets.forEach { target ->
                     when (target) {
@@ -1839,6 +1832,9 @@ class ScanViewModel(
                     scopes = summary.scopes,
                     scopeNotes = notes,
                 )
+                // Consume only after a real proposal exists. A failed scan
+                // or an empty/failed proposal must remain reviewable later.
+                settingsRepository.clearPendingCleanupSuggestion()
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
