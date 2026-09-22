@@ -46,6 +46,13 @@ class SingleFolderIndex(
         }
     }
 
+    override fun parentOf(ref: FileRef): FileRef? = when {
+        ref == directory -> null
+        ref is FileRef.Child -> ref.parent
+        ref.rawValue() in byKey -> directory
+        else -> null
+    }
+
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
         if (directory.rawValue().trimEnd('/') != directoryKey) return null
         return byKey.values
