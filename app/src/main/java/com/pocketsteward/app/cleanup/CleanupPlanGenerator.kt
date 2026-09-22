@@ -8,6 +8,8 @@ import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.parseFileRef
+import com.pocketsteward.app.storage.child
+import com.pocketsteward.app.storage.rawValue
 
 data class GeneratedCleanup(val plan: AgentPlan, val scopeReport: CleanupScopeReport)
 
@@ -46,11 +48,9 @@ object CleanupPlanGenerator {
         projectKeywords: List<ProjectKeyword> = emptyList(),
         includeSubfolders: Boolean = false,
     ): GeneratedCleanup {
-        require(scopeRoot is FileRef.Direct) { "Smart cleanup currently only supports a Direct-mode scope root, got $scopeRoot" }
-
         val partition = SortScope.partition(
             candidates = records.map { it.toSortCandidate() },
-            scopeRoot = scopeRoot.absolutePath,
+            scopeRoot = scopeRoot.rawValue(),
             includeSubfolders = includeSubfolders,
         )
         val sortableRefs = partition.sortable.mapTo(mutableSetOf()) { it.stableRef }
@@ -74,10 +74,10 @@ object CleanupPlanGenerator {
                 )
             }
 
-            val destination = FileRef.Direct("${scopeRoot.absolutePath.trimEnd('/')}/$folderName/${record.displayName}")
+            val destinationFolder = scopeRoot.child(folderName)
             operations += PlannedOperation.Move(
                 source = parseFileRef(record.stableRef),
-                destination = destination,
+                destination = destinationFolder.child(record.displayName),
                 reason = result.reason,
             )
             sorted++
