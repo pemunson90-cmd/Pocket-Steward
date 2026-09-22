@@ -56,9 +56,11 @@ class FileScanner(
         // below — the previous shape needed `!!` twice to convince the
         // compiler of something already guaranteed by this check.
         val resumable = existing?.takeIf { it.status.isResumable() }
+        val previousRootGeneration = fileRecordDao.getByStableRef(scopeKey)?.lastScannedAt ?: 0L
         val startedAt = resumable?.startedAt ?: maxOf(
             System.currentTimeMillis(),
             (existing?.updatedAt ?: 0L) + 1L,
+            previousRootGeneration + 1L,
         )
 
         val queue = ArrayDeque<FileRef>()
