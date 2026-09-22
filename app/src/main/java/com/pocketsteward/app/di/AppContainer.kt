@@ -219,7 +219,11 @@ class AppContainer(context: Context) {
             .setConstraints(BackgroundWorkPolicy.contentIndexConstraints())
             .addTag(ContentIndexWorker.WORK_TAG)
             .build()
-        WorkManager.getInstance(appContext).enqueue(request)
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            ContentIndexWorker.uniqueName(mode, roots),
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     fun pauseContentIndexing() {
