@@ -299,11 +299,21 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
                 item {
+                    Button(
+                        onClick = { viewModel.refreshScan(state) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = Spacing.base),
+                    ) {
+                        Text("Refresh this scan")
+                    }
+                }
+                item {
                     OutlinedButton(
                         onClick = onScanAgain,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = Spacing.base, bottom = Spacing.section),
+                            .padding(bottom = Spacing.section),
                     ) {
                         Text("Choose different folders")
                     }
