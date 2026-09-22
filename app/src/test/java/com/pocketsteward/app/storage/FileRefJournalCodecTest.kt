@@ -15,4 +15,20 @@ class FileRefJournalCodecTest {
         val ref = FileRef.Saf("content://com.android.externalstorage.documents/tree/primary%3ADownload/document/primary%3ADownload%2Ffoo")
         assertThat(FileRefJournalCodec.decode(FileRefJournalCodec.encode(ref))).isEqualTo(ref)
     }
+    @Test
+    fun `round trips nested prospective SAF children`() {
+        val root = FileRef.Saf(
+            "content://com.android.externalstorage.documents/tree/primary%3ADownload/document/primary%3ADownload",
+        )
+        val ref = FileRef.Child(
+            parent = FileRef.Child(root, "PocketSteward"),
+            name = "Trash",
+        )
+
+        val encoded = FileRefJournalCodec.encode(ref)
+
+        assertThat(FileRefJournalCodec.decode(encoded)).isEqualTo(ref)
+        assertThat(parseFileRef(ref.rawValue())).isEqualTo(ref)
+    }
+
 }
