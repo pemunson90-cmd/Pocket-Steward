@@ -48,4 +48,12 @@ interface AgentModel {
         scopeLabel: String,
         documents: List<SemanticDocument>,
     ): CoherenceAuditResult
+
+    /**
+     * Optional language-only fallback. The model may rewrite an unsupported
+     * request into Pocket Steward's bounded command grammar, but it cannot
+     * return PlannedOperation or touch storage. Callers must parse the result
+     * again with DeterministicIntentParser before doing anything.
+     */
+    suspend fun normalizeIntentRequest(request: String): String? = null
 }
