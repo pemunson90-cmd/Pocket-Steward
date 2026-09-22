@@ -66,6 +66,8 @@ import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.plan.ReviewedPlanPackage
 import com.pocketsteward.app.rules.RuleEngine
+import com.pocketsteward.app.saved.LastScanSession
+import com.pocketsteward.app.saved.LastScanRoot
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.SavedSearch
@@ -628,6 +630,74 @@ class ScanViewModel(
     }
 
     /**
+     * Rebuild the most recent completed scan from Room without walking the
+     * filesystem again. Android may recreate the Results destination after
+     * killing the graph-scoped ViewModel; the indexed inventory is durable,
+     * so an empty screen should not force a 20k-file rescan.
+     */
+    fun restoreLastScanSummaryIfAvailable() {
+        if (_summary.value != null || scanJob?.isActive == true) return
+
+        viewModelScope.launch {
+            try {
+                val session = settingsRepository.lastScanSession.first() ?: return@launch
+                val access = settingsRepository.storageAccessState.first()
+                if (access.mode != session.mode) {
+                    settingsRepository.clearLastScanSession()
+                    return@launch
+                }
+
+                val scopes = session.roots.map { saved ->
+                    ScanScope(
+                        label = saved.label,
+                        root = parseFileRef(saved.rawRef),
+                    )
+                }
+                val allRootsStillIndexed = scopes.all { scope ->
+                    container.database.fileRecordDao()
+                        .getByStableRef(scope.root.rawValue()) != null
+                }
+                if (!allRootsStillIndexed) {
+                    settingsRepository.clearLastScanSession()
+                    return@launch
+                }
+
+                val records = filesForScopes(scopes)
+                val projectKeywords = settingsRepository.projectKeywords.first()
+                val byCategory = records
+                    .groupBy { classifyByExtension(it.extension) }
+                    .mapValues { (_, files) ->
+                        CategoryStat(
+                            fileCount = files.size,
+                            totalBytes = files.sumOf { it.sizeBytes },
+                        )
+                    }
+
+                _summary.value = ScanUiState.Summary(
+                    scopes = scopes,
+                    mode = session.mode,
+                    totalFiles = records.size,
+                    totalBytes = records.sumOf { it.sizeBytes },
+                    byCategory = byCategory,
+                    largeFileCount = records.count {
+                        !it.isDirectory && it.sizeBytes >= LARGE_FILE_SUMMARY_BYTES
+                    },
+                    uncategorizedCount = records.count {
+                        !it.isDirectory &&
+                            RuleEngine.classify(
+                                it.displayName,
+                                it.extension,
+                                projectKeywords,
+                            ).isUncategorized()
+                    },
+                )
+            } catch (t: Throwable) {
+                _error.value = t.message ?: "Could not restore the previous scan."
+            }
+        }
+    }
+
+    /**
      * Entry point for a Home tile: scan [target], then immediately run
      * [action] against the resulting summary. Idempotent across
      * recompositions — the screen calls this on every composition and only
@@ -1167,6 +1237,18 @@ class ScanViewModel(
                                 projectKeywords,
                             ).isUncategorized()
                     },
+                )
+                settingsRepository.setLastScanSession(
+                    LastScanSession(
+                        mode = mode,
+                        roots = scopes.map { scope ->
+                            LastScanRoot(
+                                label = scope.label,
+                                rawRef = scope.root.rawValue(),
+                            )
+                        },
+                        savedAtEpochMs = System.currentTimeMillis(),
+                    ),
                 )
                 _uiState.value = summary
 
