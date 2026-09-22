@@ -20,6 +20,12 @@ interface TaskRunDao {
     @Query("SELECT * FROM task_runs ORDER BY startedAt DESC")
     fun observeAll(): Flow<List<TaskRun>>
 
+    @Query("SELECT COUNT(*) FROM task_runs")
+    suspend fun countAllRuns(): Int
+
+    @Query("SELECT * FROM task_runs WHERE completedAt IS NOT NULL ORDER BY completedAt DESC LIMIT 1")
+    suspend fun getMostRecentCompleted(): TaskRun?
+
     @Query("SELECT * FROM task_runs WHERE status = 'RUNNING' ORDER BY startedAt ASC")
     suspend fun getRunning(): List<TaskRun>
 
