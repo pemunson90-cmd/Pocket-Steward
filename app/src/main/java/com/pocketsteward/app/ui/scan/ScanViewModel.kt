@@ -72,6 +72,7 @@ import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
+import com.pocketsteward.app.scheduled.ScheduledReviewPolicy
 import com.pocketsteward.app.scan.FileCategory
 import com.pocketsteward.app.scan.ScanPhase
 import com.pocketsteward.app.scan.ScanProgress
@@ -1783,9 +1784,11 @@ class ScanViewModel(
                 val exactRefs = suggestion.newFileRefs.toHashSet()
                 val projectKeywords = settingsRepository.projectKeywords.first()
                 val generatedByScope = summary.scopes.map { scope ->
-                    val records = container.database.fileRecordDao()
-                        .getFilesUnderScopeRoot(scope.root.rawValue())
-                        .filter { it.stableRef in exactRefs }
+                    val records = ScheduledReviewPolicy.selectNewFiles(
+                        records = container.database.fileRecordDao()
+                            .getFilesUnderScopeRoot(scope.root.rawValue()),
+                        suggestion = suggestion,
+                    )
 
                     val generated = withContext(Dispatchers.Default) {
                         RuleBasedPlanSource.proposePlan(
