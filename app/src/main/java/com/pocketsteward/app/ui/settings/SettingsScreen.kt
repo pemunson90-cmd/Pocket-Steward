@@ -1,5 +1,17 @@
 package com.pocketsteward.app.ui.settings
 
+import androidx.core.content.ContextCompat
+
+import androidx.activity.result.contract.ActivityResultContracts
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+
+import android.os.Build
+
+import android.content.pm.PackageManager
+
+import android.Manifest
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,6 +72,21 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
+
+    var notificationsGranted by remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        notificationsGranted = granted
+    }
 
     var keywordsText by remember { mutableStateOf<String?>(null) }
     var favoritesText by remember { mutableStateOf<String?>(null) }
@@ -304,6 +331,34 @@ fun SettingsScreen(onBack: () -> Unit, onOpenTrash: () -> Unit) {
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 16.dp),
         )
+        if (!notificationsGranted && Build.VERSION.SDK_INT >= 33) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Notifications are off",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Periodic scans can still run, but Pocket Steward cannot surface the review suggestion until notification permission is granted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    Button(
+                        onClick = {
+                            notificationPermissionLauncher.launch(
+                                Manifest.permission.POST_NOTIFICATIONS,
+                            )
+                        },
+                        modifier = Modifier.padding(top = 10.dp),
+                    ) {
+                        Text("Allow notifications")
+                    }
+                }
+            }
+        }
         SettingsSwitchRow(
             label = "Periodic review",
             supporting = "Scans metadata in the background and notifies you about new files. It never moves anything unattended.",
