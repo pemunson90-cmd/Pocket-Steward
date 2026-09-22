@@ -1,6 +1,8 @@
 package com.pocketsteward.app.ui.scan
 
 import android.os.Environment
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.ai.AgentModelAvailability
@@ -952,10 +954,33 @@ class ScanViewModel(
                         .trimEnd('/')
                 }.getOrNull() ?: return null
 
-                if (normalized.size == 1 && normalized.single() == currentRoot) {
-                    listOf(ScanTarget.GrantedFolder(label))
-                } else {
+                if (normalized.size != 1) {
                     null
+                } else {
+                    val savedRoot = normalized.single()
+                    when {
+                        savedRoot == currentRoot ->
+                            listOf(ScanTarget.GrantedFolder(label))
+
+                        savedRoot.startsWith("content://") -> {
+                            val sameTree = runCatching {
+                                DocumentsContract.getTreeDocumentId(Uri.parse(savedRoot)) ==
+                                    DocumentsContract.getTreeDocumentId(Uri.parse(currentRoot))
+                            }.getOrDefault(false)
+                            if (sameTree) {
+                                listOf(
+                                    ScanTarget.GrantedSubfolder(
+                                        documentUri = savedRoot,
+                                        label = label,
+                                    ),
+                                )
+                            } else {
+                                null
+                            }
+                        }
+
+                        else -> null
+                    }
                 }
             }
 
@@ -978,9 +1003,18 @@ class ScanViewModel(
         }
     }
 
-    fun addBrowsedFolderToSelection(folder: FileRef.Direct) {
-        val target = ScanTarget.CustomFolder(folder.absolutePath)
-        if (_selectedTargets.value.none { it.selectionKey() == target.selectionKey() }) {
+    fun addBrowsedFolderToSelection(folder: FileRef) {
+        val target = when (folder) {
+            is FileRef.Direct -> ScanTarget.CustomFolder(folder.absolutePath)
+            is FileRef.Saf -> ScanTarget.GrantedSubfolder(
+                documentUri = folder.documentUri,
+                label = folder.displayScopeLabel(),
+            )
+            is FileRef.Child -> return
+        }
+        if (target is ScanTarget.GrantedSubfolder) {
+            _selectedTargets.value = listOf(target)
+        } else if (_selectedTargets.value.none { it.selectionKey() == target.selectionKey() }) {
             _selectedTargets.value = _selectedTargets.value + target
         }
     }
