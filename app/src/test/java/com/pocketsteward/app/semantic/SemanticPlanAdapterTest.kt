@@ -172,6 +172,71 @@ class SemanticPlanAdapterTest {
         assertThat(SemanticPlanAdapter.sanitizeGroup("  Café Notes 📚  ")).isEqualTo("Café Notes 📚")
     }
 
+    @Test
+    fun safRootLocalProposalUsesSymbolicChildrenInsideGrantedTree() {
+        val root = FileRef.Saf("content://example/tree/root/document/root")
+        val file = record(
+            "content://example/tree/root/document/root%2Fa.txt",
+            "a.txt",
+            root.documentUri,
+        )
+
+        val result = SemanticPlanAdapter.build(
+            scopeRoots = listOf(root),
+            records = listOf(file),
+            suggestions = listOf(suggestion(file, "Notes")),
+        )
+
+        val create = result.operations.filterIsInstance<PlannedOperation.CreateDirectory>().single()
+        val move = result.operations.filterIsInstance<PlannedOperation.Move>().single()
+
+        assertThat(create.parent).isEqualTo(root)
+        assertThat(create.name).isEqualTo("Notes")
+        assertThat(move.source).isEqualTo(FileRef.Saf(file.stableRef))
+        assertThat(move.destination).isEqualTo(
+            FileRef.Child(
+                FileRef.Child(root, "Notes"),
+                "a.txt",
+            ),
+        )
+        assertThat(result.authorizedDestinationRoots).isEmpty()
+    }
+
+    @Test
+    fun safExistingSuggestedGroupIsReusedAndCurrentMemberIsSkipped() {
+        val root = FileRef.Saf("content://example/tree/root/document/root")
+        val groupRef = "content://example/tree/root/document/root%2FNotes"
+        val group = FileRecord(
+            stableRef = groupRef,
+            displayName = "Notes",
+            extension = "",
+            mimeType = null,
+            absolutePathOrUri = groupRef,
+            parentRef = root.documentUri,
+            sizeBytes = 0,
+            createdAt = null,
+            modifiedAt = null,
+            lastScannedAt = 1,
+            isDirectory = true,
+            isHidden = false,
+        )
+        val file = record(
+            "content://example/tree/root/document/root%2FNotes%2Fa.txt",
+            "a.txt",
+            groupRef,
+        )
+
+        val result = SemanticPlanAdapter.build(
+            scopeRoots = listOf(root),
+            records = listOf(group, file),
+            suggestions = listOf(suggestion(file, "Notes")),
+            includeSubfolders = true,
+        )
+
+        assertThat(result.operations).isEmpty()
+        assertThat(result.skipped.single().reason).contains("already in")
+    }
+
     private fun suggestion(record: FileRecord, group: String) =
         SemanticSuggestion(record.stableRef, CoherenceClass.DOES_NOT_BELONG, group)
 
