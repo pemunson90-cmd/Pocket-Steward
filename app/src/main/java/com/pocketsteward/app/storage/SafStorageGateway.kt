@@ -174,10 +174,11 @@ class SafStorageGateway(
             }
             val sourceSize = sourceDoc.length()
             val destinationSize = created.length()
-            if (sourceSize >= 0L && destinationSize != sourceSize) {
+            val hashesMatch = sha256(sourceDoc).contentEquals(sha256(created))
+            if ((sourceSize >= 0L && destinationSize != sourceSize) || !hashesMatch) {
                 runCatching { created.delete() }
                 MutationResult.Failure(
-                    "Copied SAF document size did not match source; partial destination was removed.",
+                    "Copied SAF document did not verify against the source; the destination was removed.",
                 )
             } else {
                 MutationResult.Success(FileRef.Saf(created.uri.toString()))
@@ -330,6 +331,20 @@ class SafStorageGateway(
             '/' !in name &&
             '\\' !in name &&
             name.none { it.isISOControl() }
+
+    private fun sha256(document: DocumentFile): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(document.uri).use { input ->
+            requireNotNull(input) { "Could not reopen SAF document for verification." }
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest()
+    }
 
     private fun sha256(value: String): String =
         MessageDigest.getInstance("SHA-256")
