@@ -32,10 +32,10 @@ import java.io.InputStream
 // In SafStorageGateway.kt and ScanTarget.GrantedFolder
 
 /**
- * 2026-09-19 (M8 Spec): SAF mode remains a browser/read-only fallback.
- * Mutation methods fail closed with an ordinary MutationResult.Failure rather
- * than TODO/NotImplementedError, so an accidental UI-fence regression cannot
- * crash the app or create a second mutation path.
+ * V1.1: SAF now has real read/create/write/copy/move/rename/empty-directory
+ * primitives with no-overwrite behavior. The high-level organizer remains
+ * conservative until preview validation can model provider-specific
+ * destination URIs and Trash with the same crash-safety guarantees as Direct.
  */
 
 class SafStorageGateway(
@@ -101,21 +101,135 @@ class SafStorageGateway(
         return context.contentResolver.openInputStream(uri)
             ?: error("Could not open SAF document for reading: $uri")
     }
-    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult =
-        unsupportedMutation("create folders")
+    override suspend fun createDirectory(parent: FileRef, name: String): MutationResult {
+        if (!safeName(name)) return MutationResult.Failure("Unsafe folder name: $name")
+        val parentDoc = runCatching { resolve(parent) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF parent folder.", it)
+        }
+        if (!parentDoc.isDirectory) {
+            return MutationResult.Failure("Parent is not a directory: ${parent.rawValue()}")
+        }
+        val collision = childNamed(parentDoc, name)
+        if (collision != null) {
+            return if (collision.isDirectory) {
+                MutationResult.Success(FileRef.Saf(collision.uri.toString()), changed = false)
+            } else {
+                MutationResult.Failure("A file already exists with that name: $name")
+            }
+        }
+        val created = runCatching { parentDoc.createDirectory(name) }.getOrNull()
+            ?: return MutationResult.Failure("Could not create SAF directory: $name")
+        return MutationResult.Success(FileRef.Saf(created.uri.toString()))
+    }
 
-    override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult =
-        unsupportedMutation("write files")
-    override suspend fun copy(source: FileRef, destination: FileRef): MutationResult =
-        MutationResult.Failure(
-            "SAF copy needs destination-parent semantics that this plan operation does not yet encode.",
-        )
+    override suspend fun writeTextFile(parent: FileRef, name: String, content: String): MutationResult {
+        if (!safeName(name)) return MutationResult.Failure("Unsafe file name: $name")
+        val parentDoc = runCatching { resolve(parent) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF parent folder.", it)
+        }
+        if (!parentDoc.isDirectory) {
+            return MutationResult.Failure("Parent is not a directory: ${parent.rawValue()}")
+        }
+        if (childNamed(parentDoc, name) != null) {
+            return MutationResult.Failure("Refusing to overwrite an existing SAF document: $name")
+        }
+        val mime = when (name.substringAfterLast('.', "").lowercase()) {
+            "md", "markdown" -> "text/markdown"
+            "json" -> "application/json"
+            "csv" -> "text/csv"
+            else -> "text/plain"
+        }
+        val created = runCatching { parentDoc.createFile(mime, name) }.getOrNull()
+            ?: return MutationResult.Failure("Could not create SAF document: $name")
+        return try {
+            context.contentResolver.openOutputStream(created.uri, "wt").use { output ->
+                requireNotNull(output) { "Could not open the created SAF document for writing." }
+                output.writer(Charsets.UTF_8).use { writer ->
+                    writer.write(content)
+                    writer.flush()
+                }
+            }
+            MutationResult.Success(FileRef.Saf(created.uri.toString()))
+        } catch (t: Throwable) {
+            runCatching { created.delete() }
+            MutationResult.Failure(t.message ?: "Could not write SAF document: $name", t)
+        }
+    }
+    override suspend fun copy(source: FileRef, destination: FileRef): MutationResult {
+        val sourceDoc = runCatching { resolve(source) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF source.", it)
+        }
+        val destinationDir = runCatching { resolve(destination) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF destination folder.", it)
+        }
+        if (!sourceDoc.exists() || sourceDoc.isDirectory) {
+            return MutationResult.Failure("SAF copy currently supports existing files only.")
+        }
+        if (!destinationDir.isDirectory) {
+            return MutationResult.Failure("SAF copy destination must be an existing directory.")
+        }
+        val name = sourceDoc.name
+            ?: return MutationResult.Failure("Source document has no display name.")
+        if (childNamed(destinationDir, name) != null) {
+            return MutationResult.Failure("Destination already contains $name; refusing to overwrite.")
+        }
+        val created = runCatching {
+            destinationDir.createFile(sourceDoc.type ?: "application/octet-stream", name)
+        }.getOrNull() ?: return MutationResult.Failure("Could not create destination document: $name")
+        return try {
+            context.contentResolver.openInputStream(sourceDoc.uri).use { input ->
+                requireNotNull(input) { "Could not read SAF source." }
+                context.contentResolver.openOutputStream(created.uri, "w").use { output ->
+                    requireNotNull(output) { "Could not write SAF destination." }
+                    input.copyTo(output, DEFAULT_BUFFER_SIZE)
+                    output.flush()
+                }
+            }
+            val sourceSize = sourceDoc.length()
+            val destinationSize = created.length()
+            if (sourceSize >= 0L && destinationSize != sourceSize) {
+                runCatching { created.delete() }
+                MutationResult.Failure(
+                    "Copied SAF document size did not match source; partial destination was removed.",
+                )
+            } else {
+                MutationResult.Success(FileRef.Saf(created.uri.toString()))
+            }
+        } catch (t: Throwable) {
+            runCatching { created.delete() }
+            MutationResult.Failure(t.message ?: "SAF copy failed.", t)
+        }
+    }
 
-    override suspend fun move(source: FileRef, destination: FileRef): MutationResult =
-        unsupportedMutation("move files")
+    override suspend fun move(source: FileRef, destination: FileRef): MutationResult {
+        val copied = copy(source, destination)
+        if (copied !is MutationResult.Success) return copied
 
-    override suspend fun rename(source: FileRef, newName: String): MutationResult =
-        unsupportedMutation("rename files")
+        val sourceDoc = runCatching { resolve(source) }.getOrNull()
+        if (sourceDoc == null || !sourceDoc.delete()) {
+            return MutationResult.Failure(
+                "Copied the file to the SAF destination, but could not remove the original. Both copies were left in place.",
+            )
+        }
+        return copied
+    }
+
+    override suspend fun rename(source: FileRef, newName: String): MutationResult {
+        if (!safeName(newName)) return MutationResult.Failure("Unsafe file name: $newName")
+        val sourceDoc = runCatching { resolve(source) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF source.", it)
+        }
+        if (!sourceDoc.exists()) return MutationResult.Failure("Source no longer exists.")
+        return try {
+            if (!sourceDoc.renameTo(newName)) {
+                MutationResult.Failure("SAF provider refused to rename the document.")
+            } else {
+                MutationResult.Success(FileRef.Saf(sourceDoc.uri.toString()))
+            }
+        } catch (t: Throwable) {
+            MutationResult.Failure(t.message ?: "SAF rename failed.", t)
+        }
+    }
 
     override suspend fun trashDestination(source: FileRef): FileRef =
         throw UnsupportedOperationException(
@@ -125,14 +239,39 @@ class SafStorageGateway(
     override suspend fun trash(source: FileRef): MutationResult =
         unsupportedMutation("move files to Trash")
 
-    override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult =
-        unsupportedMutation("remove directories")
+    override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
+        val doc = runCatching { resolve(ref) }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Could not resolve SAF directory.", it)
+        }
+        if (!doc.exists()) return MutationResult.Success(ref, changed = false)
+        if (!doc.isDirectory) return MutationResult.Failure("Undo target is not a directory.")
+        if (doc.listFiles().isNotEmpty()) {
+            return MutationResult.Failure("Directory is no longer empty; refusing to remove it.")
+        }
+        return if (doc.delete()) {
+            MutationResult.Success(ref)
+        } else {
+            MutationResult.Failure("SAF provider refused to remove the empty directory.")
+        }
+    }
 
-    private fun unsupportedMutation(action: String): MutationResult =
-        MutationResult.Failure(
-            "Selected-folder access is read-only for mutations and cannot $action. " +
-                "Use full file-manager access for organization tasks.",
-        )
+    private fun resolve(ref: FileRef): DocumentFile {
+        val uri = Uri.parse(ref.requireUri())
+        return DocumentFile.fromTreeUri(context, uri)
+            ?: error("SafStorageGateway could not resolve a DocumentFile for $uri")
+    }
+
+    private fun childNamed(parent: DocumentFile, name: String): DocumentFile? =
+        parent.listFiles().firstOrNull {
+            it.name?.equals(name, ignoreCase = true) == true
+        }
+
+    private fun safeName(name: String): Boolean =
+        name.isNotBlank() &&
+            name != "." &&
+            name != ".." &&
+            '/' !in name &&
+            '\\' !in name
 
 }
 
