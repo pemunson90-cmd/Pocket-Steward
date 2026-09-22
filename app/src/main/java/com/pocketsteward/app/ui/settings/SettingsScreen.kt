@@ -62,6 +62,7 @@ fun SettingsScreen(
                     loadContentIndexOverview = container::contentIndexOverview,
                     clearContentIndexCache = container::clearContentIndex,
                     applyScheduledCleanup = container.scheduledCleanupCoordinator::apply,
+                    loadRuntimeDiagnostics = container.runtimeDiagnostics::snapshot,
                 )
             }
         },
@@ -76,6 +77,7 @@ fun SettingsScreen(
     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
+    val diagnosticsStatus by viewModel.diagnosticsStatus.collectAsState()
 
     var notificationsGranted by remember {
         mutableStateOf(
@@ -415,6 +417,88 @@ fun SettingsScreen(
 
         if (uiSettings.advancedModeEnabled) {
             SectionTitle("Advanced")
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Runtime diagnostics", style = MaterialTheme.typography.titleMedium)
+                    when {
+                        diagnosticsStatus.loading -> {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            )
+                            Text(
+                                "Reading local performance counters…",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+
+                        diagnosticsStatus.snapshot != null -> {
+                            val snapshot = requireNotNull(diagnosticsStatus.snapshot)
+                            Text(
+                                "Version ${snapshot.appVersion} · ${snapshot.fileRecords} indexed entries · " +
+                                    "${snapshot.scopeRoots} scope(s)",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                            Text(
+                                "${snapshot.taskRuns} task(s) · ${snapshot.journalRows} journal row(s) · " +
+                                    "${snapshot.contentDocuments} content-indexed document(s) / " +
+                                    "${snapshot.contentSegments} segment(s)",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            snapshot.lastTaskDurationMs?.let { duration ->
+                                Text(
+                                    "Last completed task: " + formatDiagnosticDuration(duration),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                            Text(
+                                buildString {
+                                    append("Battery saver: ")
+                                    append(if (snapshot.powerSaveMode) "on" else "off")
+                                    append(" · battery optimization: ")
+                                    append(if (snapshot.batteryOptimizationExempt) "exempt" else "managed by Android")
+                                    append(" · low-RAM device: ")
+                                    append(if (snapshot.lowRamDevice) "yes" else "no")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            Text(
+                                "Shared storage free: ${formatDiagnosticBytes(snapshot.sharedStorageUsableBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+
+                        diagnosticsStatus.error != null -> {
+                            Text(
+                                diagnosticsStatus.error ?: "Diagnostics unavailable.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = viewModel::refreshRuntimeDiagnostics,
+                        enabled = !diagnosticsStatus.loading,
+                        modifier = Modifier.padding(top = 10.dp),
+                    ) {
+                        Text("Refresh diagnostics")
+                    }
+                    Text(
+                        "Diagnostics contain counts and device state only. They do not include filenames, paths, document text, or model prompts.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+
             Text(
                 text = "Storage mode: ${storageAccess.mode ?: "not configured"}",
                 style = MaterialTheme.typography.bodySmall,
@@ -498,4 +582,24 @@ private fun SettingsSwitchRow(
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
+}
+
+
+private fun formatDiagnosticDuration(durationMs: Long): String {
+    val totalSeconds = durationMs / 1_000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+}
+
+private fun formatDiagnosticBytes(bytes: Long): String {
+    if (bytes <= 0L) return "unknown"
+    val units = arrayOf("B", "KiB", "MiB", "GiB", "TiB")
+    var value = bytes.toDouble()
+    var unit = 0
+    while (value >= 1024.0 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    return "%.1f %s".format(value, units[unit])
 }
