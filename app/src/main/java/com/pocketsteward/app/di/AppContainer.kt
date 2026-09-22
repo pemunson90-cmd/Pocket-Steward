@@ -3,6 +3,7 @@ package com.pocketsteward.app.di
 import android.content.Context
 import android.media.MediaScannerConnection
 import androidx.core.content.ContextCompat
+import com.pocketsteward.app.service.BackgroundWorkPolicy
 import com.pocketsteward.app.service.ContentIndexWorker
 import androidx.work.workDataOf
 import androidx.work.WorkManager
@@ -152,11 +153,7 @@ class AppContainer(context: Context) {
     private fun enqueueFileTaskFallback(taskRunId: Long) {
         val request = OneTimeWorkRequestBuilder<FileTaskWorker>()
             .setInputData(workDataOf(FileTaskWorker.KEY_TASK_RUN_ID to taskRunId))
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiresStorageNotLow(true)
-                    .build(),
-            )
+            .setConstraints(BackgroundWorkPolicy.fileMutationConstraints())
             .addTag(FileTaskWorker.WORK_TAG)
             .build()
 
@@ -219,12 +216,7 @@ class AppContainer(context: Context) {
                     ContentIndexWorker.KEY_MODE to mode.name,
                 ),
             )
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiresBatteryNotLow(true)
-                    .setRequiresStorageNotLow(true)
-                    .build(),
-            )
+            .setConstraints(BackgroundWorkPolicy.contentIndexConstraints())
             .addTag(ContentIndexWorker.WORK_TAG)
             .build()
         WorkManager.getInstance(appContext).enqueue(request)
