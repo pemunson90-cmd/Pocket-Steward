@@ -23,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -44,7 +45,10 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(onBack: () -> Unit) {
+fun HistoryScreen(
+    onBack: () -> Unit,
+    initialManifestTaskId: Long? = null,
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
     val viewModel: HistoryViewModel = viewModel(
@@ -65,6 +69,10 @@ fun HistoryScreen(onBack: () -> Unit) {
     val tasks by viewModel.tasks.collectAsState()
     val taskProgress by viewModel.taskProgress.collectAsState()
     val actionState by viewModel.actionState.collectAsState()
+
+    LaunchedEffect(initialManifestTaskId) {
+        initialManifestTaskId?.let(viewModel::showManifest)
+    }
 
     Scaffold(
         topBar = {
