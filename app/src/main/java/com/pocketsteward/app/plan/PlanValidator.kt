@@ -40,7 +40,7 @@ object PlanValidator {
                 continue
             }
             accepted += operation
-            destinationOf(operation)?.let { destination ->
+            destinationOf(operation, index)?.let { destination ->
                 claimedDestinations += destination.rawValue()
                 if (operation is PlannedOperation.CreateDirectory) {
                     plannedDirectories += destination.rawValue()
@@ -142,8 +142,10 @@ object PlanValidator {
         if (!index.exists(op.source)) return "Source does not exist in the index."
         if (op.newName.isBlank()) return "New name is blank."
 
-        val parent = parentOf(op.source) ?: return "Cannot determine parent for rename."
-        val destination = childRef(parent, op.newName) ?: op.source
+        val parent = index.parentOf(op.source)
+            ?: parentOf(op.source)
+            ?: return "Cannot determine parent for rename."
+        val destination = childRef(parent, op.newName)
 
         if (index.caseInsensitiveMatch(parent, op.newName, excluding = op.source) != null) {
             return "A differently-cased entry with that name already exists."
@@ -176,7 +178,7 @@ object PlanValidator {
         if (index.caseInsensitiveMatch(op.parent, op.name) != null) {
             return "A file with that name already exists here."
         }
-        val destination = childRef(op.parent, op.name) ?: return "Cannot determine destination path."
+        val destination = childRef(op.parent, op.name)
         return checkDestinationFree(destination, index, claimedDestinations)
     }
 
@@ -227,11 +229,16 @@ object PlanValidator {
 
     private fun hasTraversalSegment(value: String): Boolean = value.split('/').any { it == ".." }
 
-    private fun destinationOf(operation: PlannedOperation): FileRef? = when (operation) {
+    private fun destinationOf(
+        operation: PlannedOperation,
+        index: FileIndex,
+    ): FileRef? = when (operation) {
         is PlannedOperation.CreateDirectory -> childRef(operation.parent, operation.name)
         is PlannedOperation.Move -> operation.destination
         is PlannedOperation.Copy -> operation.destination
-        is PlannedOperation.Rename -> parentOf(operation.source)?.let { childRef(it, operation.newName) }
+        is PlannedOperation.Rename ->
+            (index.parentOf(operation.source) ?: parentOf(operation.source))
+                ?.let { childRef(it, operation.newName) }
         is PlannedOperation.Trash -> null
         is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
