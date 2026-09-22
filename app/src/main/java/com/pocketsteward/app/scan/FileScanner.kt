@@ -56,7 +56,10 @@ class FileScanner(
         // below — the previous shape needed `!!` twice to convince the
         // compiler of something already guaranteed by this check.
         val resumable = existing?.takeIf { it.status.isResumable() }
-        val startedAt = resumable?.startedAt ?: System.currentTimeMillis()
+        val startedAt = resumable?.startedAt ?: maxOf(
+            System.currentTimeMillis(),
+            (existing?.updatedAt ?: 0L) + 1L,
+        )
 
         val queue = ArrayDeque<FileRef>()
         var processedCount: Int
@@ -80,7 +83,7 @@ class FileScanner(
             // as its own record (parentRef null — it has no parent within
             // this scope) closes that for every future check against it,
             // not just this one plan.
-            val rootRecord = gateway.stat(root).toFileRecord(parent = null)
+            val rootRecord = gateway.stat(root).toFileRecord(parent = null, scanGeneration = startedAt)
             fileRecordDao.upsertFromScan(rootRecord)
             fileRecordDao.insertScopeTag(FileScope(rootRecord.stableRef, scopeKey))
             queue.add(root)
@@ -104,7 +107,7 @@ class FileScanner(
                 val batch = children.map { entry ->
                     val meta = gateway.stat(entry.ref)
                     if (meta.isDirectory) discoveredDirectories += entry.ref
-                    meta.toFileRecord(parent = directory)
+                    meta.toFileRecord(parent = directory, scanGeneration = startedAt)
                 }
                 if (batch.isNotEmpty()) {
                     fileRecordDao.upsertAllFromScan(batch)
@@ -177,7 +180,10 @@ class FileScanner(
     }
 }
 
-private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord {
+private fun FileMetadata.toFileRecord(
+    parent: FileRef?,
+    scanGeneration: Long,
+): FileRecord {
     val rawRef = ref.rawValue()
     return FileRecord(
         stableRef = rawRef,
@@ -189,7 +195,7 @@ private fun FileMetadata.toFileRecord(parent: FileRef?): FileRecord {
         sizeBytes = sizeBytes,
         createdAt = createdAtEpochMs,
         modifiedAt = modifiedAtEpochMs,
-        lastScannedAt = System.currentTimeMillis(),
+        lastScannedAt = scanGeneration,
         isDirectory = isDirectory,
         isHidden = isHidden,
     )
