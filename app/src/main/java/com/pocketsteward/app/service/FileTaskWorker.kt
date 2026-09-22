@@ -41,6 +41,15 @@ class FileTaskWorker(
                 container.mutationRecovery.recoverAll()
             }
             throw cancel
+        } catch (security: SecurityException) {
+            withContext(NonCancellable) {
+                container.database.taskRunDao().markRunningPaused(
+                    id = taskRunId,
+                    completedAt = System.currentTimeMillis(),
+                    summary = "Paused because storage access is unavailable. Restore access, then Resume from Tasks.",
+                )
+            }
+            Result.failure()
         } catch (_: IllegalArgumentException) {
             // Non-resumable or already-finished task. Nothing should be retried.
             Result.failure()
