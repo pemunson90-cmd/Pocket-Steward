@@ -1297,7 +1297,6 @@ private fun CoherenceAuditReview(
                                 )
                             }
                         } else {
-                            destinationPolicy = DestinationPolicy.ROOT_LOCAL
                             Text(
                                 "Inside the selected Android document tree",
                                 style = MaterialTheme.typography.bodyMedium,
