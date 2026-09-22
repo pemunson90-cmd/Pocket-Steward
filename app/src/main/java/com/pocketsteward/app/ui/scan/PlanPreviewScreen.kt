@@ -15,6 +15,9 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.child
+import com.pocketsteward.app.storage.knownParentOrNull
+import com.pocketsteward.app.storage.rawValue
 import com.pocketsteward.app.plan.PlannedOperation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.setValue
@@ -114,8 +117,11 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 val destinationGroups = preview.accepted
                     .mapNotNull(::destinationEditGroup)
                     .distinctBy { it.directory }
+                val selectedTreeGroups = preview.accepted
+                    .mapNotNull(::safDestinationEditGroup)
+                    .distinctBy { it.directory.rawValue() }
 
-                if (destinationGroups.isNotEmpty()) {
+                if (destinationGroups.isNotEmpty() || selectedTreeGroups.isNotEmpty()) {
                     item { SectionHeader("Destinations") }
                     items(destinationGroups, key = { it.directory }) { group ->
                         DestinationEditCard(
@@ -124,6 +130,18 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 viewModel.editPlanDestinationGroup(
                                     groupDirectory = group.directory,
                                     newDestinationRootPath = root,
+                                    newGroupName = name,
+                                    rememberForSimilarFiles = rememberRule,
+                                )
+                            },
+                        )
+                    }
+                    items(selectedTreeGroups, key = { it.directory.rawValue() }) { group ->
+                        SafDestinationEditCard(
+                            group = group,
+                            onApply = { name, rememberRule ->
+                                viewModel.editSafPlanDestinationGroup(
+                                    groupDirectory = group.directory,
                                     newGroupName = name,
                                     rememberForSimilarFiles = rememberRule,
                                 )
@@ -291,35 +309,43 @@ private fun PlanOperationEditControls(
                     )
                 }
             }
-            TextButton(onClick = { editing = !editing }) {
-                Text(if (editing) "Hide editor" else "Edit destination")
+            val directDestination = when (operation) {
+                is PlannedOperation.Move -> operation.destination as? FileRef.Direct
+                is PlannedOperation.Copy -> operation.destination as? FileRef.Direct
+                else -> null
             }
-            if (editing) {
-                val current = when (operation) {
-                    is PlannedOperation.Move ->
-                        (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
-                    is PlannedOperation.Copy ->
-                        (operation.destination as? FileRef.Direct)?.absolutePath.orEmpty()
-                    else -> ""
+            if (directDestination != null) {
+                TextButton(onClick = { editing = !editing }) {
+                    Text(if (editing) "Hide editor" else "Edit destination")
                 }
-                var destination by remember(operation) { mutableStateOf(current) }
-                OutlinedTextField(
-                    value = destination,
-                    onValueChange = { destination = it },
-                    label = { Text("Destination file path") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        onApplyMove(destination)
-                        editing = false
-                    },
-                    enabled = destination.isNotBlank() && destination != current,
+                if (editing) {
+                    val current = directDestination.absolutePath
+                    var destination by remember(operation) { mutableStateOf(current) }
+                    OutlinedTextField(
+                        value = destination,
+                        onValueChange = { destination = it },
+                        label = { Text("Destination file path") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = {
+                            onApplyMove(destination)
+                            editing = false
+                        },
+                        enabled = destination.isNotBlank() && destination != current,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    ) {
+                        Text("Apply destination edit")
+                    }
+                }
+            } else {
+                Text(
+                    "Destination is inside the selected tree. Edit its group in Destinations above.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = Spacing.hairline),
-                ) {
-                    Text("Apply move edit")
-                }
+                )
             }
         }
 
@@ -440,6 +466,97 @@ private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGr
     return DestinationEditGroup(directory, root, groupName)
 }
 
+private data class SafDestinationEditGroup(
+    val directory: FileRef.Child,
+    val displayPath: String,
+    val groupName: String,
+)
+
+@Composable
+private fun SafDestinationEditCard(
+    group: SafDestinationEditGroup,
+    onApply: (groupName: String, rememberRule: Boolean) -> Unit,
+) {
+    var groupName by remember(group.directory.rawValue()) { mutableStateOf(group.groupName) }
+    var rememberRule by remember(group.directory.rawValue()) { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text(
+                text = group.displayPath,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "Inside selected Android folder",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+            OutlinedTextField(
+                value = groupName,
+                onValueChange = { groupName = it },
+                label = { Text("Group folder name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            ) {
+                Checkbox(
+                    checked = rememberRule,
+                    onCheckedChange = { rememberRule = it },
+                )
+                Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
+                    Text("Remember this correction")
+                    Text(
+                        "Reuse this group when a clear shared filename term appears later.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Button(
+                onClick = { onApply(groupName, rememberRule) },
+                enabled = groupName.isNotBlank() && groupName != group.groupName,
+                modifier = Modifier.padding(top = Spacing.tight),
+            ) {
+                Text("Apply group edit")
+            }
+        }
+    }
+}
+
+private fun safDestinationEditGroup(operation: PlannedOperation): SafDestinationEditGroup? {
+    val directory = when (operation) {
+        is PlannedOperation.CreateDirectory ->
+            operation.parent.child(operation.name) as? FileRef.Child
+        is PlannedOperation.Move ->
+            operation.destination.knownParentOrNull() as? FileRef.Child
+        is PlannedOperation.Copy ->
+            operation.destination.knownParentOrNull() as? FileRef.Child
+        else -> null
+    } ?: return null
+
+    return SafDestinationEditGroup(
+        directory = directory,
+        displayPath = directory.selectedTreeRelativePath(),
+        groupName = directory.name,
+    )
+}
+
+private fun FileRef.Child.selectedTreeRelativePath(): String {
+    val segments = mutableListOf<String>()
+    var current: FileRef = this
+    while (current is FileRef.Child) {
+        segments += current.name
+        current = current.parent
+    }
+    return segments.asReversed().joinToString("/")
+}
+
 private fun destinationLabel(operation: PlannedOperation): String? =
     destinationEditGroup(operation)?.directory
+        ?: safDestinationEditGroup(operation)?.displayPath
 
