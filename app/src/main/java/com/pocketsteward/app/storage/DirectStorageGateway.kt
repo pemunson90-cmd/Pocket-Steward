@@ -89,6 +89,12 @@ class DirectStorageGateway(
         if (!parentDir.isDirectory) {
             return MutationResult.Failure("Parent is not a directory: ${parentDir.absolutePath}")
         }
+        val requiredBytes = content.toByteArray(Charsets.UTF_8).size.toLong()
+        if (!StorageCapacityPolicy.canFit(requiredBytes, parentDir.usableSpace)) {
+            return MutationResult.Failure(
+                StorageCapacityPolicy.failureMessage(requiredBytes, parentDir.usableSpace),
+            )
+        }
         return try {
             target.writeText(content)
             MutationResult.Success(FileRef.Direct(target.absolutePath), changed = true)
@@ -122,6 +128,12 @@ class DirectStorageGateway(
             ?: return MutationResult.Failure("Cannot determine destination parent: ${destinationFile.absolutePath}")
         if (!parent.exists() && !parent.mkdirs()) {
             return MutationResult.Failure("Could not create parent directory: ${parent.absolutePath}")
+        }
+        val requiredBytes = sourceFile.length()
+        if (!StorageCapacityPolicy.canFit(requiredBytes, parent.usableSpace)) {
+            return MutationResult.Failure(
+                StorageCapacityPolicy.failureMessage(requiredBytes, parent.usableSpace),
+            )
         }
         return try {
             sourceFile.copyTo(destinationFile, overwrite = false)
@@ -206,6 +218,21 @@ class DirectStorageGateway(
 
         if (sourceFile.renameTo(destinationFile)) {
             return MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
+        }
+
+        if (sourceFile.isDirectory) {
+            return MutationResult.Failure(
+                "Directory move could not be completed atomically. " +
+                    "Pocket Steward will not fall back to an unjournaled recursive copy.",
+            )
+        }
+
+        val requiredBytes = sourceFile.length()
+        val usableBytes = destinationParent?.usableSpace ?: destinationFile.parentFile?.usableSpace ?: 0L
+        if (!StorageCapacityPolicy.canFit(requiredBytes, usableBytes)) {
+            return MutationResult.Failure(
+                StorageCapacityPolicy.failureMessage(requiredBytes, usableBytes),
+            )
         }
 
         // renameTo fails across filesystem boundaries (e.g. internal storage
