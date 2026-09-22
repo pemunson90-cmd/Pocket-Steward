@@ -5,6 +5,7 @@ import android.os.Environment
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.InputStream
+import java.security.MessageDigest
 
 /**
  * [StorageGateway] backed by direct java.io.File access under
@@ -196,21 +197,46 @@ class DirectStorageGateway(
 
         // renameTo fails across filesystem boundaries (e.g. internal storage
         // to an SD card) even when both are under MANAGE_EXTERNAL_STORAGE.
-        // Fall back to copy-then-delete.
+        // Fall back to copy-verify-delete. The source is not removed until the
+        // destination has the same byte length and SHA-256.
         return try {
             sourceFile.copyTo(destinationFile, overwrite = false)
+
+            val sizeMatches = sourceFile.length() == destinationFile.length()
+            val hashMatches = sizeMatches &&
+                sha256(sourceFile).contentEquals(sha256(destinationFile))
+            if (!hashMatches) {
+                destinationFile.delete()
+                return MutationResult.Failure(
+                    "Cross-volume copy could not be verified; the partial destination was removed and the source was kept.",
+                )
+            }
+
             if (!sourceFile.delete()) {
-                // Data isn't lost — the copy landed — but leaving the
-                // original in place rather than silently discarding it
-                // means the caller sees a failure and the file exists
-                // twice, which is safer than the alternative of quietly
-                // losing track of which copy is authoritative.
-                return MutationResult.Failure("Copied to destination but could not remove the original: ${sourceFile.absolutePath}")
+                // Data isn't lost — the verified copy landed — but leaving
+                // the original in place and reporting failure is safer than
+                // pretending a move completed.
+                return MutationResult.Failure(
+                    "Copied and verified the destination but could not remove the original: ${sourceFile.absolutePath}",
+                )
             }
             MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
         } catch (t: Throwable) {
-            MutationResult.Failure("Copy+delete fallback failed: ${t.message}", t)
+            MutationResult.Failure("Copy+verify+delete fallback failed: ${t.message}", t)
         }
+    }
+
+    private fun sha256(file: File): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered(64 * 1024).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest()
     }
 
     private companion object {
