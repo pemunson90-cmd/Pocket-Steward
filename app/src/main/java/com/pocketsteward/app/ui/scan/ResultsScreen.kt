@@ -50,7 +50,6 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
         }
 
         val hasBroadAccess = state.mode == StorageAccessMode.DIRECT
-        val canOrganizeFiles = true
 
         Column(modifier = contentModifier.fillMaxWidth()) {
             ScreenHeadline(
@@ -143,78 +142,74 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
 
-                if (canOrganizeFiles) {
-                    item { SectionHeader("Save this setup") }
-                    item {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(Spacing.base)) {
-                                Text(
-                                    "Save these folders${if (request.isNotBlank()) " + current Ask text" else ""}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                Text(
-                                    if (hasBroadAccess) {
-                                        "Running it later performs a fresh scan before rerunning the request."
-                                    } else {
-                                        "Running it later reopens this same granted tree, rescans it, then reruns the request."
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = Spacing.hairline),
-                                )
-                                OutlinedTextField(
-                                    value = workflowName,
-                                    onValueChange = { workflowName = it },
-                                    placeholder = { Text("Writing cleanup") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                                )
-                                Button(
-                                    onClick = {
-                                        viewModel.saveWorkflow(state, workflowName, request)
-                                        workflowName = ""
-                                    },
-                                    enabled = workflowName.isNotBlank(),
-                                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                                ) {
-                                    Text("Save workflow")
-                                }
+                item { SectionHeader("Save this setup") }
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(Spacing.base)) {
+                            Text(
+                                "Save these folders${if (request.isNotBlank()) " + current Ask text" else ""}",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                if (hasBroadAccess) {
+                                    "Running it later performs a fresh scan before rerunning the request."
+                                } else {
+                                    "Running it later reopens this same granted tree, rescans it, then reruns the request."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = Spacing.hairline),
+                            )
+                            OutlinedTextField(
+                                value = workflowName,
+                                onValueChange = { workflowName = it },
+                                placeholder = { Text("Writing cleanup") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                            )
+                            Button(
+                                onClick = {
+                                    viewModel.saveWorkflow(state, workflowName, request)
+                                    workflowName = ""
+                                },
+                                enabled = workflowName.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                            ) {
+                                Text("Save workflow")
                             }
                         }
                     }
                 }
 
-                if (canOrganizeFiles) {
-                    item { SectionHeader("Organize") }
-                    item {
-                        ActionCard(
-                            title = "Smart cleanup",
-                            supporting = if (includeSubfolders) {
-                                "Organize confident matches, including files already inside folders."
-                            } else {
-                                "Organize confident matches sitting directly in the selected folders."
-                            },
-                            onClick = { viewModel.proposeSmartCleanup(state, includeSubfolders) },
-                        )
-                    }
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = Spacing.base)) {
-                                Text("Include nested files", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "Off by default so existing folder structures stay untouched.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it })
+                item { SectionHeader("Organize") }
+                item {
+                    ActionCard(
+                        title = "Smart cleanup",
+                        supporting = if (includeSubfolders) {
+                            "Organize confident matches, including files already inside folders."
+                        } else {
+                            "Organize confident matches sitting directly in the selected folders."
+                        },
+                        onClick = { viewModel.proposeSmartCleanup(state, includeSubfolders) },
+                    )
+                }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = Spacing.base)) {
+                            Text("Include nested files", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Off by default so existing folder structures stay untouched.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
+                        Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it })
                     }
-
+                }
                 item { SectionHeader("Find") }
                 item {
                     ActionCard(
