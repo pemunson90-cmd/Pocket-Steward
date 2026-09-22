@@ -54,8 +54,6 @@ interface MutationRecordDao {
     )
     fun observeTaskProgress(): Flow<List<TaskJournalProgress>>
 
-    @Query("SELECT COUNT(*) FROM mutation_records")
-    suspend fun countAllMutations(): Int
 
     @Query("SELECT * FROM mutation_records WHERE status = 'PENDING'")
     suspend fun getAllPending(): List<MutationRecord>
