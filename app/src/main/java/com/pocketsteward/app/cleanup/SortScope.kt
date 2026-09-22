@@ -86,6 +86,31 @@ object SortScope {
         }
     }
 
+    /**
+     * Provider-neutral protection inheritance. SAF document URIs do not
+     * necessarily preserve path ancestry as a string prefix, so walk the
+     * indexed directory parent links before falling back to the legacy path
+     * prefix rule.
+     */
+    fun isProtected(
+        candidate: SortCandidate,
+        protectedFolders: Set<String>,
+        candidates: List<SortCandidate>,
+    ): Boolean {
+        var parent = candidate.parentRef ?: return false
+        val parentByRef = candidates
+            .asSequence()
+            .filter { it.isDirectory }
+            .associate { it.stableRef to it.parentRef }
+        val visited = mutableSetOf<String>()
+
+        while (visited.add(parent)) {
+            if (parent in protectedFolders) return true
+            parent = parentByRef[parent] ?: break
+        }
+        return isProtected(candidate, protectedFolders)
+    }
+
     /** True when [candidate] is loose directly in [scopeRoot] rather than inside a subfolder. */
     fun isDirectlyInRoot(candidate: SortCandidate, scopeRoot: String): Boolean =
         candidate.parentRef?.trimEnd('/') == scopeRoot.trimEnd('/')
@@ -109,7 +134,7 @@ object SortScope {
             if (candidate.isDirectory) continue
             if (candidate.displayName == DO_NOT_SORT_MARKER) continue
 
-            if (isProtected(candidate, protectedFolders)) {
+            if (isProtected(candidate, protectedFolders, candidates)) {
                 skippedByProtection++
                 continue
             }
