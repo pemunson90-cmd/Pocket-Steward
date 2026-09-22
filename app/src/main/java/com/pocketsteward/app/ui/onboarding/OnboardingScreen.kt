@@ -57,9 +57,21 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
     // previous run, where the grant already survives.
     val storageAccessState by container.settingsRepository.storageAccessState
         .collectAsState(initial = StorageAccessState())
-    LaunchedEffect(storageAccessState) {
-        if (storageAccessState.mode != null) {
-            onAccessGranted()
+    LaunchedEffect(storageAccessState, broadAccessGranted) {
+        val safGrant = storageAccessState.safTreeUri?.let { saved ->
+            context.contentResolver.persistedUriPermissions.firstOrNull {
+                it.uri.toString() == saved
+            }
+        }
+        val usable = StorageAccessGrantPolicy.isUsable(
+            state = storageAccessState,
+            broadAccessGranted = broadAccessGranted,
+            safReadGranted = safGrant?.isReadPermission == true,
+            safWriteGranted = safGrant?.isWritePermission == true,
+        )
+        when {
+            usable -> onAccessGranted()
+            storageAccessState.mode != null -> viewModel.onStorageAccessInvalid()
         }
     }
 
@@ -67,6 +79,9 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
         contract = ActivityResultContracts.StartActivityForResult(),
     ) {
         broadAccessGranted = Environment.isExternalStorageManager()
+        if (broadAccessGranted) {
+            viewModel.onBroadAccessGranted()
+        }
     }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -78,12 +93,6 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
             viewModel.onSafTreeSelected(uri.toString())
-        }
-    }
-
-    LaunchedEffect(broadAccessGranted) {
-        if (broadAccessGranted) {
-            viewModel.onBroadAccessGranted()
         }
     }
 
@@ -100,11 +109,16 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
 
             Button(
                 onClick = {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:${context.packageName}"),
-                    )
-                    manageStorageLauncher.launch(intent)
+                    if (Environment.isExternalStorageManager()) {
+                        broadAccessGranted = true
+                        viewModel.onBroadAccessGranted()
+                    } else {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:${context.packageName}"),
+                        )
+                        manageStorageLauncher.launch(intent)
+                    }
                 },
                 modifier = Modifier.padding(top = 24.dp),
             ) {
