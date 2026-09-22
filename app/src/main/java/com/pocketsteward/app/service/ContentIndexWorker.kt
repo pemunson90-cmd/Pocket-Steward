@@ -84,5 +84,18 @@ class ContentIndexWorker(
         const val WORK_TAG = "pocket-steward-content-index"
         const val KEY_ROOTS = "source_roots"
         const val KEY_MODE = "storage_mode"
+
+        fun uniqueName(mode: StorageAccessMode, roots: List<String>): String {
+            val canonical = roots
+                .map { it.trimEnd('/') }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
+                .joinToString("|")
+            val stableHash = canonical.fold(0x811c9dc5.toInt()) { hash, ch ->
+                (hash xor ch.code) * 0x01000193
+            }
+            return "pocket-steward-content-index-${mode.name.lowercase()}-${stableHash.toUInt().toString(16)}"
+        }
     }
 }
