@@ -40,6 +40,50 @@ class GeminiNanoAgentModel : AgentModel {
             }
         }
 
+    override suspend fun normalizeIntentRequest(request: String): String? {
+        if (request.isBlank()) return null
+        if (model.checkStatus() != FeatureStatus.AVAILABLE) return null
+
+        val boundedRequest = request.trim().take(MAX_INTENT_INPUT_CHARS)
+        val prompt = buildString {
+            appendLine("You translate one file-management request into Pocket Steward's bounded command grammar.")
+            appendLine("Do not invent filenames, folder names, dates, sizes, search terms, or actions.")
+            appendLine("Preserve user literals and numbers exactly when possible.")
+            appendLine("Allowed command families:")
+            appendLine("- organize [images/documents/APKs/archives/audio/video] [by project] [include subfolders]")
+            appendLine("- find [category or filename term] [containing TEXT] [larger/smaller than SIZE] [older/newer than AGE] [largest/smallest/newest/oldest]")
+            appendLine("- move FILES to DESTINATION")
+            appendLine("- copy FILES to DESTINATION")
+            appendLine("- rename OLD to NEW")
+            appendLine("- rename files matching TERM to TEMPLATE")
+            appendLine("- archive existing archive files")
+            appendLine("- find duplicates")
+            appendLine("Return exactly one line: PSI|CANONICAL_COMMAND")
+            appendLine("If the request cannot be represented without inventing anything, return PSI|UNSUPPORTED")
+            appendLine()
+            appendLine("USER REQUEST:")
+            appendLine(boundedRequest)
+        }
+
+        val response = try {
+            model.generateContent(
+                generateContentRequest(TextPart(prompt)) {
+                    temperature = 0.1f
+                    maxOutputTokens = 220
+                    candidateCount = 1
+                },
+            )
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            return null
+        }
+
+        return IntentNormalizationProtocol.parse(
+            response.candidates.firstOrNull()?.text.orEmpty(),
+        )
+    }
+
     override suspend fun coherenceAudit(
         scopeLabel: String,
         documents: List<SemanticDocument>,
@@ -354,6 +398,7 @@ class GeminiNanoAgentModel : AgentModel {
 
     private companion object {
         const val MAX_DOCUMENTS = 20
+        const val MAX_INTENT_INPUT_CHARS = 1_200
         const val MAX_REASON_CHARS = 400
         const val MAX_GROUP_CHARS = 80
         const val DEFAULT_INPUT_TOKEN_LIMIT = 4000
