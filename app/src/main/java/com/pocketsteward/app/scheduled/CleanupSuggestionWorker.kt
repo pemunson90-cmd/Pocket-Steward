@@ -26,6 +26,7 @@ import androidx.work.WorkerParameters
 import com.pocketsteward.app.MainActivity
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.R
+import com.pocketsteward.app.service.BackgroundWorkPolicy
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.storage.FileRef
@@ -51,12 +52,7 @@ class ScheduledCleanupCoordinator(
             settings.intervalHours.coerceAtLeast(1),
             TimeUnit.HOURS,
         )
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiresBatteryNotLow(true)
-                    .setRequiresStorageNotLow(true)
-                    .build(),
-            )
+            .setConstraints(BackgroundWorkPolicy.scheduledSuggestionConstraints())
             .build()
 
         workManager.enqueueUniquePeriodicWork(
