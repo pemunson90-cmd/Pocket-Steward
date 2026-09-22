@@ -798,20 +798,19 @@ class ScanViewModel(
         autoStarted = true
         viewModelScope.launch {
             try {
-                val access = settingsRepository.storageAccessState.first()
-                if (access.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(
-                        "Saved workflows currently require full storage access.",
-                    )
-                    return@launch
-                }
                 val workflow = settingsRepository.savedWorkflows.first()
                     .firstOrNull { it.id == workflowId }
                 if (workflow == null) {
                     _uiState.value = ScanUiState.Error("That saved workflow no longer exists.")
                     return@launch
                 }
-                val targets = workflow.roots.map { ScanTarget.CustomFolder(it) }
+                val targets = targetsForSavedRoots(workflow.roots, workflow.name)
+                if (targets == null) {
+                    _uiState.value = ScanUiState.Error(
+                        "This saved workflow belongs to a different storage grant. Re-select that folder or switch storage access before running it.",
+                    )
+                    return@launch
+                }
                 _selectedTargets.value = targets
                 startScan(
                     targets = targets,
@@ -829,20 +828,19 @@ class ScanViewModel(
         autoStarted = true
         viewModelScope.launch {
             try {
-                val access = settingsRepository.storageAccessState.first()
-                if (access.mode != StorageAccessMode.DIRECT) {
-                    _uiState.value = ScanUiState.Error(
-                        "Saved content searches currently require full storage access.",
-                    )
-                    return@launch
-                }
                 val saved = settingsRepository.savedSearches.first()
                     .firstOrNull { it.id == searchId }
                 if (saved == null) {
                     _uiState.value = ScanUiState.Error("That saved search no longer exists.")
                     return@launch
                 }
-                val targets = saved.roots.map { ScanTarget.CustomFolder(it) }
+                val targets = targetsForSavedRoots(saved.roots, saved.name)
+                if (targets == null) {
+                    _uiState.value = ScanUiState.Error(
+                        "This saved search belongs to a different storage grant. Re-select that folder or switch storage access before opening it.",
+                    )
+                    return@launch
+                }
                 _selectedTargets.value = targets
                 startScan(
                     targets = targets,
@@ -882,22 +880,59 @@ class ScanViewModel(
     ) {
         viewModelScope.launch {
             try {
-                if (summary.mode != StorageAccessMode.DIRECT ||
-                    summary.scopes.any { it.root !is FileRef.Direct }
-                ) {
-                    _uiState.value = ScanUiState.Error(
-                        "Saved workflows currently require full storage access.",
-                    )
-                    return@launch
-                }
                 settingsRepository.saveWorkflow(
                     name = name,
                     request = request,
-                    roots = summary.scopes.map { (it.root as FileRef.Direct).absolutePath },
+                    roots = summary.scopes.map { it.root.rawValue() },
                 )
             } catch (t: Throwable) {
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
+        }
+    }
+
+    private suspend fun targetsForSavedRoots(
+        roots: List<String>,
+        label: String,
+    ): List<ScanTarget>? {
+        val normalized = roots
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (normalized.isEmpty()) return null
+
+        val access = settingsRepository.storageAccessState.first()
+        return when (access.mode) {
+            StorageAccessMode.DIRECT -> {
+                if (normalized.any { it.startsWith("content://") || it.startsWith("ps-child:") }) {
+                    null
+                } else {
+                    normalized.map(::ScanTarget.CustomFolder)
+                }
+            }
+
+            StorageAccessMode.SAF -> {
+                val treeUri = access.safTreeUri ?: return null
+                val currentRoot = runCatching {
+                    container.gatewayFor(StorageAccessMode.SAF)
+                        .rootOf(
+                            StorageScope.Tree(
+                                rootRef = FileRef.Saf(treeUri),
+                                displayName = label,
+                            ),
+                        )
+                        .rawValue()
+                        .trimEnd('/')
+                }.getOrNull() ?: return null
+
+                if (normalized.size == 1 && normalized.single() == currentRoot) {
+                    listOf(ScanTarget.GrantedFolder(label))
+                } else {
+                    null
+                }
+            }
+
+            null -> null
         }
     }
 
@@ -2451,7 +2486,7 @@ class ScanViewModel(
                 )
             }
         }
-        container.startContentIndexing(roots)
+        container.startContentIndexing(roots, summary.mode)
 
         _uiState.value = ScanUiState.Working(
             label = "Searching indexed contents",
