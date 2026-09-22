@@ -322,6 +322,44 @@ class PlanValidatorTest {
         assertThat(result.rejected).isEmpty()
     }
 
+    @Test
+    fun `SAF move may target a child of a planned directory`() {
+        val root = FileRef.Saf("content://provider/tree/root/document/root")
+        val source = FileRef.Saf("content://provider/tree/root/document/root%2Freport.txt")
+        val plannedFolder = FileRef.Child(root, "Archive")
+        val destination = FileRef.Child(plannedFolder, "report.txt")
+        val index = FakeFileIndex(
+            existing = setOf(source),
+            directories = setOf(root),
+            parents = mapOf(source to root),
+        )
+        val create = PlannedOperation.CreateDirectory(root, "Archive", "destination")
+        val move = PlannedOperation.Move(source, destination, "archive")
+
+        val result = PlanValidator.validate(listOf(create, move), index)
+
+        assertThat(result.accepted).containsExactly(create, move).inOrder()
+        assertThat(result.rejected).isEmpty()
+    }
+
+    @Test
+    fun `SAF copy refuses an already indexed child destination`() {
+        val root = FileRef.Saf("content://provider/tree/root/document/root")
+        val source = FileRef.Saf("content://provider/tree/root/document/root%2Fsource.txt")
+        val destination = FileRef.Child(root, "copy.txt")
+        val index = FakeFileIndex(
+            existing = setOf(source, destination),
+            directories = setOf(root),
+            parents = mapOf(source to root),
+        )
+        val copy = PlannedOperation.Copy(source, destination, "copy")
+
+        val result = PlanValidator.validate(listOf(copy), index)
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("already exists")
+    }
+
 }
 
 class WriteTextFileValidationTest {
