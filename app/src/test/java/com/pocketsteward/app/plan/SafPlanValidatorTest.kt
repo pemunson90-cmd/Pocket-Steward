@@ -100,4 +100,31 @@ class SafPlanValidatorTest {
         val unsafe = runCatching { root.child("../escape") }
         assertThat(unsafe.isFailure).isTrue()
     }
+    @Test
+    fun `rejects recursive SAF directory move`() {
+        val root = FileRef.Saf("content://provider/tree/root/document/root")
+        val folder = FileRef.Saf("content://provider/tree/root/document/root%2FProject")
+        val child = FileRef.Child(folder, "Nested")
+        val destination = FileRef.Child(child, "Project")
+        val index = FakeSafIndex(
+            existing = setOf(root, folder),
+            directories = setOf(root, folder),
+            parents = mapOf(folder to root),
+        )
+
+        val result = PlanValidator.validate(
+            listOf(
+                PlannedOperation.Move(
+                    source = folder,
+                    destination = destination,
+                    reason = "recursive move",
+                ),
+            ),
+            index,
+        )
+
+        assertThat(result.accepted).isEmpty()
+        assertThat(result.rejected.single().reason).contains("recursive move")
+    }
+
 }
