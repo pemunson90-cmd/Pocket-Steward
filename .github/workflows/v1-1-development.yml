@@ -92,6 +92,27 @@ jobs:
             adb shell am start -W -n com.pocketsteward.app/.MainActivity
             adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
 
+            # Lock/wake/unlock around a live app task. There is no PIN on the
+            # CI emulator, so this exercises lifecycle/power transitions
+            # without introducing UI automation credentials.
+            adb shell input keyevent KEYCODE_POWER
+            sleep 2
+            adb shell input keyevent KEYCODE_POWER
+            adb shell input keyevent KEYCODE_MENU
+            sleep 2
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell dumpsys activity activities | grep -q "com.pocketsteward.app/.MainActivity"
+
+            # Special-storage permission loss must fail closed into onboarding,
+            # not crash the process. Restore it immediately afterward so the
+            # reboot smoke runs under the normal direct-storage configuration.
+            adb shell appops set com.pocketsteward.app MANAGE_EXTERNAL_STORAGE deny || true
+            adb shell am force-stop com.pocketsteward.app
+            adb shell am start -W -n com.pocketsteward.app/.MainActivity
+            adb shell pidof com.pocketsteward.app >/dev/null
+            adb shell appops set com.pocketsteward.app MANAGE_EXTERNAL_STORAGE allow || true
+            adb shell am force-stop com.pocketsteward.app
+
             # A real emulator reboot exercises manifest boot wiring and cold
             # startup against the already-created Room/DataStore files.
             adb reboot
