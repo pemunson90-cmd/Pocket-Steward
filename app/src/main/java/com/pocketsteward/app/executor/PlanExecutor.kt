@@ -214,6 +214,17 @@ class PlanExecutor(
                 return@forEachIndexed
             }
 
+            val contentFingerprint = try {
+                journalFingerprint(operation)
+            } catch (t: Throwable) {
+                val reason = "Could not prove source content before mutation: ${t.message ?: t.javaClass.simpleName}"
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, validated.accepted.size)
+                return@forEachIndexed
+            }
+
             val mutationId = mutationRecordDao.insert(
                 newRecord(
                     taskRunId = taskRunId,
@@ -223,10 +234,11 @@ class PlanExecutor(
                     status = MutationStatus.PENDING,
                     executedAt = null,
                     undoState = UndoState.NOT_AVAILABLE,
+                    contentFingerprint = contentFingerprint,
                 ),
             )
 
-            when (val result = runOne(operation)) {
+            when (val result = runOne(operation, contentFingerprint)) {
                 is MutationResult.Success -> {
                     val committed = MutationRecord(
                         id = mutationId,
@@ -235,7 +247,7 @@ class PlanExecutor(
                         operationType = operation.toOperationType(),
                         sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                         destinationAfter = FileRefJournalCodec.encode(result.resultRef),
-                        sourceFingerprint = operation.fingerprintOrNull(),
+                        sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
                         executedAt = System.currentTimeMillis(),
                         undoState = if (result.changed) UndoState.AVAILABLE else UndoState.NOT_AVAILABLE,
@@ -269,7 +281,7 @@ class PlanExecutor(
                             operationType = operation.toOperationType(),
                             sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
-                            sourceFingerprint = operation.fingerprintOrNull(),
+                            sourceFingerprint = contentFingerprint,
                             status = MutationStatus.FAILED,
                             executedAt = System.currentTimeMillis(),
                             undoState = UndoState.NOT_AVAILABLE,
@@ -485,6 +497,17 @@ class PlanExecutor(
                 continue
             }
 
+            val contentFingerprint = try {
+                journalFingerprint(operation)
+            } catch (t: Throwable) {
+                val reason = "Could not prove source content before mutation: ${t.message ?: t.javaClass.simpleName}"
+                recordPreflightFailure(taskRunId, sequence, operation, reason, expectedDestination)
+                failures += operation.toFailure(sequence, reason)
+                failed++
+                onProgress(sequence + 1, operations.size)
+                continue
+            }
+
             val mutationId = mutationRecordDao.insert(
                 newRecord(
                     taskRunId = taskRunId,
@@ -494,10 +517,11 @@ class PlanExecutor(
                     status = MutationStatus.PENDING,
                     executedAt = null,
                     undoState = UndoState.NOT_AVAILABLE,
+                    contentFingerprint = contentFingerprint,
                 ),
             )
 
-            when (val result = runOne(operation)) {
+            when (val result = runOne(operation, contentFingerprint)) {
                 is MutationResult.Success -> {
                     val committed = MutationRecord(
                         id = mutationId,
@@ -506,7 +530,7 @@ class PlanExecutor(
                         operationType = operation.toOperationType(),
                         sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                         destinationAfter = FileRefJournalCodec.encode(result.resultRef),
-                        sourceFingerprint = operation.fingerprintOrNull(),
+                        sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
                         executedAt = System.currentTimeMillis(),
                         undoState = if (result.changed) UndoState.AVAILABLE else UndoState.NOT_AVAILABLE,
@@ -539,7 +563,7 @@ class PlanExecutor(
                             operationType = operation.toOperationType(),
                             sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
                             destinationAfter = expectedDestination?.let(FileRefJournalCodec::encode),
-                            sourceFingerprint = operation.fingerprintOrNull(),
+                            sourceFingerprint = contentFingerprint,
                             status = MutationStatus.FAILED,
                             executedAt = System.currentTimeMillis(),
                             undoState = UndoState.NOT_AVAILABLE,
@@ -603,13 +627,14 @@ class PlanExecutor(
         executedAt: Long?,
         undoState: UndoState,
         error: String? = null,
+        contentFingerprint: String? = operation.fingerprintOrNull(),
     ): MutationRecord = MutationRecord(
         taskRunId = taskRunId,
         sequence = sequence,
         operationType = operation.toOperationType(),
         sourceBefore = FileRefJournalCodec.encode(operation.sourceRef()),
         destinationAfter = destination?.let(FileRefJournalCodec::encode),
-        sourceFingerprint = operation.fingerprintOrNull(),
+        sourceFingerprint = contentFingerprint,
         status = status,
         executedAt = executedAt,
         undoState = undoState,
@@ -627,20 +652,75 @@ class PlanExecutor(
         is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
 
-    private suspend fun runOne(operation: PlannedOperation): MutationResult = try {
+    private suspend fun journalFingerprint(operation: PlannedOperation): String? = when (operation) {
+        is PlannedOperation.Copy -> StorageDigest.sha256(gateway, operation.source)
+        is PlannedOperation.WriteTextFile -> StorageDigest.sha256(operation.content)
+        is PlannedOperation.Trash -> operation.sourceFingerprint
+        else -> null
+    }
+
+    private suspend fun runOne(
+        operation: PlannedOperation,
+        contentFingerprint: String?,
+    ): MutationResult = try {
         when (operation) {
             is PlannedOperation.CreateDirectory -> gateway.createDirectory(operation.parent, operation.name)
             is PlannedOperation.Move -> gateway.move(operation.source, operation.destination)
-            is PlannedOperation.Copy -> gateway.copy(operation.source, operation.destination)
+            is PlannedOperation.Copy -> verifyCreatedContent(
+                result = gateway.copy(operation.source, operation.destination),
+                expectedFingerprint = contentFingerprint,
+                action = "Copied",
+            )
             is PlannedOperation.Rename -> gateway.rename(operation.source, operation.newName)
-            is PlannedOperation.Trash -> gateway.trash(operation.source)
-            is PlannedOperation.WriteTextFile ->
-                gateway.writeTextFile(operation.parent, operation.name, operation.content)
+            is PlannedOperation.Trash -> {
+                if (contentFingerprint != null) {
+                    val actual = StorageDigest.sha256(gateway, operation.source)
+                    if (!actual.equals(contentFingerprint, ignoreCase = true)) {
+                        MutationResult.Failure(
+                            "Source content changed since duplicate review; refusing to move it to Trash.",
+                        )
+                    } else {
+                        gateway.trash(operation.source)
+                    }
+                } else {
+                    gateway.trash(operation.source)
+                }
+            }
+            is PlannedOperation.WriteTextFile -> verifyCreatedContent(
+                result = gateway.writeTextFile(operation.parent, operation.name, operation.content),
+                expectedFingerprint = contentFingerprint,
+                action = "Written",
+            )
         }
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (t: Throwable) {
         MutationResult.Failure(t.message ?: t.javaClass.simpleName, t)
+    }
+
+    private suspend fun verifyCreatedContent(
+        result: MutationResult,
+        expectedFingerprint: String?,
+        action: String,
+    ): MutationResult {
+        if (result !is MutationResult.Success || !result.changed || expectedFingerprint == null) {
+            return result
+        }
+
+        val actual = runCatching { StorageDigest.sha256(gateway, result.resultRef) }.getOrNull()
+        if (actual != null && actual.equals(expectedFingerprint, ignoreCase = true)) {
+            return result
+        }
+
+        val quarantine = runCatching { gateway.trash(result.resultRef) }.getOrNull()
+        val cleanup = when (quarantine) {
+            is MutationResult.Success -> "The unverified output was moved to PocketSteward Trash."
+            is MutationResult.Failure -> "The unverified output could not be quarantined: ${quarantine.reason}"
+            null -> "The unverified output could not be quarantined."
+        }
+        return MutationResult.Failure(
+            "$action content could not be verified against the approved SHA-256. $cleanup",
+        )
     }
 
     private suspend fun reindexAfterMutation(operation: PlannedOperation, newRef: FileRef, scopeRootRef: String) {
