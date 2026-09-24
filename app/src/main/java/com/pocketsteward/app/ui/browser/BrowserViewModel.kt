@@ -20,6 +20,8 @@ import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanValidator
+import com.pocketsteward.app.plan.ReviewedSources
+import com.pocketsteward.app.plan.SourcePrecondition
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.storage.FileRef
@@ -85,6 +87,12 @@ data class PendingPlan(
     internal val index: FileIndex,
     /** Clear the clipboard once this runs (a paste). */
     internal val consumesClipboard: Boolean,
+    /**
+     * Source size/modified-time captured when this sheet was built. Confirm
+     * re-syncs index records from the live files, so without this snapshot an
+     * edit made while the sheet was open would pass as unchanged.
+     */
+    internal val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
 )
 
 data class TaskOutcome(val taskRunId: Long, val message: String, val canUndo: Boolean)
@@ -559,6 +567,9 @@ class BrowserViewModel(
             try {
                 val p = withContext(Dispatchers.IO) { build() }
                 val validated = PlanValidator.validate(p.operations, p.index)
+                val reviewedSources = withContext(Dispatchers.IO) {
+                    ReviewedSources.capture(validated.accepted, gateway)
+                }
                 _state.update {
                     it.copy(
                         working = null,
@@ -569,6 +580,7 @@ class BrowserViewModel(
                             notes = p.notes,
                             index = p.index,
                             consumesClipboard = consumesClipboard,
+                            reviewedSources = reviewedSources,
                         ),
                         message = if (p.operations.isEmpty()) p.notes.joinToString(" ").ifBlank { null } else it.message,
                     )
@@ -598,7 +610,7 @@ class BrowserViewModel(
                 val taskRunId = withContext(Dispatchers.IO) {
                     syncSourceRecords(pending.accepted)
                     container.planExecutor(mode).enqueueApproved(
-                        plan = AgentPlan(pending.goal, pending.accepted),
+                        plan = AgentPlan(pending.goal, pending.accepted, pending.reviewedSources),
                         scopeRootRef = scopeRoot,
                         storageAccessMode = mode,
                         index = pending.index,

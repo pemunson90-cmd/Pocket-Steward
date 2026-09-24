@@ -17,6 +17,7 @@ import com.pocketsteward.app.plan.FileIndex
 import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.plan.RejectedOperation
+import com.pocketsteward.app.plan.ReviewedSources
 import com.pocketsteward.app.plan.SourcePrecondition
 import com.pocketsteward.app.plan.SourcePreconditions
 import com.pocketsteward.app.plan.ValidatedPlan
@@ -121,7 +122,7 @@ class PlanExecutor(
             "Approved task validation did not preserve every selected operation."
         }
 
-        val sourcePreconditions = captureApprovalPreconditions(validated.accepted)
+        val sourcePreconditions = captureApprovalPreconditions(validated.accepted, plan.reviewedSources)
 
         val startedAt = System.currentTimeMillis()
         return taskRunDao.insert(
@@ -161,7 +162,7 @@ class PlanExecutor(
     ): ExecutionSummary {
         val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, effectiveIndex)
-        val sourcePreconditions = captureApprovalPreconditions(validated.accepted)
+        val sourcePreconditions = captureApprovalPreconditions(validated.accepted, plan.reviewedSources)
 
         val startedAt = System.currentTimeMillis()
         val taskRunId = taskRunDao.insert(
@@ -704,19 +705,37 @@ class PlanExecutor(
         }
     }
 
+    /**
+     * Pins each source's identity into the durable plan. A source the user
+     * reviewed is compared with the review-time snapshot (what they actually
+     * approved); the scan index is only a fallback for sources with no
+     * snapshot, because background refreshes and pre-enqueue record syncs keep
+     * the index in step with the live file and so cannot detect an edit made
+     * after review.
+     */
     private suspend fun captureApprovalPreconditions(
         operations: List<PlannedOperation>,
+        reviewedSources: Map<String, SourcePrecondition>,
     ): Map<Int, SourcePrecondition> {
         val result = linkedMapOf<Int, SourcePrecondition>()
         for ((sequence, operation) in operations.withIndex()) {
             val source = operation.preconditionSource() ?: continue
-            if (!gateway.exists(source)) continue
+            val key = source.rawValue()
+            val reviewed = reviewedSources[key]
+            val exists = gateway.exists(source)
+            val current = if (exists) SourcePreconditions.from(gateway.stat(source)) else null
 
-            val current = SourcePreconditions.from(gateway.stat(source)) ?: continue
-            val indexed = fileRecordDao.getByStableRef(source.rawValue())
+            if (reviewed != null) {
+                ReviewedSources.failure(key, reviewed, exists, current)?.let { error(it) }
+                result[sequence] = current!!
+                continue
+            }
+
+            if (current == null) continue
+            val indexed = fileRecordDao.getByStableRef(key)
                 ?.let { SourcePreconditions.from(it) }
             if (indexed != null && !SourcePreconditions.matches(indexed, current)) {
-                error("Source changed since the scan and must be reviewed again: ${source.rawValue()}")
+                error("Source changed since the scan and must be reviewed again: $key")
             }
             result[sequence] = current
         }

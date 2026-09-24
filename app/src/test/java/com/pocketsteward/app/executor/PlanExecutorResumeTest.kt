@@ -158,6 +158,144 @@ class PlanExecutorResumeTest {
         assertThat(journal.error).contains("stopped for review")
     }
 
+
+    // --- Review-time source snapshot (open item #1) -----------------------
+
+    private fun idleTaskDao() = FakeTaskRunDao(
+        TaskRun(
+            id = 1,
+            requestText = "earlier",
+            startedAt = 0L,
+            completedAt = 1L,
+            status = TaskRunStatus.COMPLETED,
+            scanSnapshotId = null,
+            planJson = "",
+            summary = null,
+            scopeRootRef = "/Download",
+            storageAccessMode = StorageAccessMode.DIRECT,
+            undoCompletedAt = null,
+        ),
+    )
+
+    private class SimpleIndex(
+        private val directories: Set<FileRef>,
+        private val files: Set<FileRef>,
+    ) : com.pocketsteward.app.plan.FileIndex {
+        override fun exists(ref: FileRef) = ref in directories || ref in files
+        override fun isDirectory(ref: FileRef) = ref in directories
+        override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? = null
+    }
+
+    private fun reviewScenario(): Triple<FakeGateway, FakeFileRecordDao, SimpleIndex> {
+        val gateway = FakeGateway(
+            mutableSetOf(FileRef.Direct("/Download"), FileRef.Direct("/Documents"), sourceA),
+        )
+        val files = FakeFileRecordDao().apply { seed(fileRecord(sourceA), "/Download") }
+        val index = SimpleIndex(
+            directories = setOf(FileRef.Direct("/Download"), FileRef.Direct("/Documents")),
+            files = setOf(sourceA),
+        )
+        return Triple(gateway, files, index)
+    }
+
+    @Test
+    fun sourceEditedAfterReview_isRefusedEvenWhenIndexWasRefreshedToMatch() = runTest {
+        val (gateway, files, index) = reviewScenario()
+        val reviewed = com.pocketsteward.app.plan.ReviewedSources.capture(
+            listOf(PlannedOperation.Move(sourceA, destinationA, "move")),
+            gateway,
+        )
+        // User looks at the preview; meanwhile the file is edited...
+        gateway.sizes[sourceA] = 9L
+        gateway.modified[sourceA] = 50L
+        // ...and the background library refresh rewrites its index record to match.
+        files.update(fileRecord(sourceA).copy(sizeBytes = 9L, modifiedAt = 50L))
+        val taskDao = idleTaskDao()
+        val mutations = FakeMutationDao(mutableListOf())
+
+        val failure = runCatching {
+            PlanExecutor(gateway, files, taskDao, mutations).enqueueApproved(
+                plan = com.pocketsteward.app.plan.AgentPlan(
+                    "move",
+                    listOf(PlannedOperation.Move(sourceA, destinationA, "move")),
+                    reviewed,
+                ),
+                scopeRootRef = "/Download",
+                storageAccessMode = StorageAccessMode.DIRECT,
+                index = index,
+            )
+        }.exceptionOrNull()
+
+        assertThat(failure).isNotNull()
+        assertThat(failure!!.message).contains("changed after you reviewed")
+        assertThat(taskDao.current.id).isEqualTo(1L)
+        assertThat(gateway.moveCalls).isEmpty()
+        assertThat(gateway.exists(sourceA)).isTrue()
+    }
+
+    @Test
+    fun withoutReviewSnapshot_refreshedIndexHidesTheEdit_documentingTheOldGap() = runTest {
+        val (gateway, files, index) = reviewScenario()
+        gateway.sizes[sourceA] = 9L
+        gateway.modified[sourceA] = 50L
+        files.update(fileRecord(sourceA).copy(sizeBytes = 9L, modifiedAt = 50L))
+        val taskDao = idleTaskDao()
+
+        val id = PlanExecutor(gateway, files, taskDao, FakeMutationDao(mutableListOf())).enqueueApproved(
+            plan = com.pocketsteward.app.plan.AgentPlan("move", listOf(PlannedOperation.Move(sourceA, destinationA, "move"))),
+            scopeRootRef = "/Download",
+            storageAccessMode = StorageAccessMode.DIRECT,
+            index = index,
+        )
+
+        // Index-only comparison cannot see the change; this is why review surfaces now capture a snapshot.
+        assertThat(taskDao.current.id).isEqualTo(id)
+    }
+
+    @Test
+    fun unchangedReviewedSource_enqueuesWithPinnedPrecondition() = runTest {
+        val (gateway, files, index) = reviewScenario()
+        val operation = PlannedOperation.Move(sourceA, destinationA, "move")
+        val reviewed = com.pocketsteward.app.plan.ReviewedSources.capture(listOf(operation), gateway)
+        val taskDao = idleTaskDao()
+
+        val id = PlanExecutor(gateway, files, taskDao, FakeMutationDao(mutableListOf())).enqueueApproved(
+            plan = com.pocketsteward.app.plan.AgentPlan("move", listOf(operation), reviewed),
+            scopeRootRef = "/Download",
+            storageAccessMode = StorageAccessMode.DIRECT,
+            index = index,
+        )
+
+        assertThat(reviewed).containsKey(sourceA.absolutePath)
+        assertThat(taskDao.current.id).isEqualTo(id)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.RUNNING)
+        val durable = DurablePlanCodec.decodeOrNull(taskDao.current.planJson)
+        assertThat(durable!!.sourcePreconditions[0]).isEqualTo(reviewed[sourceA.absolutePath])
+        assertThat(gateway.moveCalls).isEmpty()
+    }
+
+    @Test
+    fun reviewedSourceDeletedBeforeApproval_isRefused() = runTest {
+        val (gateway, files, index) = reviewScenario()
+        val operation = PlannedOperation.Move(sourceA, destinationA, "move")
+        val reviewed = com.pocketsteward.app.plan.ReviewedSources.capture(listOf(operation), gateway)
+        val taskDao = idleTaskDao()
+        // Validation index still believes the file exists (stale snapshot); the live file is gone.
+        val gone = FakeGateway(mutableSetOf(FileRef.Direct("/Download"), FileRef.Direct("/Documents")))
+
+        val failure = runCatching {
+            PlanExecutor(gone, files, taskDao, FakeMutationDao(mutableListOf())).enqueueApproved(
+                plan = com.pocketsteward.app.plan.AgentPlan("move", listOf(operation), reviewed),
+                scopeRootRef = "/Download",
+                storageAccessMode = StorageAccessMode.DIRECT,
+                index = index,
+            )
+        }.exceptionOrNull()
+
+        assertThat(failure?.message).contains("disappeared after you reviewed")
+        assertThat(taskDao.current.id).isEqualTo(1L)
+    }
+
     private fun fileRecord(ref: FileRef.Direct) = FileRecord(
         stableRef = ref.absolutePath,
         displayName = ref.absolutePath.substringAfterLast('/'),
@@ -178,6 +316,8 @@ class PlanExecutorResumeTest {
         private val failMoveAfterCreatingDestination: Boolean = false,
     ) : StorageGateway {
         val moveCalls = mutableListOf<Pair<FileRef, FileRef>>()
+        val sizes = mutableMapOf<FileRef, Long>()
+        val modified = mutableMapOf<FileRef, Long>()
 
         override suspend fun rootOf(scope: StorageScope): FileRef = FileRef.Direct("/")
         override suspend fun listChildren(directory: FileRef): List<FileEntry> = emptyList()
@@ -190,9 +330,9 @@ class PlanExecutorResumeTest {
                 displayName = direct.absolutePath.substringAfterLast('/'),
                 extension = if (directory) "" else "txt",
                 mimeType = if (directory) null else "text/plain",
-                sizeBytes = if (directory) 0L else 4L,
+                sizeBytes = if (directory) 0L else (sizes[ref] ?: 4L),
                 createdAtEpochMs = null,
-                modifiedAtEpochMs = 1L,
+                modifiedAtEpochMs = modified[ref] ?: 1L,
                 isDirectory = directory,
                 isHidden = false,
             )

@@ -65,6 +65,8 @@ import com.pocketsteward.app.report.duplicateTrashReason
 import com.pocketsteward.app.picker.PickerFolder
 import com.pocketsteward.app.plan.RejectedOperation
 import com.pocketsteward.app.plan.ReviewedPlanPackage
+import com.pocketsteward.app.plan.ReviewedSources
+import com.pocketsteward.app.plan.SourcePrecondition
 import com.pocketsteward.app.rules.RuleEngine
 import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.LastScanRoot
@@ -207,6 +209,13 @@ sealed interface ScanUiState {
          * of it rather than the scan index, which for such a folder is empty.
          */
         val unindexedFolder: FileRef? = null,
+        /**
+         * Size/modified-time of every source as it was when this preview was
+         * built, keyed by raw ref. Approval refuses any source that no longer
+         * matches, even if the scan index has since been refreshed to agree
+         * with the changed file.
+         */
+        val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
@@ -1129,6 +1138,9 @@ class ScanViewModel(
             mode = mode,
         )
         val validated = PlanValidator.validate(operations, index)
+        val reviewedSources = withContext(Dispatchers.IO) {
+            ReviewedSources.capture(validated.accepted, container.gatewayFor(mode))
+        }
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
@@ -1139,6 +1151,7 @@ class ScanViewModel(
             },
             scopeNotes = scopeNotes,
             authorizedDestinationRoots = authorizedDestinationRoots,
+            reviewedSources = reviewedSources,
         )
     }
 
@@ -1199,6 +1212,9 @@ class ScanViewModel(
         val gateway = container.gatewayFor(mode)
         val children = withContext(Dispatchers.IO) { gateway.listChildren(folder) }
         val validated = PlanValidator.validate(operations, SingleFolderIndex(folder, children))
+        val reviewedSources = withContext(Dispatchers.IO) {
+            ReviewedSources.capture(validated.accepted, gateway)
+        }
         val scope = ScanScope(root.displayScopeLabel(), root)
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
@@ -1207,6 +1223,7 @@ class ScanViewModel(
             scopes = listOf(scope),
             acceptedScopeLabels = List(validated.accepted.size) { scope.label },
             unindexedFolder = folder,
+            reviewedSources = reviewedSources,
         )
     }
 
@@ -1236,7 +1253,7 @@ class ScanViewModel(
                     return@launch
                 }
                 val executor = container.planExecutor(mode)
-                val plan = AgentPlan(preview.goal, selectedOperations)
+                val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
                     buildAuthorizedPlanIndex(

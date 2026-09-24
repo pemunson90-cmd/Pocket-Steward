@@ -91,6 +91,12 @@ sealed interface PlannedOperation {
 data class AgentPlan(
     val goal: String,
     val operations: List<PlannedOperation>,
+    /**
+     * Source identities captured when this plan was shown for review, keyed
+     * by [com.pocketsteward.app.storage.FileRef.rawValue]. Empty for plans
+     * that never passed through a review surface.
+     */
+    val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
 )
 
 /** Plan Section 13. Classified deterministically from operation type alone — never from a model's self-reported confidence, which is a UI hint at most. */
