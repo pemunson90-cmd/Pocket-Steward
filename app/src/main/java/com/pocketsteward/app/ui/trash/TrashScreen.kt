@@ -1,5 +1,16 @@
 package com.pocketsteward.app.ui.trash
 
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.pocketsteward.app.ui.components.FileVisual
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,19 +71,28 @@ fun TrashScreen(onBack: () -> Unit) {
                 title = { Text(stringResource(R.string.trash_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
             )
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            Text(text = stringResource(R.string.trash_policy))
+            Text(
+                text = stringResource(R.string.trash_policy),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             (restoreState as? RestoreState.Failed)?.let { failed ->
-                Card(onClick = viewModel::dismissError, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Card(
+                    onClick = viewModel::dismissError,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                ) {
                     Text(
                         text = "Couldn't restore: ${failed.reason}. Tap to dismiss.",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.padding(12.dp),
                     )
                 }
@@ -83,7 +103,11 @@ fun TrashScreen(onBack: () -> Unit) {
                 return@Column
             }
 
-            Text(text = "${trashed.size} file(s) in trash", modifier = Modifier.padding(top = 16.dp))
+            Text(
+                text = "${trashed.size} file(s) in trash",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 16.dp),
+            )
 
             LazyColumn(
                 modifier = Modifier.weight(1f).padding(top = 8.dp),
@@ -94,6 +118,7 @@ fun TrashScreen(onBack: () -> Unit) {
                         file = file,
                         restoring = (restoreState as? RestoreState.Restoring)?.mutationId == file.mutationId,
                         onRestore = { viewModel.restore(file.mutationId) },
+                        modifier = Modifier.animateItem(),
                     )
                 }
             }
@@ -102,25 +127,76 @@ fun TrashScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun TrashedFileCard(file: TrashedFile, restoring: Boolean, onRestore: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(text = file.displayName)
-            Text(text = "From ${file.originalPath}")
-            file.keptInsteadPath?.let {
-                Text(text = "Kept instead: $it")
-            }
-            file.trashedAt?.let {
+private fun TrashedFileCard(
+    file: TrashedFile,
+    restoring: Boolean,
+    onRestore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = LocalHapticFeedback.current
+    Card(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Badge only: the bytes now live inside Trash, not at the path
+            // this row names, so there is nothing honest to preview here.
+            FileVisual(name = file.displayName, location = null)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics(mergeDescendants = true) {},
+            ) {
                 Text(
-                    text = "Trashed ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}",
+                    text = file.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            }
-
-            if (restoring) {
-                CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp))
-            } else {
-                Card(onClick = onRestore, modifier = Modifier.padding(top = 8.dp)) {
-                    Text(text = "Restore", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                Text(
+                    text = "From ${file.originalPath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                file.keptInsteadPath?.let {
+                    Text(
+                        text = "Kept instead: $it",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                file.restoreBlockedReason?.let { reason ->
+                    Text(
+                        text = "Restore blocked. Retry rechecks the folder: $reason",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                file.trashedAt?.let {
+                    Text(
+                        text = "Trashed ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                if (restoring) {
+                    CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp).size(24.dp), strokeWidth = 2.dp)
+                } else {
+                    FilledTonalButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                            onRestore()
+                        },
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .semantics { contentDescription = "Restore ${file.displayName} to its original folder" },
+                    ) {
+                        Text(text = if (file.restoreBlockedReason == null) "Restore" else "Retry restore")
+                    }
                 }
             }
         }

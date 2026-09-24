@@ -14,6 +14,9 @@ import androidx.activity.enableEdgeToEdge
 import com.pocketsteward.app.navigation.PocketStewardNavHost
 import com.pocketsteward.app.navigation.Routes
 import com.pocketsteward.app.ui.theme.PocketStewardTheme
+import com.pocketsteward.app.data.settings.UiSettings
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,10 +63,16 @@ class MainActivity : ComponentActivity() {
             "explore", "search" -> Routes.SCAN_FLOW
             "tasks" -> Routes.HISTORY
             "scheduled" -> Routes.scanFlowScheduledReview()
-            else -> Routes.HOME
+            "home" -> Routes.HOME
+            else -> Routes.FILES
         }
+        val settingsRepository = (application as PocketStewardApplication).container.settingsRepository
         setContent {
-            PocketStewardTheme {
+            val ui by settingsRepository.uiSettings.collectAsState(initial = UiSettings())
+            PocketStewardTheme(
+                wallpaperColors = ui.wallpaperColorsEnabled,
+                thumbnailsEnabled = ui.thumbnailsEnabled,
+            ) {
                 PocketStewardNavHost(
                     startDestination = Routes.ONBOARDING,
                     postOnboardingDestination = afterOnboarding,

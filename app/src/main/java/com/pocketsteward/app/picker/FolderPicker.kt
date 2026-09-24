@@ -92,9 +92,10 @@ object FolderPicker {
 /**
  * Spec 2d. Most recent first, capped, no duplicates.
  *
- * Stored in DataStore rather than Room, deliberately: `AppDatabase` is on
- * `fallbackToDestructiveMigration` and holds undo journals for runs of several
- * thousand operations, so a new entity would destroy them. `SettingsRepository`
+ * Stored in DataStore rather than Room, deliberately. When this was written
+ * `AppDatabase` was on `fallbackToDestructiveMigration`, so a new entity would
+ * have destroyed the undo journals. It now uses real migrations; a preference
+ * list still needs no schema change at all. `SettingsRepository`
  * already serialises a list into one preference string for project keywords;
  * this follows that pattern exactly.
  */

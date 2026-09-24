@@ -22,8 +22,8 @@ android {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 32
-        versionName = "1.0.0-rc2"
+        versionCode = 39
+        versionName = "1.3.1-dev1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -46,6 +46,7 @@ android {
 
     buildTypes {
         release {
+            canonicalDevelopmentSigning?.let { signingConfig = it }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -113,6 +114,9 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.work:work-runtime-ktx:2.10.3")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // Maintained EXIF reader. The platform android.media.ExifInterface has
+    // format bugs fixed only in this library and lint flags it.
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
@@ -131,6 +135,11 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("app.cash.turbine:turbine:1.2.0")
     testImplementation("com.google.truth:truth:1.4.4")
+    // Test-only: run Room migration SQL against a real SQLite database on the
+    // JVM, and read the committed app/schemas/*.json files to compare the
+    // migrated tables with what Room expects. Neither ships in the APK.
+    testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")
+    testImplementation("com.google.code.gson:gson:2.11.0")
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.room:room-testing:2.8.4")

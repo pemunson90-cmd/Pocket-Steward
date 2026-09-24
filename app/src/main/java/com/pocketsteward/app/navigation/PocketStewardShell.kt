@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
@@ -29,10 +30,21 @@ import com.pocketsteward.app.ui.scan.ScanFlow
 private data class AppDestination(
     val label: String,
     val route: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    val drawable: Int? = null,
 )
 
+@Composable
+private fun AppDestination.Glyph() {
+    if (icon != null) {
+        Icon(icon, contentDescription = label)
+    } else if (drawable != null) {
+        Icon(androidx.compose.ui.res.painterResource(drawable), contentDescription = label, modifier = Modifier.size(24.dp))
+    }
+}
+
 private val appDestinations = listOf(
+    AppDestination("Files", Routes.FILES, drawable = com.pocketsteward.app.R.drawable.ic_notification),
     AppDestination("Home", Routes.HOME, Icons.Default.Home),
     AppDestination("Explore", Routes.SCAN_FLOW, Icons.Default.Search),
     AppDestination("Tasks", Routes.HISTORY, Icons.Default.Menu),
@@ -58,7 +70,7 @@ fun PocketStewardShell(
                         NavigationRailItem(
                             selected = destination.matches(current),
                             onClick = { navController.navigateTopLevel(destination.route) },
-                            icon = { Icon(destination.icon, contentDescription = destination.label) },
+                            icon = { destination.Glyph() },
                             label = { Text(destination.label) },
                         )
                     }
@@ -77,7 +89,7 @@ fun PocketStewardShell(
                                 NavigationBarItem(
                                     selected = destination.matches(current),
                                     onClick = { navController.navigateTopLevel(destination.route) },
-                                    icon = { Icon(destination.icon, contentDescription = destination.label) },
+                                    icon = { destination.Glyph() },
                                     label = { Text(destination.label) },
                                 )
                             }
@@ -91,7 +103,7 @@ fun PocketStewardShell(
     }
 }
 
-private fun NavHostController.navigateTopLevel(route: String) {
+internal fun NavHostController.navigateTopLevel(route: String) {
     navigate(route) {
         launchSingleTop = true
         restoreState = true

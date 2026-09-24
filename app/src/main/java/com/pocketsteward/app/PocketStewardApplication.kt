@@ -38,6 +38,32 @@ class PocketStewardApplication : Application() {
             }
         }
 
+        // Background library: keep the schedule matching the setting, and
+        // refresh quietly on open when the inventory is getting old, so the
+        // browser and scans start from current data.
+        appScope.launch {
+            runCatching {
+                val settings = container.settingsRepository
+                val library = settings.librarySettings.first()
+                com.pocketsteward.app.service.LibraryRefreshWorker.sync(
+                    this@PocketStewardApplication,
+                    library.backgroundRefreshEnabled,
+                )
+                val access = settings.storageAccessState.first()
+                if (library.backgroundRefreshEnabled && access.mode != null) {
+                    val last = container.library.status(access).lastCompletedAt
+                    if (!com.pocketsteward.app.library.LibraryPolicy.isFresh(
+                            last,
+                            System.currentTimeMillis(),
+                            com.pocketsteward.app.library.LibraryPolicy.REFRESH_ON_OPEN_AFTER_MS,
+                        )
+                    ) {
+                        com.pocketsteward.app.service.LibraryRefreshWorker.runNow(this@PocketStewardApplication, forced = false)
+                    }
+                }
+            }
+        }
+
         // A process death during read-only indexing leaves the current job
         // RUNNING with a file-granular cursor. When the user opens the app
         // again, restart only jobs that were running/queued; an explicit

@@ -1,5 +1,10 @@
 package com.pocketsteward.app.ui.history
 
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import com.pocketsteward.app.ui.components.SmoothProgressBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -95,8 +100,8 @@ fun HistoryScreen(
 
                 is HistoryActionState.Undoing -> {
                     if (action.total > 0) {
-                        LinearProgressIndicator(
-                            progress = { action.completed.toFloat() / action.total.toFloat() },
+                        SmoothProgressBar(
+                            fraction = action.completed.toFloat() / action.total.toFloat(),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
@@ -189,20 +194,26 @@ private fun ConfirmUndoCard(
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("Undo ${action.operationCount} changes?")
+            Text("Undo ${action.operationCount} changes?", style = MaterialTheme.typography.titleMedium)
             Text(
                 "This moves every one of them back where it came from. " +
                     "Nothing is deleted either way, but it is a large change to make by accident.",
                 modifier = Modifier.padding(top = 4.dp),
             )
             Row(modifier = Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Card(onClick = onConfirm) {
-                    Text("Undo all ${action.operationCount}", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                Button(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        onConfirm()
+                    },
+                ) {
+                    Text("Undo all ${action.operationCount}")
                 }
-                Card(onClick = onCancel) {
-                    Text("Cancel", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                OutlinedButton(onClick = onCancel) {
+                    Text("Cancel")
                 }
             }
         }
@@ -255,41 +266,41 @@ private fun ManifestCard(
             if (exportedTo != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     onOpen?.let { action ->
-                        Card(onClick = action) {
-                            Text("Open manifest", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        OutlinedButton(onClick = action) {
+                            Text("Open manifest")
                         }
                     }
                     onShowFolder?.let { action ->
-                        Card(onClick = action) {
-                            Text("Show folder", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        OutlinedButton(onClick = action) {
+                            Text("Show folder")
                         }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     onShare?.let { action ->
-                        Card(onClick = action) {
-                            Text("Share", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                        OutlinedButton(onClick = action) {
+                            Text("Share")
                         }
                     }
-                    Card(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
-                        Text("Export Markdown", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
+                        Text("Export Markdown")
                     }
-                    Card(onClick = { onExport(ManifestFormat.JSON) }) {
-                        Text("Export JSON", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = { onExport(ManifestFormat.JSON) }) {
+                        Text("Export JSON")
                     }
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Card(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
-                        Text("Export Markdown", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
+                        Text("Export Markdown")
                     }
-                    Card(onClick = { onExport(ManifestFormat.JSON) }) {
-                        Text("Export JSON", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = { onExport(ManifestFormat.JSON) }) {
+                        Text("Export JSON")
                     }
                 }
             }
-            Card(onClick = onDismiss) {
-                Text("Back", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+            OutlinedButton(onClick = onDismiss) {
+                Text("Back")
             }
         }
     }
@@ -321,8 +332,8 @@ private fun TaskCard(
                 (task.status == TaskRunStatus.RUNNING || task.status == TaskRunStatus.CANCELLED)
             ) {
                 val completed = progress.journaledCount.coerceAtMost(durableTotal.toLong()).toInt()
-                LinearProgressIndicator(
-                    progress = { completed.toFloat() / durableTotal.toFloat() },
+                SmoothProgressBar(
+                    fraction = completed.toFloat() / durableTotal.toFloat(),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
                 Text(
@@ -355,17 +366,17 @@ private fun TaskCard(
                     }
                 }
                 if (task.status == TaskRunStatus.RUNNING && DurablePlanCodec.isDurable(task.planJson)) {
-                    Card(onClick = onPause) {
-                        Text("Pause", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = onPause) {
+                        Text("Pause")
                     }
                 }
                 if (task.status.isUndoable()) {
-                    Card(onClick = onUndo) {
-                        Text("Undo", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                    OutlinedButton(onClick = onUndo) {
+                        Text("Undo")
                     }
                 }
-                Card(onClick = onManifest) {
-                    Text("Manifest", modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                OutlinedButton(onClick = onManifest) {
+                    Text("Manifest")
                 }
             }
 
@@ -384,7 +395,8 @@ private fun TaskRunStatus.isUndoable(): Boolean =
     this == TaskRunStatus.COMPLETED ||
         this == TaskRunStatus.PARTIAL ||
         this == TaskRunStatus.FAILED ||
-        this == TaskRunStatus.CANCELLED
+        this == TaskRunStatus.CANCELLED ||
+        this == TaskRunStatus.UNDO_PARTIAL
 
 @Composable
 private fun TaskRunStatus.statusColor(): Color = when (this) {

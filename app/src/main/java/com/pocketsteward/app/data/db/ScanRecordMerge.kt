@@ -8,7 +8,12 @@ package com.pocketsteward.app.data.db
  * hashes/content/derived metadata so later on-demand work cannot reuse stale
  * evidence.
  */
-fun mergeScanRecord(existing: FileRecord, scanned: FileRecord): FileRecord {
+fun mergeScanRecord(existing: FileRecord, rawScanned: FileRecord): FileRecord {
+    // Two walks can overlap (the background library over all storage and a
+    // folder scan inside it). Keeping the newest sighting means a walk that
+    // started earlier cannot stamp a file back to its older start time and
+    // make the later walk think the file vanished.
+    val scanned = rawScanned.copy(lastScannedAt = maxOf(existing.lastScannedAt, rawScanned.lastScannedAt))
     val contentUnchanged =
         existing.sizeBytes == scanned.sizeBytes &&
             existing.modifiedAt == scanned.modifiedAt &&

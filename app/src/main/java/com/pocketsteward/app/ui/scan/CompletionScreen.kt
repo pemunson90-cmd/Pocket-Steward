@@ -1,5 +1,8 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.pocketsteward.app.ui.components.SmoothProgressBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,8 +66,8 @@ fun CompletionScreen(
                     },
                 )
                 if (progress.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { progress.completed.toFloat() / progress.total.toFloat() },
+                    SmoothProgressBar(
+                        fraction = progress.completed.toFloat() / progress.total.toFloat(),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
@@ -139,8 +142,8 @@ private fun ExecutionQueued(
             supporting = "$completed of $total operation(s) recorded · task #${state.taskRunId}",
         )
 
-        LinearProgressIndicator(
-            progress = { (completed.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
+        SmoothProgressBar(
+            fraction = (completed.toFloat() / total.toFloat()).coerceIn(0f, 1f),
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -186,8 +189,14 @@ private fun ExecutionQueued(
                 status == TaskRunStatus.CANCELLED -> {
                     Button(onClick = onResume) { Text("Resume") }
                 }
-                status == TaskRunStatus.COMPLETED || status == TaskRunStatus.PARTIAL -> {
-                    OutlinedButton(onClick = onUndo) { Text("Undo task") }
+                status == TaskRunStatus.COMPLETED || status == TaskRunStatus.PARTIAL || status == TaskRunStatus.UNDO_PARTIAL -> {
+                    val haptics = LocalHapticFeedback.current
+                OutlinedButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        onUndo()
+                    },
+                ) { Text(if (status == TaskRunStatus.UNDO_PARTIAL) "Retry blocked undo" else "Undo task") }
                 }
             }
             OutlinedButton(onClick = onOpenTask) { Text("Open task") }
@@ -221,7 +230,8 @@ private fun ExecutionDone(
                 if (summary.filesRenamed > 0) add("${summary.filesRenamed} renamed")
                 if (summary.filesTrashed > 0) add("${summary.filesTrashed} moved to Trash")
                 if (summary.filesWritten > 0) add("${summary.filesWritten} file(s) written")
-                if (summary.failed > 0) add("${summary.failed} didn't work")
+                if (summary.protectionBlocked > 0) add("${summary.protectionBlocked} blocked by protection checks")
+                if (summary.failed > summary.protectionBlocked) add("${summary.failed-summary.protectionBlocked} failed for other reasons")
                 if (summary.leftUntouched.isNotEmpty()) add("${summary.leftUntouched.size} left untouched")
             }.joinToString(" · ").ifBlank { "Nothing changed." },
         )
@@ -255,7 +265,7 @@ private fun ExecutionDone(
             // "Partly done", which read as a contradiction. The status
             // describes the run; this describes the operations in it.
             if (summary.failures.isNotEmpty()) {
-                item { SectionHeader("Didn't work (${summary.failures.size})") }
+                item { SectionHeader("Uncompleted operations (${summary.failures.size}); protection blocks included") }
                 items(summary.failures) { failure ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -301,7 +311,13 @@ private fun ExecutionDone(
 
         ActionRow {
             if (summary.succeededTotal > 0) {
-                OutlinedButton(onClick = onUndo) { Text("Undo this task") }
+                val haptics = LocalHapticFeedback.current
+                OutlinedButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        onUndo()
+                    },
+                ) { Text("Undo this task") }
             }
             OutlinedButton(onClick = onOpenTask) { Text("Review task") }
             Button(onClick = onDone) { Text("Done") }
@@ -316,7 +332,8 @@ private fun UndoDone(summary: UndoSummary, onDone: () -> Unit, modifier: Modifie
             text = if (summary.complete) "Put back" else "Undo needs attention",
             supporting = buildList {
                 add("${summary.undone} restored")
-                if (summary.blocked > 0) add("${summary.blocked} blocked")
+                if (summary.protectionBlocked > 0) add("${summary.protectionBlocked} blocked by protection checks")
+                if (summary.otherBlocked > 0) add("${summary.otherBlocked} blocked for other reasons")
                 if (summary.skipped > 0) add("${summary.skipped} skipped")
             }.joinToString(" · "),
         )

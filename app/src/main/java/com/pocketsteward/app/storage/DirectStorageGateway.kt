@@ -2,6 +2,7 @@ package com.pocketsteward.app.storage
 
 import android.content.Context
 import android.os.Environment
+import android.os.storage.StorageManager
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.InputStream
@@ -22,6 +23,25 @@ class DirectStorageGateway(
     private val context: Context,
 ) : StorageGateway {
 
+    /**
+     * Free space that can actually be used for a write into [dir].
+     *
+     * `File.usableSpace` ignores cached data Android will clear on demand, so on
+     * a nearly full phone it under-reports and a move or copy is refused while
+     * there is room. `StorageManager.getAllocatableBytes` counts that clearable
+     * cache. The larger of the two is used, so this can only ever allow what
+     * the old check allowed or more, never less; any failure falls back to the
+     * old number.
+     */
+    private fun availableBytes(dir: File): Long {
+        val usable = dir.usableSpace
+        val allocatable = runCatching {
+            val storage = context.getSystemService(StorageManager::class.java)
+            storage.getAllocatableBytes(storage.getUuidForPath(dir))
+        }.getOrNull() ?: return usable
+        return maxOf(usable, allocatable)
+    }
+
     override suspend fun rootOf(scope: StorageScope): FileRef {
         check(scope is StorageScope.Broad) {
             "DirectStorageGateway only serves StorageScope.Broad, got $scope"
@@ -31,7 +51,7 @@ class DirectStorageGateway(
 
     override suspend fun listChildren(directory: FileRef): List<FileEntry> {
         val dir = File(directory.requirePath())
-        val children = dir.listFiles() ?: return emptyList()
+        val children = dir.listFiles() ?: error("Could not inspect directory; access may have changed")
         return children.map { child ->
             FileEntry(
                 ref = FileRef.Direct(child.absolutePath),
@@ -75,6 +95,7 @@ class DirectStorageGateway(
                 MutationResult.Failure("Cannot create directory — a file already occupies ${dir.absolutePath}")
             }
         }
+        protectionFailureDestination(dir)?.let { return it }
         if (!dir.mkdirs()) return MutationResult.Failure("Failed to create directory: ${dir.absolutePath}")
         return MutationResult.Success(FileRef.Direct(dir.absolutePath), changed = true)
     }
@@ -89,10 +110,11 @@ class DirectStorageGateway(
         if (!parentDir.isDirectory) {
             return MutationResult.Failure("Parent is not a directory: ${parentDir.absolutePath}")
         }
+        protectionFailureDestination(target)?.let { return it }
         val requiredBytes = content.toByteArray(Charsets.UTF_8).size.toLong()
-        if (!StorageCapacityPolicy.canFit(requiredBytes, parentDir.usableSpace)) {
+        if (!StorageCapacityPolicy.canFit(requiredBytes, availableBytes(parentDir))) {
             return MutationResult.Failure(
-                StorageCapacityPolicy.failureMessage(requiredBytes, parentDir.usableSpace),
+                StorageCapacityPolicy.failureMessage(requiredBytes, availableBytes(parentDir)),
             )
         }
         return try {
@@ -132,10 +154,11 @@ class DirectStorageGateway(
                     "Pocket Steward will not create an unjournaled parent implicitly.",
             )
         }
+        protectionFailureDestination(destinationFile)?.let { return it }
         val requiredBytes = sourceFile.length()
-        if (!StorageCapacityPolicy.canFit(requiredBytes, parent.usableSpace)) {
+        if (!StorageCapacityPolicy.canFit(requiredBytes, availableBytes(parent))) {
             return MutationResult.Failure(
-                StorageCapacityPolicy.failureMessage(requiredBytes, parent.usableSpace),
+                StorageCapacityPolicy.failureMessage(requiredBytes, availableBytes(parent)),
             )
         }
         return try {
@@ -191,7 +214,20 @@ class DirectStorageGateway(
         } catch (t: Throwable) {
             return MutationResult.Failure(t.message ?: "Could not resolve Trash destination", t)
         }
-        return moveFile(sourceFile, File(destination.requirePath()))
+        val destinationFile = File(destination.requirePath())
+        // The mirrored folders under PocketSteward/Trash are app-managed, the
+        // same as granted-folder mode's Trash, so they are created here rather
+        // than planned. Without this, trashing a file from any folder whose
+        // mirror didn't exist yet failed. Nothing outside the Trash root is
+        // ever created by this path.
+        val trashRoot = File(Environment.getExternalStorageDirectory(), TRASH_RELATIVE_ROOT).absolutePath
+        val parent = destinationFile.parentFile
+        if (parent != null && !parent.isDirectory &&
+            (parent.absolutePath == trashRoot || parent.absolutePath.startsWith("$trashRoot/"))
+        ) {
+            parent.mkdirs()
+        }
+        return moveFile(sourceFile, destinationFile)
     }
 
     override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
@@ -203,6 +239,7 @@ class DirectStorageGateway(
         if (children.isNotEmpty()) {
             return MutationResult.Failure("Directory is no longer empty; refusing to remove it: ${dir.absolutePath}")
         }
+        protectionFailure(dir)?.let { return it }
         return if (dir.delete()) {
             MutationResult.Success(ref, changed = true)
         } else {
@@ -210,7 +247,16 @@ class DirectStorageGateway(
         }
     }
 
+    private fun protectionFailure(sourceFile: File): MutationResult.Failure? =
+        DirectProtection.refusal(Environment.getExternalStorageDirectory().absolutePath, sourceFile.absolutePath)
+            ?.let { MutationResult.Failure(it) }
+
+    private fun protectionFailureDestination(destinationFile: File): MutationResult.Failure? =
+        DirectProtection.refusalDestination(Environment.getExternalStorageDirectory().absolutePath, destinationFile.absolutePath)
+            ?.let { MutationResult.Failure(it) }
+
     private fun moveFile(sourceFile: File, destinationFile: File): MutationResult {
+        protectionFailure(sourceFile)?.let { return it }
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
         if (destinationFile.exists()) return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
 
@@ -222,6 +268,7 @@ class DirectStorageGateway(
                     "Pocket Steward will not create an unjournaled parent implicitly.",
             )
         }
+        protectionFailureDestination(destinationFile)?.let { return it }
 
         if (sourceFile.renameTo(destinationFile)) {
             return MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
@@ -235,7 +282,7 @@ class DirectStorageGateway(
         }
 
         val requiredBytes = sourceFile.length()
-        val usableBytes = destinationParent.usableSpace
+        val usableBytes = availableBytes(destinationParent)
         if (!StorageCapacityPolicy.canFit(requiredBytes, usableBytes)) {
             return MutationResult.Failure(
                 StorageCapacityPolicy.failureMessage(requiredBytes, usableBytes),
@@ -259,6 +306,19 @@ class DirectStorageGateway(
                 )
             }
 
+            // A marker can appear while cross-volume bytes are being copied. A destination
+            // that became protected is left intact with the source for explicit review; cleanup
+            // would itself be an unauthorized mutation inside the newly protected folder.
+            protectionFailure(destinationFile)?.let { blocked ->
+                return MutationResult.Failure(
+                    blocked.reason + " The verified destination copy remains; both files need review.",
+                )
+            }
+            protectionFailure(sourceFile)?.let { blocked ->
+                val removed = destinationFile.delete()
+                return if (removed) blocked else MutationResult.Failure(
+                    blocked.reason + " The verified destination copy remains; both files need review.")
+            }
             if (!sourceFile.delete()) {
                 // Restore the pre-move shape if the provider/filesystem lets
                 // us. A failed move should not silently manufacture a second

@@ -1,5 +1,8 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import com.pocketsteward.app.ui.components.SmoothProgressBar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -109,8 +112,8 @@ fun BusyIndicator(state: ScanUiState.Working) {
             val processed = state.processed
             val total = state.total
             if (processed != null && total != null && total > 0) {
-                LinearProgressIndicator(
-                    progress = { processed.toFloat() / total.toFloat() },
+                SmoothProgressBar(
+                    fraction = processed.toFloat() / total.toFloat(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
@@ -147,7 +150,11 @@ fun BusyIndicator(state: ScanUiState.Working) {
 @Composable
 fun ScreenHeadline(text: String, supporting: String? = null, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth().padding(bottom = Spacing.base)) {
-        Text(text = text, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
         supporting?.let {
             Text(
                 text = it,
@@ -164,7 +171,10 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleSmall,
-        modifier = modifier.padding(top = Spacing.base, bottom = Spacing.hairline),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+            .padding(top = Spacing.base, bottom = Spacing.hairline)
+            .semantics { heading() },
     )
 }
 

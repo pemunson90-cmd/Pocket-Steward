@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.pm.PackageInfo
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build

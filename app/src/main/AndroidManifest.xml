@@ -22,6 +22,7 @@
     <application
         android:name=".PocketStewardApplication"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -69,6 +70,20 @@
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Offered when another app asks the user to choose a file. Read-only. -->
+        <activity
+            android:name=".ui.browser.PickFileActivity"
+            android:exported="true"
+            android:label="Pocket Steward"
+            android:theme="@style/Theme.PocketSteward">
+            <intent-filter>
+                <action android:name="android.intent.action.GET_CONTENT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.OPENABLE" />
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>

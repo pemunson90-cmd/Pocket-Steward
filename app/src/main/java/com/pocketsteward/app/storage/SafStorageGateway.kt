@@ -18,6 +18,7 @@ import java.security.MessageDigest
 class SafStorageGateway(
     private val context: Context,
 ) : StorageGateway {
+    private val protection = SafProtection(context)
 
     override suspend fun rootOf(scope: StorageScope): FileRef {
         check(scope is StorageScope.Tree) {
@@ -90,6 +91,7 @@ class SafStorageGateway(
             }
         }
 
+        destinationProtectionFailure(parentDoc, name)?.let { return it }
         val created = runCatching { parentDoc.createDirectory(name) }.getOrNull()
             ?: return MutationResult.Failure("Could not create SAF directory: $name")
         return MutationResult.Success(FileRef.Saf(created.uri.toString()))
@@ -109,6 +111,7 @@ class SafStorageGateway(
         if (childNamed(parentDoc, name) != null) {
             return MutationResult.Failure("Refusing to overwrite an existing SAF document: $name")
         }
+        destinationProtectionFailure(parentDoc, name)?.let { return it }
 
         val mime = when (name.substringAfterLast('.', "").lowercase()) {
             "md", "markdown" -> "text/markdown"
@@ -158,6 +161,7 @@ class SafStorageGateway(
         if (childNamed(destinationDir, name) != null) {
             return MutationResult.Failure("Destination already contains $name; refusing to overwrite.")
         }
+        destinationProtectionFailure(destinationDir, name)?.let { return it }
 
         val created = runCatching {
             destinationDir.createFile(sourceDoc.type ?: "application/octet-stream", name)
@@ -189,10 +193,26 @@ class SafStorageGateway(
         }
     }
 
+    private fun protectionFailure(source: FileRef): MutationResult.Failure? = try {
+        protection.refusal(resolve(source).uri)?.let { MutationResult.Failure(it) }
+    } catch (e: Exception) { MutationResult.Failure("Protection unverifiable: source access needed", e) }
+
+    private fun destinationProtectionFailure(parent: DocumentFile, name: String): MutationResult.Failure? = try {
+        protection.refusalDestination(parent.uri, name)?.let { MutationResult.Failure(it) }
+    } catch (e: Exception) { MutationResult.Failure("Protection unverifiable: destination access needed", e) }
+
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult {
+        protectionFailure(source)?.let { return it }
         val copied = copy(source, destination)
         if (copied !is MutationResult.Success) return copied
 
+        protectionFailure(copied.resultRef)?.let { blocked ->
+            return MutationResult.Failure(blocked.reason + " Verified destination copy remains; both documents need review.")
+        }
+        protectionFailure(source)?.let { blocked ->
+            val removed = runCatching { resolve(copied.resultRef).delete() }.getOrDefault(false)
+            return if (removed) blocked else MutationResult.Failure(blocked.reason + " Verified destination copy remains; both documents need review.")
+        }
         val sourceDoc = resolveOrFailure(source, "source")
         if (sourceDoc == null || !sourceDoc.delete()) {
             // A failed move must not leave an untracked extra copy if the
@@ -207,7 +227,11 @@ class SafStorageGateway(
     }
 
     override suspend fun rename(source: FileRef, newName: String): MutationResult {
+        protectionFailure(source)?.let { return it }
         if (!safeName(newName)) return MutationResult.Failure("Unsafe file name: $newName")
+        if (newName == DirectProtection.MARKER) {
+            return MutationResult.Failure("Protected: the no-sort marker can only be created through deliberate protection controls.")
+        }
         val sourceDoc = resolveOrFailure(source, "source")
             ?: return MutationResult.Failure("Could not resolve SAF source.")
         if (!sourceDoc.exists()) return MutationResult.Failure("Source no longer exists.")
@@ -239,6 +263,7 @@ class SafStorageGateway(
     }
 
     override suspend fun trash(source: FileRef): MutationResult {
+        protectionFailure(source)?.let { return it }
         val destination = runCatching { trashDestination(source) }.getOrElse {
             return MutationResult.Failure(it.message ?: "Could not resolve SAF Trash destination.", it)
         }
@@ -264,6 +289,7 @@ class SafStorageGateway(
         if (doc.listFiles().isNotEmpty()) {
             return MutationResult.Failure("Directory is no longer empty; refusing to remove it.")
         }
+        protectionFailure(ref)?.let { return it }
         return if (doc.delete()) {
             MutationResult.Success(ref)
         } else {

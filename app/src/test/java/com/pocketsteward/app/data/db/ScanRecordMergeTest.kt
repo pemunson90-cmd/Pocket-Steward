@@ -5,6 +5,15 @@ import org.junit.Test
 
 class ScanRecordMergeTest {
     @Test
+    fun anOlderWalkNeverStampsAFileBackwards() {
+        val existing = record(id = 7, size = 100, modified = 1234).copy(lastScannedAt = 5_000)
+        val olderWalk = record(id = 0, size = 100, modified = 1234).copy(lastScannedAt = 3_000)
+        assertThat(mergeScanRecord(existing, olderWalk).lastScannedAt).isEqualTo(5_000)
+        val changed = record(id = 0, size = 200, modified = 9999).copy(lastScannedAt = 3_000)
+        assertThat(mergeScanRecord(existing, changed).lastScannedAt).isEqualTo(5_000)
+    }
+
+    @Test
     fun unchangedContentPreservesExpensiveDerivedFields() {
         val existing = record(
             id = 42,

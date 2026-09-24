@@ -52,7 +52,60 @@ class SettingsViewModel(
     private val clearContentIndexCache: () -> Boolean,
     private val applyScheduledCleanup: (ScheduledCleanupSettings) -> Unit,
     private val loadRuntimeDiagnostics: suspend () -> RuntimeDiagnosticsSnapshot,
+    private val loadLibraryStatus: suspend () -> com.pocketsteward.app.library.LibraryStatus =
+        { com.pocketsteward.app.library.LibraryStatus(null, 0, null, false, 0) },
+    private val syncLibrarySchedule: (Boolean) -> Unit = {},
+    private val refreshLibraryNow: () -> Unit = {},
+    libraryWorkRunning: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false),
 ) : ViewModel() {
+
+    val librarySettings: StateFlow<com.pocketsteward.app.data.settings.LibrarySettings> =
+        settingsRepository.librarySettings.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            com.pocketsteward.app.data.settings.LibrarySettings(),
+        )
+
+    private val _libraryStatus = MutableStateFlow<com.pocketsteward.app.library.LibraryStatus?>(null)
+    val libraryStatus: StateFlow<com.pocketsteward.app.library.LibraryStatus?> = _libraryStatus
+
+    val libraryRefreshing: StateFlow<Boolean> =
+        libraryWorkRunning.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    init {
+        viewModelScope.launch { reloadLibraryStatus() }
+        // Reload the count and time whenever a background refresh finishes.
+        viewModelScope.launch {
+            var was = false
+            libraryWorkRunning.collect { running ->
+                if (was && !running) reloadLibraryStatus()
+                was = running
+            }
+        }
+    }
+
+    private suspend fun reloadLibraryStatus() {
+        _libraryStatus.value = withContext(Dispatchers.IO) { runCatching { loadLibraryStatus() }.getOrNull() }
+    }
+
+    fun setLibraryBackgroundRefresh(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setLibraryBackgroundRefresh(enabled)
+            syncLibrarySchedule(enabled)
+        }
+    }
+
+    /** Content indexing needs content inspection; turning this on grants both, since one is useless without the other. */
+    fun setLibraryContentWhileCharging(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setLibraryContentWhileCharging(enabled)
+            if (enabled) settingsRepository.setContentInspectionEnabled(true)
+        }
+    }
+
+    fun refreshLibraryNow() {
+        refreshLibraryNow.invoke()
+    }
 
     val privacySettings: StateFlow<PrivacySettings> = settingsRepository.privacySettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PrivacySettings())
@@ -180,6 +233,14 @@ class SettingsViewModel(
 
     fun setAdvancedModeEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setAdvancedModeEnabled(enabled) }
+    }
+
+    fun setWallpaperColorsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setWallpaperColorsEnabled(enabled) }
+    }
+
+    fun setThumbnailsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setThumbnailsEnabled(enabled) }
     }
 
     fun setMetadataIndexingEnabled(enabled: Boolean) {

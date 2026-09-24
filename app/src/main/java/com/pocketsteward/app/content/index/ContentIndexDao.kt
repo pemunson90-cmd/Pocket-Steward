@@ -154,4 +154,32 @@ interface ContentIndexDao {
         sourceRoots: List<String>,
         limit: Int,
     ): List<IndexedSearchRow>
+
+    /**
+     * Ask-your-files retrieval: whole segment bodies (not snippets) for rows
+     * matching any keyword, across every indexed folder. Ranking happens in
+     * [com.pocketsteward.app.content.ask.AskRetrieval], which is unit tested;
+     * this only fetches candidates.
+     */
+    @Query(
+        """
+        SELECT s.id AS segmentId,
+               s.stableRef AS stableRef,
+               d.displayName AS displayName,
+               d.parentRef AS parentRef,
+               d.extension AS extension,
+               s.pageNumber AS pageNumber,
+               s.ocr AS ocr,
+               s.body AS body
+        FROM indexed_segments_fts
+        INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
+        INNER JOIN indexed_documents d ON d.stableRef = s.stableRef
+        WHERE indexed_segments_fts MATCH :matchQuery
+        LIMIT :limit
+        """,
+    )
+    suspend fun askCandidateRows(
+        matchQuery: String,
+        limit: Int,
+    ): List<com.pocketsteward.app.content.ask.AskCandidateRow>
 }

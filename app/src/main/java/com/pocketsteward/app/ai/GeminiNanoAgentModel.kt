@@ -1,6 +1,7 @@
 package com.pocketsteward.app.ai
 
 import com.google.mlkit.genai.common.DownloadStatus
+import com.pocketsteward.app.content.ask.AskPassage
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.TextPart
@@ -82,6 +83,74 @@ class GeminiNanoAgentModel : AgentModel {
         return IntentNormalizationProtocol.parse(
             response.candidates.firstOrNull()?.text.orEmpty(),
         )
+    }
+
+    override suspend fun answerFromPassages(
+        question: String,
+        passages: List<AskPassage>,
+    ): AskModelAnswer? {
+        if (question.isBlank() || passages.isEmpty()) return null
+        if (model.checkStatus() != FeatureStatus.AVAILABLE) return null
+
+        val boundedQuestion = question.trim().take(MAX_INTENT_INPUT_CHARS)
+        fun request(used: List<AskPassage>) = generateContentRequest(TextPart(buildAskPrompt(boundedQuestion, used))) {
+            temperature = 0.1f
+            maxOutputTokens = 320
+            candidateCount = 1
+        }
+
+        // Fewest passages dropped that still fit the input budget. If the
+        // token counter itself fails, fall back to a small, safe set.
+        val tokenLimit = try {
+            model.getTokenLimit()
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            DEFAULT_INPUT_TOKEN_LIMIT
+        }
+        val budget = minOf(SAFE_INPUT_TOKEN_BUDGET, (tokenLimit - INPUT_TOKEN_RESERVE).coerceAtLeast(MIN_INPUT_TOKEN_BUDGET))
+        var used = passages
+        while (used.size > 1) {
+            val fits = try {
+                model.countTokens(request(used)).totalTokens <= budget
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Throwable) {
+                used = used.take(3)
+                break
+            }
+            if (fits) break
+            used = used.dropLast(1)
+        }
+
+        val response = try {
+            model.generateContent(request(used))
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            return null
+        }
+        return AskAnswerProtocol.parse(response.candidates.firstOrNull()?.text.orEmpty(), used.size)
+    }
+
+    private fun buildAskPrompt(question: String, passages: List<AskPassage>): String = buildString {
+        appendLine("Answer the question using ONLY the numbered excerpts from the user's own files.")
+        appendLine("Rules:")
+        appendLine("- Use only facts written in the excerpts. Do not add outside knowledge or guesses.")
+        appendLine("- After each sentence, cite the excerpt it came from, like [2]. Every sentence needs a citation.")
+        appendLine("- If the excerpts do not contain the answer, reply with exactly: ${AskAnswerProtocol.NOT_FOUND_TOKEN}")
+        appendLine("- At most 120 words. Plain sentences, no headings.")
+        appendLine()
+        appendLine("EXCERPTS:")
+        passages.forEach { p ->
+            append("[${p.number}] ${p.displayName}")
+            p.pageNumber?.let { append(", page $it") }
+            appendLine()
+            appendLine(p.excerpt)
+            appendLine()
+        }
+        appendLine("QUESTION: $question")
+        append("ANSWER:")
     }
 
     override suspend fun coherenceAudit(

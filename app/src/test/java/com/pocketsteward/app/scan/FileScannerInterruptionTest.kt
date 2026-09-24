@@ -385,6 +385,40 @@ class FileScannerInterruptionTest {
             scopes.removeAll { it.scopeRoot == scopeRootRef && it.fileRef in staleRefs }
         }
 
+        override suspend fun countFilesInScope(scopeRootRef: String): Int =
+            scopes.count { it.scopeRoot == scopeRootRef && records[it.fileRef]?.isDirectory == false }
+
+        override suspend fun removeAllScopeTags(scopeRootRef: String) {
+            scopes.removeAll { it.scopeRoot == scopeRootRef }
+        }
+
+        override suspend fun copyScopeTagsUnder(libraryScope: String, newScope: String, folderRef: String, folderSlash: String) {
+            scopes.filter { it.scopeRoot == libraryScope && (it.fileRef == folderRef || it.fileRef.startsWith(folderSlash)) }
+                .forEach { scopes += FileScope(it.fileRef, newScope) }
+        }
+
+        override suspend fun libraryFilesByExtension(root: String, extensions: List<String>, limit: Int): List<FileRecord> =
+            inScope(root).filter { !it.isDirectory && it.extension.lowercase() in extensions }
+                .sortedByDescending { it.modifiedAt ?: 0L }.take(limit)
+
+        override suspend fun libraryRecentFiles(root: String, limit: Int): List<FileRecord> =
+            inScope(root).filter { !it.isDirectory && it.modifiedAt != null }.sortedByDescending { it.modifiedAt }.take(limit)
+
+        override suspend fun librarySearchByName(root: String, pattern: String, limit: Int): List<FileRecord> {
+            val needle = pattern.trim('%').replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\").lowercase()
+            return inScope(root).filter { needle in it.displayName.lowercase() }.take(limit)
+        }
+
+        override suspend fun libraryExtensionStats(root: String): List<com.pocketsteward.app.data.db.ExtensionStat> =
+            inScope(root).filter { !it.isDirectory }.groupBy { it.extension.lowercase() }
+                .map { (ext, rs) -> com.pocketsteward.app.data.db.ExtensionStat(ext, rs.size, rs.sumOf { it.sizeBytes }) }
+
+        private fun inScope(root: String): List<FileRecord> =
+            scopes.filter { it.scopeRoot == root }.mapNotNull { records[it.fileRef] }
+
+        override suspend fun scopeTagCount(fileRef: String, scopeRootRef: String): Int =
+            scopes.count { it.fileRef == fileRef && it.scopeRoot == scopeRootRef }
+
         override suspend fun deleteOrphanedFiles() {
             val owned = scopes.mapTo(hashSetOf()) { it.fileRef }
             records.keys.removeAll { it !in owned }

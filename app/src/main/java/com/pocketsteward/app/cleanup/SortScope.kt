@@ -12,8 +12,8 @@ package com.pocketsteward.app.cleanup
  * contents didn't match an expected shape would be worse than no protection.
  *
  * It lives in the filesystem rather than the database on purpose. It survives
- * app reinstall, a destructive schema migration (this app is still on
- * `fallbackToDestructiveMigration`), and moving storage to another device.
+ * app reinstall, a database reset, and moving storage to another device,
+ * none of which the database can promise.
  * The database is not the source of truth for this.
  */
 const val DO_NOT_SORT_MARKER: String = "POCKETSTEWARD-DO-NOT-SORT.md"
@@ -82,7 +82,7 @@ object SortScope {
     fun isProtected(candidate: SortCandidate, protectedFolders: Set<String>): Boolean {
         val parent = candidate.parentRef ?: return false
         return protectedFolders.any { protectedFolder ->
-            parent == protectedFolder || parent.startsWith("${protectedFolder.trimEnd('/')}/")
+            parent == protectedFolder || (!parent.startsWith("content://") && !protectedFolder.startsWith("content://") && parent.startsWith("${protectedFolder.trimEnd('/')}/"))
         }
     }
 

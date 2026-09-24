@@ -65,6 +65,7 @@ data class ExecutionSummary(
     val createdFolders: List<String> = emptyList(),
     val cancelled: Boolean = false,
 ) {
+    val protectionBlocked: Int get() = failures.count { isProtectionFailure(it.reason) }
     val succeededTotal: Int get() =
         foldersCreated + filesMoved + filesCopied + filesRenamed + filesTrashed + filesWritten
 }
@@ -76,6 +77,9 @@ data class OperationFailure(
     val subject: String,
     val reason: String,
 )
+
+internal fun isProtectionFailure(reason: String): Boolean =
+    reason.startsWith("Protected:") || reason.startsWith("Protection unverifiable:")
 
 /**
  * Deterministic mutation executor. Every real filesystem change is preceded
@@ -382,9 +386,7 @@ class PlanExecutor(
                     summary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
                 },
-                summary = "${summary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
-                    "$filesCopied copied, $filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed, " +
-                    "${validated.rejected.size} left untouched",
+                summary = durableExecutionSummaryText(summary, validated.rejected.size),
             ),
         )
 
@@ -681,14 +683,25 @@ class PlanExecutor(
                     finishedSummary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
                 },
-                summary = "${finishedSummary.succeededTotal} succeeded ($foldersCreated folders, $filesMoved moved, " +
-                    "$filesCopied copied, $filesRenamed renamed, $filesTrashed trashed, $filesWritten written), $failed failed",
+                summary = durableExecutionSummaryText(finishedSummary, leftUntouched = 0),
             ),
         )
         if (!needsReview) {
             onProgress(operations.size, operations.size)
         }
         return finishedSummary
+    }
+
+    private fun durableExecutionSummaryText(summary: ExecutionSummary, leftUntouched: Int): String {
+        val protectionBlocked = summary.protectionBlocked
+        val otherFailures = (summary.failed - protectionBlocked).coerceAtLeast(0)
+        return buildString {
+            append("${summary.succeededTotal} succeeded (${summary.foldersCreated} folders, ${summary.filesMoved} moved, ")
+            append("${summary.filesCopied} copied, ${summary.filesRenamed} renamed, ${summary.filesTrashed} trashed, ${summary.filesWritten} written)")
+            append(", $protectionBlocked blocked by protection checks")
+            append(", $otherFailures failed for other reasons")
+            if (leftUntouched > 0) append(", $leftUntouched left untouched")
+        }
     }
 
     private suspend fun captureApprovalPreconditions(
@@ -1089,14 +1102,6 @@ private fun PlannedOperation.toFailure(sequence: Int, reason: String): Operation
 
 private fun childRef(parent: FileRef, name: String): FileRef =
     parent.child(name)
-
-private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<String> {
-    val raw = ref.rawValue().trimEnd('/')
-    return knownScopes.distinct().filter { scope ->
-        val normalized = scope.trimEnd('/')
-        raw == normalized || raw.startsWith("$normalized/")
-    }
-}
 
 private fun FileRef.parentRefOrNull(): FileRef? =
     knownParentOrNull()

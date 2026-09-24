@@ -31,4 +31,24 @@ object BackgroundWorkPolicy {
             .setRequiresBatteryNotLow(true)
             .setRequiresStorageNotLow(true)
             .build()
+
+    /** Scheduled library walk: listing and stat only, but thousands of them, so not on a low battery. */
+    fun libraryRefreshConstraints(): Constraints =
+        Constraints.Builder()
+            .setRequiresBatteryNotLow(true)
+            .build()
+
+    /** A refresh the user asked for, or one on app open: no battery gate, because they are looking at the result. */
+    fun libraryRefreshNowConstraints(): Constraints = Constraints.NONE
+
+    /**
+     * Whole-library content indexing reads every document and runs OCR on
+     * scanned PDFs. That is real CPU and battery, so it waits for the charger.
+     */
+    fun libraryContentIndexConstraints(): Constraints =
+        Constraints.Builder()
+            .setRequiresCharging(true)
+            .setRequiresBatteryNotLow(true)
+            .setRequiresStorageNotLow(true)
+            .build()
 }

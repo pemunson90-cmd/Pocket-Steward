@@ -37,6 +37,7 @@ data class TrashedFile(
     val keptInsteadPath: String?,
     /** The run that trashed it, so a whole-task manifest can be found in Task history. */
     val taskRunId: Long,
+    val restoreBlockedReason: String?,
 )
 
 sealed interface RestoreState {
@@ -105,5 +106,6 @@ private fun MutationRecord.toTrashedFile(keptInsteadPath: String?): TrashedFile 
         trashedAt = executedAt,
         keptInsteadPath = keptInsteadPath,
         taskRunId = taskRunId,
+        restoreBlockedReason = undoError.takeIf { undoState == com.pocketsteward.app.data.db.UndoState.BLOCKED },
     )
 }

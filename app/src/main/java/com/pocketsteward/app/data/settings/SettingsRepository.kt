@@ -1,5 +1,6 @@
 package com.pocketsteward.app.data.settings
 
+import kotlinx.coroutines.flow.first
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -43,6 +44,17 @@ data class PrivacySettings(
     val onDeviceAiEnabled: Boolean = false,
 )
 
+/**
+ * The background library: a whole-storage inventory kept current on a
+ * schedule so scans and the file browser start from data already on hand.
+ * Reading file names and sizes never leaves the phone; content indexing
+ * additionally needs [PrivacySettings.contentInspectionEnabled].
+ */
+data class LibrarySettings(
+    val backgroundRefreshEnabled: Boolean = true,
+    val contentIndexWhileCharging: Boolean = true,
+)
+
 data class StorageAccessState(
     val mode: StorageAccessMode? = null,
     val safTreeUri: String? = null,
@@ -50,6 +62,19 @@ data class StorageAccessState(
 
 data class UiSettings(
     val advancedModeEnabled: Boolean = false,
+    /**
+     * Follow the phone's wallpaper (Material You) instead of the fixed Pocket
+     * Steward palette. Off by default: the fixed palette is the ratified look,
+     * and this is an opt-in. Ignored below Android 12, which has no dynamic
+     * colour.
+     */
+    val wallpaperColorsEnabled: Boolean = false,
+    /**
+     * Draw real previews for images, videos and PDFs in file lists. Previews
+     * are decoded locally, kept only in memory, and never written anywhere.
+     * Off means every file shows its type badge instead.
+     */
+    val thumbnailsEnabled: Boolean = true,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -68,6 +93,12 @@ class SettingsRepository(private val context: Context) {
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
         val PROJECT_KEYWORDS = stringPreferencesKey("project_keywords")
         val ADVANCED_MODE = booleanPreferencesKey("advanced_mode_enabled")
+        val WALLPAPER_COLORS = booleanPreferencesKey("wallpaper_colors_enabled")
+        val THUMBNAILS = booleanPreferencesKey("thumbnails_enabled")
+        val LIBRARY_BACKGROUND = booleanPreferencesKey("library_background_refresh")
+        val LIBRARY_CONTENT_CHARGING = booleanPreferencesKey("library_content_while_charging")
+        val LIBRARY_LAST_COMPLETED = androidx.datastore.preferences.core.longPreferencesKey("library_last_completed_at")
+        val LIBRARY_LAST_ROOT = androidx.datastore.preferences.core.stringPreferencesKey("library_last_completed_root")
         val SAVED_WORKFLOWS = stringPreferencesKey("saved_workflows")
         val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
         val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
@@ -77,10 +108,10 @@ class SettingsRepository(private val context: Context) {
         val LAST_SCAN_SESSION = stringPreferencesKey("last_scan_session")
 
         /**
-         * M7 spec 2d. In DataStore rather than Room on purpose: `AppDatabase`
-         * is on `fallbackToDestructiveMigration` and holds undo journals for
-         * runs of several thousand operations, so a new entity would destroy
-         * them. Same serialised-list shape as [PROJECT_KEYWORDS].
+         * M7 spec 2d. In DataStore rather than Room on purpose. When this was
+         * written `AppDatabase` was on `fallbackToDestructiveMigration`, so a
+         * new entity would have destroyed the undo journals. It now uses real
+         * migrations; a preference list still needs no schema change at all. Same serialised-list shape as [PROJECT_KEYWORDS].
          */
         val RECENT_FOLDERS = stringPreferencesKey("recent_folders")
     }
@@ -333,7 +364,40 @@ class SettingsRepository(private val context: Context) {
     }
 
     val uiSettings: Flow<UiSettings> = context.dataStore.data.map { prefs ->
-        UiSettings(advancedModeEnabled = prefs[Keys.ADVANCED_MODE] ?: false)
+        UiSettings(
+            advancedModeEnabled = prefs[Keys.ADVANCED_MODE] ?: false,
+            wallpaperColorsEnabled = prefs[Keys.WALLPAPER_COLORS] ?: false,
+            thumbnailsEnabled = prefs[Keys.THUMBNAILS] ?: true,
+        )
+    }
+
+    val librarySettings: Flow<LibrarySettings> = context.dataStore.data.map { prefs ->
+        LibrarySettings(
+            backgroundRefreshEnabled = prefs[Keys.LIBRARY_BACKGROUND] ?: true,
+            contentIndexWhileCharging = prefs[Keys.LIBRARY_CONTENT_CHARGING] ?: true,
+        )
+    }
+
+    /** When the library root last finished a full walk, and which root that was. */
+    suspend fun libraryLastCompleted(): Pair<String, Long>? = context.dataStore.data.first().let { prefs ->
+        val root = prefs[Keys.LIBRARY_LAST_ROOT] ?: return@let null
+        val at = prefs[Keys.LIBRARY_LAST_COMPLETED] ?: return@let null
+        root to at
+    }
+
+    suspend fun setLibraryLastCompleted(root: String, at: Long) {
+        context.dataStore.edit {
+            it[Keys.LIBRARY_LAST_ROOT] = root
+            it[Keys.LIBRARY_LAST_COMPLETED] = at
+        }
+    }
+
+    suspend fun setLibraryBackgroundRefresh(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.LIBRARY_BACKGROUND] = enabled }
+    }
+
+    suspend fun setLibraryContentWhileCharging(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.LIBRARY_CONTENT_CHARGING] = enabled }
     }
 
     val storageAccessState: Flow<StorageAccessState> = context.dataStore.data.map { prefs ->
@@ -375,6 +439,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setAdvancedModeEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.ADVANCED_MODE] = enabled }
+    }
+
+    suspend fun setWallpaperColorsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WALLPAPER_COLORS] = enabled }
+    }
+
+    suspend fun setThumbnailsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.THUMBNAILS] = enabled }
     }
 
     suspend fun setMetadataIndexingEnabled(enabled: Boolean) {

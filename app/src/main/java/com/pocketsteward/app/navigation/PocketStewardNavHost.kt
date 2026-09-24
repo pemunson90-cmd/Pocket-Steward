@@ -1,5 +1,12 @@
 package com.pocketsteward.app.navigation
 
+import com.pocketsteward.app.ui.browser.BrowserScreen
+import com.pocketsteward.app.ui.ask.AskScreen
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -23,6 +30,8 @@ object Routes {
     const val HISTORY = "history"
     const val HISTORY_TASK = "history/task/{taskId}"
     const val TRASH = "trash"
+    const val ASK = "ask"
+    const val FILES = "files"
 
     /**
      * The scan flow is a nested graph now, not a destination
@@ -52,13 +61,34 @@ fun PocketStewardNavHost(
             navController = navController,
             startDestination = startDestination,
             modifier = shellModifier,
+            // Material "shared axis X": forward slides in from the right,
+            // back from the left, both short and faded. Enough to show which
+            // way you went; short enough never to feel like waiting.
+            enterTransition = {
+                fadeIn(tween(220, delayMillis = 60)) +
+                    slideInHorizontally(tween(280)) { it / 10 }
+            },
+            exitTransition = {
+                fadeOut(tween(120)) + slideOutHorizontally(tween(280)) { -it / 10 }
+            },
+            popEnterTransition = {
+                fadeIn(tween(220, delayMillis = 60)) +
+                    slideInHorizontally(tween(280)) { -it / 10 }
+            },
+            popExitTransition = {
+                fadeOut(tween(120)) + slideOutHorizontally(tween(280)) { it / 10 }
+            },
         ) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
                 onAccessGranted = {
-                    navController.navigate(postOnboardingDestination) {
+                    // Files is a tab: Home stays underneath it as the base of
+                    // the back stack, the way every tabbed app behaves.
+                    val first = if (postOnboardingDestination == Routes.FILES) Routes.HOME else postOnboardingDestination
+                    navController.navigate(first) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
+                    if (postOnboardingDestination == Routes.FILES) navController.navigateTopLevel(Routes.FILES)
                 },
             )
         }
@@ -67,6 +97,7 @@ fun PocketStewardNavHost(
                 onExplore = { navController.navigate(Routes.SCAN_FLOW) },
                 onContinueLastScan = { navController.navigate(Routes.scanFlowLastScan()) },
                 onOpenTasks = { navController.navigate(Routes.HISTORY) },
+                onAsk = { navController.navigate(Routes.ASK) },
                 onNaturalLanguageRequest = { request -> navController.navigate(Routes.scanFlowWithRequest(request)) },
                 onQuickAction = { action -> navController.navigate(Routes.scanFlowWith(action)) },
                 onScheduledReview = { navController.navigate(Routes.scanFlowScheduledReview()) },
@@ -109,6 +140,12 @@ fun PocketStewardNavHost(
         }
         composable(Routes.TRASH) {
             TrashScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.FILES) {
+            BrowserScreen()
+        }
+        composable(Routes.ASK) {
+            AskScreen(onBack = { navController.popBackStack() })
         }
         }
     }

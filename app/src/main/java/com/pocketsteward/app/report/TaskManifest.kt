@@ -5,11 +5,12 @@ package com.pocketsteward.app.report
  * only function allowed to write it.
  *
  * It is a parseable format on purpose. `MutationRecord` has no column for
- * "the copy this one lost to", and adding one would trigger
- * `fallbackToDestructiveMigration` and wipe every existing undo record in
- * the process — including a 4,829-operation run the owner still has open.
- * So the keeper's path rides in the reason text, which is already durable in
- * `TaskRun.planJson`, and [keeperPathFrom] is its inverse. The two are
+ * "the copy this one lost to". When this was written the database was on
+ * `fallbackToDestructiveMigration`, so adding one would have wiped every undo
+ * record on the device. The app now uses real migrations (3->4 onward, see
+ * `Migrations`), but existing journals already carry the keeper this way, so
+ * the format stays. The keeper's path rides in the reason text, which is
+ * durable in `TaskRun.planJson`, and [keeperPathFrom] is its inverse. The two are
  * tested as a round trip; nothing else may format or read this string.
  */
 fun duplicateTrashReason(keeperPath: String): String = "$KEEPER_PREFIX$keeperPath$KEEPER_SUFFIX"
@@ -83,9 +84,11 @@ object TaskManifest {
     /**
      * A plain-text account of one task run, written to be readable in a file
      * manager six months from now with the app uninstalled. That is the whole
-     * point of exporting it: the database is on
-     * `fallbackToDestructiveMigration`, so the journal this was built from
-     * does not survive the next schema change, and this file does.
+     * point of exporting it: the journal this was built from lives in the app's
+     * database, which an uninstall or a failed upgrade can take with it. This
+     * file survives both. (The database was on `fallbackToDestructiveMigration`
+     * when this was written; it now uses real migrations, but the export is
+     * still the only copy that outlives the app.)
      */
     fun render(
         title: String,

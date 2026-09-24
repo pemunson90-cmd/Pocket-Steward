@@ -66,88 +66,9 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Preserve the old one-scope-per-file mapping while file_records
-                // is rebuilt without scopeRootRef.
-                db.execSQL("""
-                    CREATE TABLE `file_scopes_legacy` (
-                        `fileRef` TEXT NOT NULL,
-                        `scopeRoot` TEXT NOT NULL,
-                        PRIMARY KEY(`fileRef`, `scopeRoot`)
-                    )
-                """.trimIndent())
-
-                db.execSQL("""
-                    INSERT OR IGNORE INTO `file_scopes_legacy` (`fileRef`, `scopeRoot`)
-                    SELECT `stableRef`, `scopeRootRef` FROM `file_records`
-                """.trimIndent())
-
-                db.execSQL("""
-                    CREATE TABLE `file_records_new` (
-                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        `stableRef` TEXT NOT NULL,
-                        `displayName` TEXT NOT NULL,
-                        `extension` TEXT NOT NULL,
-                        `mimeType` TEXT,
-                        `absolutePathOrUri` TEXT NOT NULL,
-                        `parentRef` TEXT,
-                        `sizeBytes` INTEGER NOT NULL,
-                        `createdAt` INTEGER,
-                        `modifiedAt` INTEGER,
-                        `lastScannedAt` INTEGER NOT NULL,
-                        `isDirectory` INTEGER NOT NULL,
-                        `isHidden` INTEGER NOT NULL,
-                        `mediaType` TEXT,
-                        `width` INTEGER,
-                        `height` INTEGER,
-                        `durationMs` INTEGER,
-                        `apkPackageName` TEXT,
-                        `apkVersionName` TEXT,
-                        `sha256` TEXT,
-                        `quickFingerprint` TEXT,
-                        `textPreview` TEXT,
-                        `classification` TEXT,
-                        `classificationConfidence` REAL
-                    )
-                """.trimIndent())
-
-                db.execSQL("""
-                    INSERT INTO `file_records_new` (
-                        `id`, `stableRef`, `displayName`, `extension`, `mimeType`,
-                        `absolutePathOrUri`, `parentRef`, `sizeBytes`, `createdAt`,
-                        `modifiedAt`, `lastScannedAt`, `isDirectory`, `isHidden`,
-                        `mediaType`, `width`, `height`, `durationMs`, `apkPackageName`,
-                        `apkVersionName`, `sha256`, `quickFingerprint`, `textPreview`,
-                        `classification`, `classificationConfidence`
-                    )
-                    SELECT
-                        `id`, `stableRef`, `displayName`, `extension`, `mimeType`,
-                        `absolutePathOrUri`, `parentRef`, `sizeBytes`, `createdAt`,
-                        `modifiedAt`, `lastScannedAt`, `isDirectory`, `isHidden`,
-                        `mediaType`, `width`, `height`, `durationMs`, `apkPackageName`,
-                        `apkVersionName`, `sha256`, `quickFingerprint`, `textPreview`,
-                        `classification`, `classificationConfidence`
-                    FROM `file_records`
-                """.trimIndent())
-
-                db.execSQL("DROP TABLE `file_records`")
-                db.execSQL("ALTER TABLE `file_records_new` RENAME TO `file_records`")
-                db.execSQL("CREATE UNIQUE INDEX `index_file_records_stableRef` ON `file_records` (`stableRef`)")
-
-                db.execSQL("""
-                    CREATE TABLE `file_scopes` (
-                        `fileRef` TEXT NOT NULL,
-                        `scopeRoot` TEXT NOT NULL,
-                        PRIMARY KEY(`fileRef`, `scopeRoot`),
-                        FOREIGN KEY(`fileRef`) REFERENCES `file_records`(`stableRef`)
-                            ON UPDATE NO ACTION ON DELETE CASCADE
-                    )
-                """.trimIndent())
-                db.execSQL("CREATE INDEX `index_file_scopes_fileRef` ON `file_scopes` (`fileRef`)")
-                db.execSQL("""
-                    INSERT INTO `file_scopes` (`fileRef`, `scopeRoot`)
-                    SELECT `fileRef`, `scopeRoot` FROM `file_scopes_legacy`
-                """.trimIndent())
-                db.execSQL("DROP TABLE `file_scopes_legacy`")
+                // Statements live in Migrations so a JVM test can execute
+                // them against real SQLite. Order and text are unchanged.
+                Migrations.V3_TO_V4.forEach(db::execSQL)
             }
         }
 

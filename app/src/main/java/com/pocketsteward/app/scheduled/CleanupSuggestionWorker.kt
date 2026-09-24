@@ -222,7 +222,7 @@ class CleanupSuggestionWorker(
         manager.notify(
             NOTIFICATION_ID,
             NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Pocket Steward found new files")
                 .setContentText(
                     if (obvious > 0) {

@@ -1,5 +1,25 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SegmentedButton
+import com.pocketsteward.app.ui.components.FileKind
+import com.pocketsteward.app.ui.components.FileVisual
+import com.pocketsteward.app.plan.PlanTree
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +69,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
     val preview = state
     var confirmBulkRed by rememberSaveable { mutableStateOf(false) }
+    var view by rememberSaveable { mutableStateOf(PlanView.LIST) }
+    val haptics = LocalHapticFeedback.current
 
     ScanFlowScaffold(
         title = "Review changes",
@@ -78,7 +100,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
                     ),
                 ) {
                     Text(
@@ -90,7 +113,22 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
             }
 
-            Row(
+            // Now/After draw the selected actions as folder trees: the
+            // shape of the result, which is what is actually being approved.
+            // Display only; the executor still runs the selected list.
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+                PlanView.entries.forEachIndexed { i, option ->
+                    SegmentedButton(
+                        selected = view == option,
+                        onClick = { view = option },
+                        shape = SegmentedButtonDefaults.itemShape(index = i, count = PlanView.entries.size),
+                    ) {
+                        Text(option.label)
+                    }
+                }
+            }
+
+            if (view == PlanView.LIST) Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
@@ -120,7 +158,22 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
             }
 
-            LazyColumn(
+            if (view != PlanView.LIST) {
+                val selectedOps = remember(preview.accepted, preview.selectedIndices) {
+                    preview.selectedIndices.sorted().mapNotNull { preview.accepted.getOrNull(it) }
+                }
+                val trees = remember(selectedOps) { PlanTree.build(selectedOps) }
+                PlanTreeView(
+                    tree = if (view == PlanView.NOW) trees.before else trees.after,
+                    after = view == PlanView.AFTER,
+                    emptyMessage = if (selectedOps.isEmpty()) {
+                        "Nothing selected yet. Pick actions in List to see their result here."
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            } else LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
@@ -194,31 +247,45 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     val previousLabel = preview.accepted.getOrNull(index - 1)
                         ?.let(::destinationLabel)
                         ?: preview.acceptedScopeLabels.getOrNull(index - 1)
-                    Column {
+                    Column(modifier = Modifier.animateItem()) {
                         if (index == 0 || previousLabel != groupLabel) {
                             SectionHeader(groupLabel)
                         }
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().animateContentSize(),
                             colors = if (destructive) {
-                                CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                                CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                )
                             } else {
                                 CardDefaults.cardColors()
                             },
                         ) {
-                            Row(modifier = Modifier.padding(Spacing.base)) {
+                            Row(
+                                modifier = Modifier.padding(Spacing.base),
+                                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                            ) {
                                 Checkbox(
                                     checked = selected,
                                     onCheckedChange = { checked ->
                                         viewModel.setPlanOperationSelected(index, checked)
                                     },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "Include: ${operationSummary(operation)}"
+                                    },
                                 )
+                                OperationVisual(operation)
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         text = operation.reason,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = if (destructive) {
+                                            MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
                                     )
                                     PlanOperationEditControls(
                                         operation = operation,
@@ -269,7 +336,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
             ActionRow {
                 Button(
-                    onClick = { viewModel.approvePlan(preview) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        viewModel.approvePlan(preview)
+                    },
                     enabled = preview.selectedIndices.isNotEmpty(),
                 ) {
                     Text("Run ${preview.selectedIndices.size} selected")
@@ -602,3 +672,127 @@ private fun destinationLabel(operation: PlannedOperation): String? =
     destinationEditGroup(operation)?.directory
         ?: safDestinationEditGroup(operation)?.displayPath
 
+
+private enum class PlanView(val label: String) { LIST("List"), NOW("Now"), AFTER("After") }
+
+/** The file an operation acts on, drawn the same way as everywhere else in the app. */
+@Composable
+private fun OperationVisual(operation: PlannedOperation) {
+    val source = when (operation) {
+        is PlannedOperation.Move -> operation.source
+        is PlannedOperation.Copy -> operation.source
+        is PlannedOperation.Rename -> operation.source
+        is PlannedOperation.Trash -> operation.source
+        is PlannedOperation.CreateDirectory, is PlannedOperation.WriteTextFile -> null
+    }
+    when {
+        source != null -> FileVisual(
+            name = PlanTree.segments(source).lastOrNull().orEmpty(),
+            // A Child ref names something that does not exist yet.
+            location = source.takeIf { it !is FileRef.Child }?.rawValue(),
+        )
+        operation is PlannedOperation.CreateDirectory ->
+            FileVisual(name = operation.name, location = null, isDirectory = true)
+        operation is PlannedOperation.WriteTextFile ->
+            FileVisual(name = operation.name, location = null)
+    }
+}
+
+@Composable
+private fun PlanTreeView(
+    tree: PlanTree.Tree,
+    after: Boolean,
+    emptyMessage: String?,
+    modifier: Modifier = Modifier,
+) {
+    if (emptyMessage != null) {
+        EmptyState(emptyMessage, modifier)
+        return
+    }
+    LazyColumn(modifier = modifier.fillMaxWidth()) {
+        item {
+            Text(
+                text = tree.rootLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = Spacing.tight),
+            )
+        }
+        itemsIndexed(tree.rows) { _, row ->
+            PlanTreeRow(row, after)
+        }
+        if (tree.hiddenRows > 0) {
+            item {
+                Text(
+                    text = "${tree.hiddenRows} more rows not drawn. The List view still has every action.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.tight),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanTreeRow(row: PlanTree.Row, after: Boolean) {
+    val markLabel = row.mark?.let { treeMarkLabel(it, after) }
+    val spoken = buildString {
+        append(if (row.isFolder) "Folder " else "File ")
+        append(row.name)
+        if (row.isFolder) append(", ${row.fileCount} file(s)")
+        markLabel?.let { append(", $it") }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (row.depth * 16).dp, top = 3.dp, bottom = 3.dp)
+            .clearAndSetSemantics { contentDescription = spoken },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+    ) {
+        FileVisual(name = row.name, location = null, isDirectory = row.isFolder, size = 24.dp)
+        Text(
+            text = row.name,
+            style = if (row.isFolder) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (row.isFolder && row.fileCount > 0) {
+            Text(
+                text = "${row.fileCount}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (row.mark != null && markLabel != null) {
+            TreeMarkChip(markLabel, row.mark)
+        }
+    }
+}
+
+@Composable
+private fun TreeMarkChip(label: String, mark: PlanTree.Mark) {
+    val (bg, fg) = when (mark) {
+        PlanTree.Mark.TRASH -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        PlanTree.Mark.NEW -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+        else -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = fg,
+        modifier = Modifier
+            .background(bg, RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+private fun treeMarkLabel(mark: PlanTree.Mark, after: Boolean): String = when (mark) {
+    PlanTree.Mark.MOVE -> if (after) "arrives" else "moves"
+    PlanTree.Mark.RENAME -> if (after) "new name" else "renamed"
+    PlanTree.Mark.COPY -> if (after) "copy" else "copied"
+    PlanTree.Mark.TRASH -> if (after) "recoverable" else "to Trash"
+    PlanTree.Mark.NEW -> "new"
+}

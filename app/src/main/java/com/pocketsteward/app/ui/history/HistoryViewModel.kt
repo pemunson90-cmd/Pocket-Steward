@@ -128,7 +128,10 @@ class HistoryViewModel(
      */
     private suspend fun reversibleCount(taskRunId: Long): Int =
         mutationRecordDao.getForTaskRun(taskRunId)
-            .count { it.status == MutationStatus.COMMITTED && it.undoState == UndoState.AVAILABLE }
+            .count {
+                it.status == MutationStatus.COMMITTED &&
+                    (it.undoState == UndoState.AVAILABLE || it.undoState == UndoState.BLOCKED)
+            }
 
     fun confirmUndo(taskRunId: Long) {
         viewModelScope.launch { runUndo(taskRunId) }

@@ -1,5 +1,7 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -202,7 +204,14 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
                 item {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = includeSubfolders,
+                                role = Role.Switch,
+                                onValueChange = { includeSubfolders = it },
+                            )
+                            .padding(vertical = Spacing.hairline),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -214,7 +223,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(checked = includeSubfolders, onCheckedChange = { includeSubfolders = it })
+                        Switch(checked = includeSubfolders, onCheckedChange = null)
                     }
                 }
                 item { SectionHeader("Find") }
@@ -227,6 +236,13 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                             "Find byte-identical copies by SHA-256, choose the keeper, and review any move to the granted tree's recoverable Trash."
                         },
                         onClick = { viewModel.findDuplicates(state) },
+                    )
+                }
+                item {
+                    ActionCard(
+                        title = "Older versions",
+                        supporting = "Find sets like Resume, Resume (1) and Resume_v2. Keep the newest; move the rest aside.",
+                        onClick = { viewModel.findVersionChains(state) },
                     )
                 }
                 item {

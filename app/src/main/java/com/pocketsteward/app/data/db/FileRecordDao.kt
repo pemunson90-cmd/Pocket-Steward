@@ -167,4 +167,76 @@ interface FileRecordDao {
     companion object {
         const val SCAN_LOOKUP_CHUNK = 500
     }
+
+    // ---- Background library ------------------------------------------------
+
+    @Query("SELECT COUNT(*) FROM file_scopes INNER JOIN file_records ON file_records.stableRef = file_scopes.fileRef WHERE file_scopes.scopeRoot = :scopeRootRef AND file_records.isDirectory = 0")
+    suspend fun countFilesInScope(scopeRootRef: String): Int
+
+    @Query("DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef")
+    suspend fun removeAllScopeTags(scopeRootRef: String)
+
+    @Query("SELECT COUNT(*) FROM file_scopes WHERE fileRef = :fileRef AND scopeRoot = :scopeRootRef")
+    suspend fun scopeTagCount(fileRef: String, scopeRootRef: String): Int
+
+    /**
+     * Tags everything the library holds at or under [folderRef] as belonging
+     * to [newScope]. Prefix matched with substr rather than LIKE, so the
+     * underscores and percent signs that appear in real file names are
+     * literal. [folderSlash] is [folderRef] with one trailing slash.
+     */
+    @Query(
+        "INSERT OR IGNORE INTO file_scopes (fileRef, scopeRoot) " +
+            "SELECT fileRef, :newScope FROM file_scopes " +
+            "WHERE scopeRoot = :libraryScope " +
+            "AND (fileRef = :folderRef OR substr(fileRef, 1, length(:folderSlash)) = :folderSlash)",
+    )
+    suspend fun copyScopeTagsUnder(libraryScope: String, newScope: String, folderRef: String, folderSlash: String)
+
+    /**
+     * Makes [newScope] an exact slice of the library under [folderRef],
+     * replacing whatever that scope held before. Records are shared, so this
+     * only moves tags; nothing on disk is involved.
+     */
+    @Transaction
+    suspend fun adoptLibrarySlice(libraryScope: String, newScope: String, folderRef: String) {
+        val folder = folderRef.trimEnd('/')
+        removeAllScopeTags(newScope)
+        copyScopeTagsUnder(libraryScope, newScope, folder, "$folder/")
+        deleteOrphanedFiles()
+    }
+
+    // ---- Files tab: categories, recent, name search over the library ------
+
+    @Query(
+        "SELECT r.* FROM file_records r INNER JOIN file_scopes s ON r.stableRef = s.fileRef " +
+            "WHERE s.scopeRoot = :root AND r.isDirectory = 0 AND lower(r.extension) IN (:extensions) " +
+            "ORDER BY r.modifiedAt DESC LIMIT :limit",
+    )
+    suspend fun libraryFilesByExtension(root: String, extensions: List<String>, limit: Int): List<FileRecord>
+
+    @Query(
+        "SELECT r.* FROM file_records r INNER JOIN file_scopes s ON r.stableRef = s.fileRef " +
+            "WHERE s.scopeRoot = :root AND r.isDirectory = 0 AND r.modifiedAt IS NOT NULL " +
+            "ORDER BY r.modifiedAt DESC LIMIT :limit",
+    )
+    suspend fun libraryRecentFiles(root: String, limit: Int): List<FileRecord>
+
+    /** [pattern] is a LIKE pattern with \ as the escape character. */
+    @Query(
+        "SELECT r.* FROM file_records r INNER JOIN file_scopes s ON r.stableRef = s.fileRef " +
+            "WHERE s.scopeRoot = :root AND r.displayName LIKE :pattern ESCAPE '\\' " +
+            "ORDER BY r.isDirectory DESC, length(r.displayName) ASC, r.modifiedAt DESC LIMIT :limit",
+    )
+    suspend fun librarySearchByName(root: String, pattern: String, limit: Int): List<FileRecord>
+
+    @Query(
+        "SELECT lower(r.extension) AS extension, COUNT(*) AS fileCount, COALESCE(SUM(r.sizeBytes), 0) AS totalBytes " +
+            "FROM file_records r INNER JOIN file_scopes s ON r.stableRef = s.fileRef " +
+            "WHERE s.scopeRoot = :root AND r.isDirectory = 0 GROUP BY lower(r.extension)",
+    )
+    suspend fun libraryExtensionStats(root: String): List<ExtensionStat>
 }
+
+/** Per-extension totals for the Files tab's category tiles. */
+data class ExtensionStat(val extension: String, val fileCount: Int, val totalBytes: Long)

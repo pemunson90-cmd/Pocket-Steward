@@ -24,6 +24,8 @@ data class UndoSummary(
     val undone: Int,
     val skipped: Int,
     val blocked: Int,
+    val protectionBlocked: Int,
+    val otherBlocked: Int,
     val messages: List<String>,
 ) {
     val complete: Boolean get() = blocked == 0
@@ -55,7 +57,9 @@ class UndoExecutor(
     suspend fun undoSingleMutation(mutationId: Long): MutationResult {
         val record = mutationRecordDao.getById(mutationId)
             ?: return MutationResult.Failure("No such journal entry: $mutationId")
-        if (record.status != MutationStatus.COMMITTED || record.undoState != UndoState.AVAILABLE) {
+        if (record.status != MutationStatus.COMMITTED ||
+            (record.undoState != UndoState.AVAILABLE && record.undoState != UndoState.BLOCKED)
+        ) {
             return MutationResult.Failure("That change is not in a reversible state (${record.status} / ${record.undoState}).")
         }
         val task = taskRunDao.getById(record.taskRunId)
@@ -108,13 +112,19 @@ class UndoExecutor(
             task.status == TaskRunStatus.COMPLETED ||
                 task.status == TaskRunStatus.PARTIAL ||
                 task.status == TaskRunStatus.FAILED ||
-                task.status == TaskRunStatus.CANCELLED,
+                task.status == TaskRunStatus.CANCELLED ||
+                task.status == TaskRunStatus.UNDO_PARTIAL,
         ) {
             "Task is not in an undoable state: ${task.status}"
         }
         val initialRecords = mutationRecordDao.getForTaskRunReverse(taskRunId)
-        require(initialRecords.any { it.status == MutationStatus.COMMITTED && it.undoState == UndoState.AVAILABLE }) {
-            "This task has no reversible committed changes."
+        require(
+            initialRecords.any {
+                it.status == MutationStatus.COMMITTED &&
+                    (it.undoState == UndoState.AVAILABLE || it.undoState == UndoState.BLOCKED)
+            },
+        ) {
+            "This task has no reversible or retryable committed changes."
         }
 
         val gateway = gatewayFor(task.storageAccessMode)
@@ -123,6 +133,8 @@ class UndoExecutor(
         var undone = 0
         var skipped = 0
         var blocked = 0
+        var protectionBlocked = 0
+        var otherBlocked = 0
         val messages = mutableListOf<String>()
 
         val total = initialRecords.size
@@ -132,7 +144,9 @@ class UndoExecutor(
                 skipped++
                 return@forEachIndexed
             }
-            if (record.status != MutationStatus.COMMITTED || record.undoState != UndoState.AVAILABLE) {
+            if (record.status != MutationStatus.COMMITTED ||
+                (record.undoState != UndoState.AVAILABLE && record.undoState != UndoState.BLOCKED)
+            ) {
                 skipped++
                 return@forEachIndexed
             }
@@ -165,6 +179,7 @@ class UndoExecutor(
                         ),
                     )
                     blocked++
+                    if (isProtectionFailure(result.reason)) protectionBlocked++ else otherBlocked++
                     messages += "${record.operationType}: ${result.reason}"
                 }
             }
@@ -180,12 +195,21 @@ class UndoExecutor(
                 summary = buildString {
                     append(latestTask.summary.orEmpty())
                     if (isNotEmpty()) append(" · ")
-                    append("Undo: $undone restored, $blocked blocked, $skipped skipped")
+                    append("Undo: $undone restored, $protectionBlocked blocked by protection checks, ")
+                    append("$otherBlocked blocked for other reasons, $skipped skipped")
                 },
             ),
         )
 
-        return UndoSummary(taskRunId, undone, skipped, blocked, messages)
+        return UndoSummary(
+            taskRunId = taskRunId,
+            undone = undone,
+            skipped = skipped,
+            blocked = blocked,
+            protectionBlocked = protectionBlocked,
+            otherBlocked = otherBlocked,
+            messages = messages,
+        )
     }
 
     private suspend fun undoOne(record: MutationRecord, gateway: StorageGateway): MutationResult {
@@ -259,14 +283,6 @@ class UndoExecutor(
                 )
             }
         }
-    }
-}
-
-private fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<String> {
-    val raw = ref.rawValue().trimEnd('/')
-    return knownScopes.distinct().filter { scope ->
-        val normalized = scope.trimEnd('/')
-        raw == normalized || raw.startsWith("$normalized/")
     }
 }
 

@@ -1,5 +1,6 @@
 package com.pocketsteward.app.ui.home
 
+import com.pocketsteward.app.ui.components.SmoothProgressBar
 import java.io.File
 
 import android.widget.Toast
@@ -45,6 +46,7 @@ fun HomeScreen(
     onExplore: () -> Unit,
     onContinueLastScan: () -> Unit,
     onOpenTasks: () -> Unit,
+    onAsk: () -> Unit,
     onNaturalLanguageRequest: (String) -> Unit,
     onQuickAction: (PostScanAction) -> Unit,
     onScheduledReview: () -> Unit,
@@ -139,8 +141,8 @@ fun HomeScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (total > 0) {
-                        LinearProgressIndicator(
-                            progress = { completed.toFloat() / total.toFloat() },
+                        SmoothProgressBar(
+                            fraction = completed.toFloat() / total.toFloat(),
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
@@ -222,6 +224,11 @@ fun HomeScreen(
         }
 
         Text("Quick actions", style = MaterialTheme.typography.titleLarge)
+        HomeQuickAction(
+            title = "Ask your files",
+            supporting = "Ask a question about what's inside your indexed documents. Answers cite their sources.",
+            onClick = onAsk,
+        )
         HomeQuickAction(
             title = "Organize Downloads",
             supporting = "Scan Downloads and build a preview for obvious type/project matches.",

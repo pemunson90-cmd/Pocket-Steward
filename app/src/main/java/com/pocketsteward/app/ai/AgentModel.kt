@@ -78,4 +78,16 @@ interface AgentModel {
      * again with DeterministicIntentParser before doing anything.
      */
     suspend fun normalizeIntentRequest(request: String): String? = null
+
+    /**
+     * Read-only question answering over excerpts Pocket Steward already
+     * retrieved from the local index. The model sees only those excerpts,
+     * must cite them, and its reply is checked by [AskAnswerProtocol].
+     * Null means no model answer (unavailable or unusable reply); callers
+     * then show the excerpts on their own.
+     */
+    suspend fun answerFromPassages(
+        question: String,
+        passages: List<com.pocketsteward.app.content.ask.AskPassage>,
+    ): AskModelAnswer? = null
 }

@@ -47,11 +47,29 @@ import kotlinx.coroutines.CoroutineScope
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
+
+    /** Application context for UI-side helpers that need one (never an Activity). */
+    val appContextForUi: Context get() = appContext
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
+
+    /** One walker per scan root, shared by the background library and manual scans. */
+    val scanLocks: com.pocketsteward.app.library.ScanLocks by lazy { com.pocketsteward.app.library.ScanLocks() }
+
+    val library: com.pocketsteward.app.library.LibraryRepository by lazy {
+        com.pocketsteward.app.library.LibraryRepository(
+            gatewayFor = ::gatewayFor,
+            scannerFor = ::fileScanner,
+            fileRecordDao = database.fileRecordDao(),
+            checkpointDao = database.scanCheckpointDao(),
+            locks = scanLocks,
+            readLastCompleted = { settingsRepository.libraryLastCompleted() },
+            writeLastCompleted = { root, at -> settingsRepository.setLibraryLastCompleted(root, at) },
+        )
+    }
 
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
@@ -217,6 +235,30 @@ class AppContainer(context: Context) {
                 ),
             )
             .setConstraints(BackgroundWorkPolicy.contentIndexConstraints())
+            .addTag(ContentIndexWorker.WORK_TAG)
+            .build()
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            ContentIndexWorker.uniqueName(mode, roots),
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /**
+     * Whole-library content indexing, waiting for the charger. Kept separate
+     * from [startContentIndexing], which runs a folder the user is searching
+     * right now in the foreground.
+     */
+    fun enqueueChargingContentIndex(root: String, mode: StorageAccessMode) {
+        val roots = listOf(root.trimEnd('/'))
+        val request = OneTimeWorkRequestBuilder<ContentIndexWorker>()
+            .setInputData(
+                workDataOf(
+                    ContentIndexWorker.KEY_ROOTS to roots.toTypedArray(),
+                    ContentIndexWorker.KEY_MODE to mode.name,
+                ),
+            )
+            .setConstraints(BackgroundWorkPolicy.libraryContentIndexConstraints())
             .addTag(ContentIndexWorker.WORK_TAG)
             .build()
         WorkManager.getInstance(appContext).enqueueUniqueWork(

@@ -1,5 +1,13 @@
 package com.pocketsteward.app.ui.settings
 
+import androidx.compose.material3.OutlinedButton
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import com.pocketsteward.app.ui.components.SmoothProgressBar
 import androidx.core.content.ContextCompat
 
 import androidx.activity.result.contract.ActivityResultContracts
@@ -63,6 +71,18 @@ fun SettingsScreen(
                     clearContentIndexCache = container::clearContentIndex,
                     applyScheduledCleanup = container.scheduledCleanupCoordinator::apply,
                     loadRuntimeDiagnostics = container.runtimeDiagnostics::snapshot,
+                    loadLibraryStatus = {
+                        container.library.status(container.settingsRepository.storageAccessState.first())
+                    },
+                    syncLibrarySchedule = { enabled ->
+                        com.pocketsteward.app.service.LibraryRefreshWorker.sync(context.applicationContext, enabled)
+                    },
+                    refreshLibraryNow = {
+                        com.pocketsteward.app.service.LibraryRefreshWorker.runNow(context.applicationContext, forced = true)
+                    },
+                    libraryWorkRunning = androidx.work.WorkManager.getInstance(context.applicationContext)
+                        .getWorkInfosByTagFlow(com.pocketsteward.app.service.LibraryRefreshWorker.WORK_TAG)
+                        .map { infos -> infos.any { it.state == androidx.work.WorkInfo.State.RUNNING } },
                 )
             }
         },
@@ -267,8 +287,8 @@ fun SettingsScreen(
                 if (modelStatus.downloading) {
                     val total = modelStatus.bytesToDownload
                     if (total != null && total > 0) {
-                        LinearProgressIndicator(
-                            progress = { (modelStatus.bytesDownloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
+                        SmoothProgressBar(
+                            fraction = (modelStatus.bytesDownloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f),
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         )
                     } else {
@@ -405,6 +425,55 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 8.dp),
         ) {
             Text("Save schedule")
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
+        SectionTitle("Background library")
+        val libraryStatus by viewModel.libraryStatus.collectAsState()
+        val librarySettings by viewModel.librarySettings.collectAsState()
+        val libraryRefreshing by viewModel.libraryRefreshing.collectAsState()
+        Text(
+            text = libraryStatusLine(libraryStatus, libraryRefreshing),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingsSwitchRow(
+            label = "Keep my file library up to date",
+            supporting = "Re-reads names, sizes and dates across your storage every few hours and when you open the app. " +
+                "Scans and the Files tab start instantly from it.",
+            checked = librarySettings.backgroundRefreshEnabled,
+            onCheckedChange = viewModel::setLibraryBackgroundRefresh,
+        )
+        SettingsSwitchRow(
+            label = "Index document contents while charging",
+            supporting = "Reads text in documents and scanned PDFs so search and Ask can find what's inside. " +
+                "Runs only on the charger. Turns on document inspection.",
+            checked = librarySettings.contentIndexWhileCharging && privacy.contentInspectionEnabled,
+            onCheckedChange = viewModel::setLibraryContentWhileCharging,
+        )
+        OutlinedButton(
+            onClick = viewModel::refreshLibraryNow,
+            enabled = !libraryRefreshing,
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text(if (libraryRefreshing) "Refreshing…" else "Refresh now")
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
+        SectionTitle("Appearance")
+        SettingsSwitchRow(
+            label = "Show thumbnails",
+            supporting = "Previews for images, videos and PDFs, made on this phone and kept only in memory.",
+            checked = uiSettings.thumbnailsEnabled,
+            onCheckedChange = viewModel::setThumbnailsEnabled,
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            SettingsSwitchRow(
+                label = "Use wallpaper colors",
+                supporting = "Match your phone's Material You colors instead of the Pocket Steward palette.",
+                checked = uiSettings.wallpaperColorsEnabled,
+                onCheckedChange = viewModel::setWallpaperColorsEnabled,
+            )
         }
 
         HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
@@ -556,7 +625,9 @@ private fun SectionTitle(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleLarge,
-        modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
+        modifier = Modifier
+            .padding(top = 24.dp, bottom = 10.dp)
+            .semantics { heading() },
     )
 }
 
@@ -567,8 +638,13 @@ private fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    // The whole row is the control: a bigger tap target, and a screen
+    // reader announces "<label>, switch, on" instead of an unnamed switch.
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
@@ -580,7 +656,7 @@ private fun SettingsSwitchRow(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -602,4 +678,28 @@ private fun formatDiagnosticBytes(bytes: Long): String {
         unit++
     }
     return "%.1f %s".format(value, units[unit])
+}
+
+private fun libraryStatusLine(status: com.pocketsteward.app.library.LibraryStatus?, refreshing: Boolean): String {
+    if (status == null) return "Checking…"
+    if (status.rootKey == null) return "Grant storage access to build the library."
+    val parts = mutableListOf<String>()
+    if (status.fileCount > 0) parts += "${"%,d".format(status.fileCount)} files"
+    parts += when {
+        refreshing -> "refreshing now"
+        status.lastCompletedAt == null && status.inProgress -> "first pass under way (${"%,d".format(status.processedSoFar)} so far)"
+        status.lastCompletedAt == null -> "not built yet"
+        else -> "updated ${relativeAge(System.currentTimeMillis() - status.lastCompletedAt)}"
+    }
+    return parts.joinToString(" · ")
+}
+
+private fun relativeAge(ms: Long): String {
+    val minutes = ms / 60_000
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        minutes < 48 * 60 -> "${minutes / 60} h ago"
+        else -> "${minutes / (24 * 60)} days ago"
+    }
 }

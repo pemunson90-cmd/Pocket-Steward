@@ -1,45 +1,47 @@
 package com.pocketsteward.app.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalContext
 
-private val LightColors = lightColorScheme(
-    primary = StewardGreen40,
-    onPrimary = Neutral99,
-    primaryContainer = StewardGreen90,
-    background = Neutral99,
-    onBackground = Neutral10,
-    surface = Neutral99,
-    onSurface = Neutral10,
-    error = Error40,
-)
-
-private val DarkColors = darkColorScheme(
-    primary = StewardGreen80,
-    onPrimary = Neutral20,
-    primaryContainer = StewardGreen40,
-    background = Neutral10,
-    onBackground = Neutral90,
-    surface = Neutral10,
-    onSurface = Neutral90,
-    error = Error80,
-)
+/**
+ * Whether file lists may decode real previews. Provided once at the root from
+ * the "Show thumbnails" setting so every file row can read it without each
+ * screen threading a parameter through.
+ */
+val LocalThumbnailsEnabled = staticCompositionLocalOf { true }
 
 @Composable
 fun PocketStewardTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    wallpaperColors: Boolean = false,
+    thumbnailsEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    // Pocket Steward keeps a restrained fixed palette instead of changing
-    // identity with the phone wallpaper through Android dynamic color.
-    val colorScheme = if (darkTheme) DarkColors else LightColors
+    // The fixed Pocket Steward palette is the default identity. Following the
+    // wallpaper is an explicit opt-in from Settings, and only exists on
+    // Android 12+.
+    val colorScheme = when {
+        wallpaperColors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        darkTheme -> DarkStewardColors
+        else -> LightStewardColors
+    }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = PocketStewardTypography,
-        content = content,
-    )
+    CompositionLocalProvider(LocalThumbnailsEnabled provides thumbnailsEnabled) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = PocketStewardTypography,
+            shapes = PocketStewardShapes,
+            content = content,
+        )
+    }
 }

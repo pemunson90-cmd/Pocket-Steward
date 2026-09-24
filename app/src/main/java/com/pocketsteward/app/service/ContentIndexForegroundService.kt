@@ -216,7 +216,7 @@ class ContentIndexForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openIntent)
@@ -250,7 +250,7 @@ class ContentIndexForegroundService : Service() {
         getSystemService(NotificationManager::class.java).notify(
             TERMINAL_NOTIFICATION_ID,
             NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(openIntent)

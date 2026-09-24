@@ -70,7 +70,7 @@ interface MutationRecordDao {
      */
     @Query(
         "SELECT * FROM mutation_records WHERE operationType = 'TRASH' " +
-            "AND status = 'COMMITTED' AND undoState = 'AVAILABLE' ORDER BY executedAt DESC",
+            "AND status = 'COMMITTED' AND undoState IN ('AVAILABLE', 'BLOCKED') ORDER BY executedAt DESC",
     )
     fun observeTrashed(): Flow<List<MutationRecord>>
 }

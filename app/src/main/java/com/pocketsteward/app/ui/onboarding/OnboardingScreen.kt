@@ -1,5 +1,8 @@
 package com.pocketsteward.app.ui.onboarding
 
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material3.MaterialTheme
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
@@ -104,8 +107,17 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
                 .padding(24.dp),
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(text = stringResource(R.string.onboarding_title))
-            Text(text = stringResource(R.string.onboarding_body))
+            Text(
+                text = stringResource(R.string.onboarding_title),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                text = stringResource(R.string.onboarding_body),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
 
             Button(
                 onClick = {

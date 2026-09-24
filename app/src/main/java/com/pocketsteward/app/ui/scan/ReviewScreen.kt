@@ -1,5 +1,12 @@
 package com.pocketsteward.app.ui.scan
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.Box
+import com.pocketsteward.app.ui.components.SmoothProgressBar
+import androidx.compose.ui.semantics.semantics
+import com.pocketsteward.app.ui.components.FileVisual
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
@@ -101,6 +108,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         is ScanUiState.IndexedContentSearchReview -> current.title
         is ScanUiState.CoherenceAuditReview -> "Document organizer"
         is ScanUiState.DuplicateReview -> "Duplicates"
+        is ScanUiState.VersionChainReview -> "Older versions"
         is ScanUiState.ProtectFolders -> "Protect folders"
         else -> "Review"
     }
@@ -142,6 +150,12 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             is ScanUiState.DuplicateReview -> DuplicateReview(
                 state = current,
                 onTrashDuplicates = { viewModel.proposeTrashDuplicates(current) },
+                onBack = onBack,
+                modifier = contentModifier,
+            )
+            is ScanUiState.VersionChainReview -> VersionChainReview(
+                state = current,
+                onPropose = { viewModel.proposeOlderVersions(current) },
                 onBack = onBack,
                 modifier = contentModifier,
             )
@@ -208,9 +222,19 @@ private fun FileRow(
     explanation: String? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.hairline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = Spacing.hairline)
+            .semantics(mergeDescendants = true) {},
         horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        FileVisual(
+            name = record.displayName,
+            location = record.absolutePathOrUri,
+            mimeType = record.mimeType,
+            isDirectory = record.isDirectory,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = record.displayName,
@@ -262,7 +286,9 @@ private fun ContentSearchReview(state: ScanUiState.ContentSearchReview, modifier
             verticalArrangement = Arrangement.spacedBy(Spacing.tight),
         ) {
             items(state.matches, key = { it.record.stableRef }) { match ->
-                ContentMatchCard(match)
+                Box(modifier = Modifier.animateItem()) {
+                    ContentMatchCard(match)
+                }
             }
         }
     }
@@ -271,37 +297,43 @@ private fun ContentSearchReview(state: ScanUiState.ContentSearchReview, modifier
 @Composable
 private fun ContentMatchCard(match: ContentMatch) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(Spacing.base)) {
-            Text(
-                text = match.record.displayName,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (match.pageNumber != null) {
+        Row(
+            modifier = Modifier.padding(Spacing.base),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.base),
+        ) {
+            FileVisual(name = match.record.displayName, location = match.record.absolutePathOrUri, mimeType = match.record.mimeType)
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = buildString {
-                        append("Page ${match.pageNumber}")
-                        if (match.ocr) append(" · OCR")
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    text = match.record.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (match.pageNumber != null) {
+                    Text(
+                        text = buildString {
+                            append("Page ${match.pageNumber}")
+                            if (match.ocr) append(" · OCR")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                }
+                Text(
+                    text = match.snippet,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+                Text(
+                    text = match.record.stableRef,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = Spacing.hairline),
                 )
             }
-            Text(
-                text = match.snippet,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = Spacing.hairline),
-            )
-            Text(
-                text = match.record.stableRef,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = Spacing.hairline),
-            )
         }
     }
 }
@@ -390,17 +422,19 @@ private fun IndexedContentSearchReview(
                         verticalArrangement = Arrangement.spacedBy(Spacing.tight),
                     ) {
                         items(visible, key = { it.stableRef }) { result ->
-                            IndexedContentResultCard(
-                                result = result,
-                                expanded = result.stableRef in expandedRefs,
-                                selected = selected?.stableRef == result.stableRef,
-                                onSelect = { selectedRef = result.stableRef },
-                                onToggleExpanded = {
-                                    expandedRefs = expandedRefs.toMutableSet().apply {
-                                        if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
-                                    }
-                                },
-                            )
+                            Box(modifier = Modifier.animateItem()) {
+                                IndexedContentResultCard(
+                                    result = result,
+                                    expanded = result.stableRef in expandedRefs,
+                                    selected = selected?.stableRef == result.stableRef,
+                                    onSelect = { selectedRef = result.stableRef },
+                                    onToggleExpanded = {
+                                        expandedRefs = expandedRefs.toMutableSet().apply {
+                                            if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
 
@@ -423,20 +457,22 @@ private fun IndexedContentSearchReview(
                     verticalArrangement = Arrangement.spacedBy(Spacing.tight),
                 ) {
                     items(visible, key = { it.stableRef }) { result ->
-                        IndexedContentResultCard(
-                            result = result,
-                            expanded = result.stableRef in expandedRefs,
-                            selected = selectedRef == result.stableRef,
-                            onSelect = {
-                                selectedRef = result.stableRef
-                                previewSheetOpen = true
-                            },
-                            onToggleExpanded = {
-                                expandedRefs = expandedRefs.toMutableSet().apply {
-                                    if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
-                                }
-                            },
-                        )
+                        Box(modifier = Modifier.animateItem()) {
+                            IndexedContentResultCard(
+                                result = result,
+                                expanded = result.stableRef in expandedRefs,
+                                selected = selectedRef == result.stableRef,
+                                onSelect = {
+                                    selectedRef = result.stableRef
+                                    previewSheetOpen = true
+                                },
+                                onToggleExpanded = {
+                                    expandedRefs = expandedRefs.toMutableSet().apply {
+                                        if (result.stableRef in this) remove(result.stableRef) else add(result.stableRef)
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -617,11 +653,8 @@ private fun SearchToolbar(
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
             if (!state.indexComplete && state.indexEligible > 0) {
-                LinearProgressIndicator(
-                    progress = {
-                        state.indexProcessed.toFloat() /
-                            state.indexEligible.coerceAtLeast(1).toFloat()
-                    },
+                SmoothProgressBar(
+                    fraction = state.indexProcessed.toFloat() / state.indexEligible.coerceAtLeast(1).toFloat(),
                     modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
                 )
                 Text(
@@ -855,55 +888,61 @@ private fun IndexedContentResultCard(
 ) {
     Card(
         onClick = onSelect,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
     ) {
-        Column(modifier = Modifier.padding(Spacing.base)) {
-            Text(
-                text = result.displayName,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = buildString {
-                    append(result.extension.ifBlank { "file" }.uppercase())
-                    append(" · ")
-                    append(formatBytes(result.sizeBytes))
-                    result.modifiedAt?.let {
-                        append(" · ")
-                        append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))
-                    }
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = Spacing.hairline),
-            )
-            result.parentRef?.let { parent ->
+        Row(
+            modifier = Modifier.padding(Spacing.base),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.base),
+        ) {
+            FileVisual(name = result.displayName, location = result.stableRef)
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = parent,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    text = result.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = buildString {
+                        append(result.extension.ifBlank { "file" }.uppercase())
+                        append(" · ")
+                        append(formatBytes(result.sizeBytes))
+                        result.modifiedAt?.let {
+                            append(" · ")
+                            append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))
+                        }
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = Spacing.hairline),
                 )
-            }
-
-            val shown = if (expanded) result.snippets else result.snippets.take(1)
-            shown.forEachIndexed { index, snippet ->
-                SearchSnippet(snippet, topPadding = if (index == 0) Spacing.hairline else Spacing.tight)
-            }
-
-            if (result.extraSnippetCount > 0) {
-                TextButton(onClick = onToggleExpanded) {
+                result.parentRef?.let { parent ->
                     Text(
-                        if (expanded) {
-                            "Show less"
-                        } else {
-                            "Show ${result.extraSnippetCount} more match${if (result.extraSnippetCount == 1) "" else "es"}"
-                        },
+                        text = parent,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = Spacing.hairline),
                     )
+                }
+
+                val shown = if (expanded) result.snippets else result.snippets.take(1)
+                shown.forEachIndexed { index, snippet ->
+                    SearchSnippet(snippet, topPadding = if (index == 0) Spacing.hairline else Spacing.tight)
+                }
+
+                if (result.extraSnippetCount > 0) {
+                    TextButton(onClick = onToggleExpanded) {
+                        Text(
+                            if (expanded) {
+                                "Show less"
+                            } else {
+                                "Show ${result.extraSnippetCount} more match${if (result.extraSnippetCount == 1) "" else "es"}"
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -1023,7 +1062,7 @@ private fun highlightedSearchSnippet(raw: String): AnnotatedString {
     }
 }
 
-private fun openDirectFile(
+internal fun openDirectFile(
     context: Context,
     path: String,
     displayName: String,
@@ -1325,7 +1364,14 @@ private fun CoherenceAuditReview(
                         }
 
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = Spacing.base)
+                                .toggleable(
+                                    value = includeSubfolders,
+                                    role = Role.Switch,
+                                    onValueChange = { includeSubfolders = it },
+                                ),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1341,10 +1387,7 @@ private fun CoherenceAuditReview(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Switch(
-                                checked = includeSubfolders,
-                                onCheckedChange = { includeSubfolders = it },
-                            )
+                            Switch(checked = includeSubfolders, onCheckedChange = null)
                         }
 
                         Button(
@@ -1699,7 +1742,9 @@ private fun DuplicateReview(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(Spacing.tight),
         ) {
-            items(state.groups, key = { it.sha256 }) { group -> DuplicateGroupCard(group) }
+            items(state.groups, key = { it.sha256 }) { group ->
+                Box(modifier = Modifier.animateItem()) { DuplicateGroupCard(group) }
+            }
         }
 
         ActionRow {
@@ -1723,33 +1768,39 @@ private fun DuplicateReview(
 @Composable
 private fun DuplicateGroupCard(group: DuplicateGroup) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(Spacing.base)) {
-            Text(
-                text = "${group.members.size} identical copies",
-                style = MaterialTheme.typography.titleSmall,
-            )
-            // Which copy survives is decided by KeeperSelector, not by scan
-            // order, and it's labelled here so the choice is visible before
-            // anything is proposed rather than discovered afterwards.
-            Text(
-                text = "Keeping",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = Spacing.tight),
-            )
-            Text(text = group.keeper.stableRef, style = MaterialTheme.typography.bodySmall)
-            if (group.extras.isNotEmpty()) {
+        Row(
+            modifier = Modifier.padding(Spacing.base),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.base),
+        ) {
+            FileVisual(name = group.keeper.displayName, location = group.keeper.absolutePathOrUri, mimeType = group.keeper.mimeType, size = 56.dp)
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Would move to Trash",
+                    text = "${group.members.size} identical copies",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                // Which copy survives is decided by KeeperSelector, not by scan
+                // order, and it's labelled here so the choice is visible before
+                // anything is proposed rather than discovered afterwards.
+                Text(
+                    text = "Keeping",
                     style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = Spacing.tight),
                 )
-                group.extras.forEach { extra ->
+                Text(text = group.keeper.stableRef, style = MaterialTheme.typography.bodySmall)
+                if (group.extras.isNotEmpty()) {
                     Text(
-                        text = "${extra.stableRef} (${formatBytes(extra.sizeBytes)})",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = "Would move to Trash",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(top = Spacing.tight),
                     )
+                    group.extras.forEach { extra ->
+                        Text(
+                            text = "${extra.stableRef} (${formatBytes(extra.sizeBytes)})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -1806,6 +1857,82 @@ private fun ProtectFolders(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun VersionChainReview(
+    state: ScanUiState.VersionChainReview,
+    onPropose: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        val older = state.chains.sumOf { it.older.size }
+        ScreenHeadline(
+            text = if (state.chains.isEmpty()) "No older versions" else "${state.chains.size} version set(s)",
+            supporting = if (state.chains.isEmpty()) {
+                "Nothing under ${state.scopeLabel} looks like a copy or version of something else."
+            } else {
+                "${state.chains.size} newest kept in place · $older older would move aside · matched by name"
+            },
+        )
+        if (state.chains.isEmpty()) {
+            EmptyState("Only explicit markers count: (1), copy, v2, rev 3, final, draft. Dates and numbers never do.")
+            return@Column
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+        ) {
+            items(state.chains, key = { it.parentRef + "|" + it.familyName + "|" + it.latest.extension }) { chain ->
+                Card(modifier = Modifier.fillMaxWidth().animateItem()) {
+                    Row(
+                        modifier = Modifier.padding(Spacing.base),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.base),
+                    ) {
+                        FileVisual(
+                            name = chain.latest.displayName,
+                            location = chain.latest.absolutePathOrUri,
+                            mimeType = chain.latest.mimeType,
+                            size = 56.dp,
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Keeping ${chain.latest.displayName}",
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = chain.parentRef.substringAfterLast('/').ifBlank { chain.parentRef },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = Spacing.hairline),
+                            )
+                            Text(
+                                text = "Would move to Older versions",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(top = Spacing.tight),
+                            )
+                            chain.older.forEach { old ->
+                                Text(
+                                    text = "${old.displayName} (${formatBytes(old.sizeBytes)})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ActionRow {
+            Button(onClick = onPropose) { Text("Propose moving older versions") }
+            OutlinedButton(onClick = onBack) { Text("Back") }
         }
     }
 }
