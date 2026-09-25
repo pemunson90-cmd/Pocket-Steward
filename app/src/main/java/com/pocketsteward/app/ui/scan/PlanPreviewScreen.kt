@@ -305,13 +305,12 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item { EmptyState("Nothing here can be acted on.") }
                 }
 
-                itemsIndexed(preview.accepted) { index, operation ->
-                    // Inbox Filing already renders every proposed file inside its human-facing
-                    // Project Home card above. Repeating the same moves as raw filesystem
-                    // operations makes review longer and pushes the useful evidence off-screen.
-                    if (preview.filingPresentation != null) {
-                        return@itemsIndexed
-                    }
+                // Inbox Filing already renders every proposed file inside its human-facing
+                // Project Home card above. Do not also allocate one generic LazyColumn item
+                // per raw move below it: on large inboxes those invisible duplicate slots
+                // still cost composition/measurement work.
+                if (preview.filingPresentation == null) {
+                    itemsIndexed(preview.accepted) { index, operation ->
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
                     val selected = index in preview.selectedIndices
                     val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
@@ -384,6 +383,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             }
                         }
                     }
+                }
+
                 }
 
                 if (preview.rejected.isNotEmpty()) {
