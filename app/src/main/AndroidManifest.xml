@@ -74,19 +74,18 @@
             </intent-filter>
         </activity>
 
-        <!-- Offered when another app asks the user to choose a file. Read-only. -->
+        <!--
+            No longer answers other apps' GET_CONTENT requests: a */* GET_CONTENT
+            filter let Pocket Steward capture every app's generic "attach a file"
+            flow (for example ChatGPT's) in place of the system picker. Other apps
+            reach Pocket Steward through PocketStewardDocumentsProvider, which the
+            system file picker lists as one source among the others.
+        -->
         <activity
             android:name=".ui.browser.PickFileActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="Pocket Steward"
-            android:theme="@style/Theme.PocketSteward">
-            <intent-filter>
-                <action android:name="android.intent.action.GET_CONTENT" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.OPENABLE" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.PocketSteward" />
 
         <activity
             android:name=".MainActivity"
