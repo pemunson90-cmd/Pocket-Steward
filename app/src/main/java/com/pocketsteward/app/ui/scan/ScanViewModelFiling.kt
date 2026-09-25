@@ -375,15 +375,15 @@ private suspend fun resolveDirectDestinationCollisions(
                     if (!runCatching { gateway.exists(destination) }.getOrDefault(false)) {
                         decision
                     } else {
-                    val sameContent = runCatching {
-                        val destinationMeta = gateway.stat(destination)
-                        if (destinationMeta.isDirectory || destinationMeta.sizeBytes != decision.artifact.sizeBytes) {
-                            false
-                        } else {
-                            val source = com.pocketsteward.app.storage.parseFileRef(decision.artifact.stableRef)
-                            StorageDigest.sha256(gateway, source) == StorageDigest.sha256(gateway, destination)
-                        }
-                    }.getOrDefault(false)
+                        val sameContent = runCatching {
+                            val destinationMeta = gateway.stat(destination)
+                            if (destinationMeta.isDirectory || destinationMeta.sizeBytes != decision.artifact.sizeBytes) {
+                                false
+                            } else {
+                                val source = com.pocketsteward.app.storage.parseFileRef(decision.artifact.stableRef)
+                                StorageDigest.sha256(gateway, source) == StorageDigest.sha256(gateway, destination)
+                            }
+                        }.getOrDefault(false)
                         decision.copy(
                             destinationDirectory = null,
                             confidence = FilingConfidence.UNRESOLVED,
