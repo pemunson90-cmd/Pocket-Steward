@@ -147,7 +147,10 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
 
             OutlinedButton(
                 onClick = { openTreeLauncher.launch(null) },
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
             ) {
                 Text(text = stringResource(R.string.onboarding_choose_folder_instead))
             }

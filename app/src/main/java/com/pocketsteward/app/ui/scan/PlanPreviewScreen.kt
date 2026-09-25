@@ -143,7 +143,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
                 PlanView.entries.forEachIndexed { i, option ->
                     SegmentedButton(
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                         selected = view == option,
                         onClick = { view = option },
                         shape = SegmentedButtonDefaults.itemShape(index = i, count = PlanView.entries.size),
@@ -199,7 +199,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     } else {
                         null
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
             } else LazyColumn(
                 modifier = Modifier.weight(1f, fill = false),

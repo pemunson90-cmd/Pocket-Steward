@@ -169,47 +169,47 @@ private fun ShareIntakeScreen(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-            Text("Shared with Pocket Steward", style = MaterialTheme.typography.headlineMedium)
+                Text("Shared with Pocket Steward", style = MaterialTheme.typography.headlineMedium)
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(info.displayName, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        buildString {
-                            append(info.suggestedCategory)
-                            info.sizeBytes?.let { append(" · ").append(it).append(" bytes") }
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                    Text(
-                        info.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(info.displayName, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            buildString {
+                                append(info.suggestedCategory)
+                                info.sizeBytes?.let { append(" · ").append(it).append(" bytes") }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                        Text(
+                            info.reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
                 }
-            }
 
-            Text(
-                "Saving uses Android's system document picker. Pocket Steward never moves or deletes the shared original.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                Text(
+                    "Saving uses Android's system document picker. Pocket Steward never moves or deletes the shared original.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
 
-            Button(
-                onClick = { saveLauncher.launch(info.displayName) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Choose where to save a copy")
-            }
+                Button(
+                    onClick = { saveLauncher.launch(info.displayName) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Choose where to save a copy")
+                }
 
-            OutlinedButton(
-                onClick = onOpenApp,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Open Pocket Steward")
-            }
+                OutlinedButton(
+                    onClick = onOpenApp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Open Pocket Steward")
+                }
             }
         }
     }
