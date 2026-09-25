@@ -1,0 +1,3344 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 3ae67b4..5a881b3 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -22,8 +22,8 @@ android {
+         applicationId = "com.pocketsteward.app"
+         minSdk = 30
+         targetSdk = 36
+-        versionCode = 40
+-        versionName = "1.3.2-dev1"
++        versionCode = 41
++        versionName = "1.4.0-dev1"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+     }
+diff --git a/app/src/main/java/com/pocketsteward/app/data/settings/SettingsRepository.kt b/app/src/main/java/com/pocketsteward/app/data/settings/SettingsRepository.kt
+index 4857a11..438060e 100644
+--- a/app/src/main/java/com/pocketsteward/app/data/settings/SettingsRepository.kt
++++ b/app/src/main/java/com/pocketsteward/app/data/settings/SettingsRepository.kt
+@@ -17,6 +17,9 @@ import com.pocketsteward.app.saved.LastScanSessionCodec
+ import com.pocketsteward.app.saved.LastScanSession
+ import com.pocketsteward.app.saved.FavoriteDestination
+ import com.pocketsteward.app.saved.OrganizationPreferenceCodec
++import com.pocketsteward.app.saved.ProjectHome
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import com.pocketsteward.app.saved.InboxRoot
+ import com.pocketsteward.app.saved.SavedWorkflow
+ import com.pocketsteward.app.saved.SavedWorkflowCodec
+ import com.pocketsteward.app.saved.SavedSearch
+@@ -29,6 +32,7 @@ import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
+ import kotlinx.coroutines.flow.Flow
+ import kotlinx.coroutines.flow.map
+ import java.util.UUID
++import android.os.Environment
+ 
+ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "pocket_steward_settings")
+ 
+@@ -103,6 +107,8 @@ class SettingsRepository(private val context: Context) {
+         val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
+         val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
+         val CORRECTION_RULES = stringPreferencesKey("correction_rules")
++        val PROJECT_HOMES = stringPreferencesKey("project_homes")
++        val INBOX_ROOTS = stringPreferencesKey("inbox_roots")
+         val SCHEDULED_CLEANUP = stringPreferencesKey("scheduled_cleanup")
+         val PENDING_CLEANUP_SUGGESTION = stringPreferencesKey("pending_cleanup_suggestion")
+         val LAST_SCAN_SESSION = stringPreferencesKey("last_scan_session")
+@@ -161,6 +167,15 @@ class SettingsRepository(private val context: Context) {
+         OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+     }
+ 
++    val projectHomes: Flow<List<ProjectHome>> = context.dataStore.data.map { prefs ->
++        OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
++    }
++
++    val inboxRoots: Flow<List<InboxRoot>> = context.dataStore.data.map { prefs ->
++        val stored = OrganizationPreferenceCodec.decodeInboxRoots(prefs[Keys.INBOX_ROOTS])
++        if (stored.isNotEmpty()) stored else listOf(defaultDownloadsInbox())
++    }
++
+     val scheduledCleanupSettings: Flow<ScheduledCleanupSettings> = context.dataStore.data.map { prefs ->
+         ScheduledCleanupCodec.decode(prefs[Keys.SCHEDULED_CLEANUP])
+     }
+@@ -244,6 +259,69 @@ class SettingsRepository(private val context: Context) {
+         }
+     }
+ 
++    suspend fun setProjectHomes(values: List<ProjectHome>) {
++        val cleaned = values
++            .map { home ->
++                home.copy(
++                    name = home.name.trim().take(80),
++                    path = home.path.trim().trimEnd('/'),
++                    aliases = home.aliases.map { it.trim().take(80) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
++                    packageIds = home.packageIds.map { it.trim().take(160) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
++                )
++            }
++            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
++            .distinctBy { it.path.lowercase() }
++            .take(100)
++        context.dataStore.edit { prefs ->
++            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(cleaned)
++        }
++    }
++
++    suspend fun rememberProjectHome(
++        name: String,
++        path: String,
++        aliases: List<String> = emptyList(),
++        packageIds: List<String> = emptyList(),
++        hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
++    ) {
++        val cleanName = name.trim().take(80)
++        val cleanPath = path.trim().trimEnd('/')
++        if (cleanName.isBlank() || cleanPath.isBlank()) return
++        context.dataStore.edit { prefs ->
++            val current = OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
++            val existing = current.firstOrNull { it.path.equals(cleanPath, ignoreCase = true) }
++            val merged = ProjectHome(
++                id = existing?.id ?: UUID.randomUUID().toString(),
++                name = cleanName,
++                path = cleanPath,
++                aliases = (existing?.aliases.orEmpty() + aliases + cleanName)
++                    .map { it.trim().take(80) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
++                packageIds = (existing?.packageIds.orEmpty() + packageIds)
++                    .map { it.trim().take(160) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
++                hierarchy = existing?.hierarchy ?: hierarchy,
++            )
++            val updated = listOf(merged) + current.filterNot { it.path.equals(cleanPath, ignoreCase = true) }
++            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(updated.take(100))
++        }
++    }
++
++    suspend fun setInboxRoots(values: List<InboxRoot>) {
++        val cleaned = values
++            .map { InboxRoot(path = it.path.trim().trimEnd('/'), name = it.name.trim().take(80)) }
++            .filter { it.path.isNotBlank() && it.name.isNotBlank() }
++            .distinctBy { it.path.lowercase() }
++            .take(20)
++        context.dataStore.edit { prefs ->
++            prefs[Keys.INBOX_ROOTS] = OrganizationPreferenceCodec.encodeInboxRoots(cleaned)
++        }
++    }
++
++    private fun defaultDownloadsInbox(): InboxRoot {
++        @Suppress("DEPRECATION")
++        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
++        return InboxRoot(downloads.absolutePath.trimEnd('/'), "Downloads")
++    }
++
+ 
+     val savedSearches: Flow<List<SavedSearch>> = context.dataStore.data.map { prefs ->
+         SavedSearchCodec.decode(prefs[Keys.SAVED_SEARCHES])
+diff --git a/app/src/main/java/com/pocketsteward/app/executor/LiveTreeFileIndex.kt b/app/src/main/java/com/pocketsteward/app/executor/LiveTreeFileIndex.kt
+new file mode 100644
+index 0000000..7d5df68
+--- /dev/null
++++ b/app/src/main/java/com/pocketsteward/app/executor/LiveTreeFileIndex.kt
+@@ -0,0 +1,46 @@
++package com.pocketsteward.app.executor
++
++import com.pocketsteward.app.plan.FileIndex
++import com.pocketsteward.app.storage.FileEntry
++import com.pocketsteward.app.storage.FileRef
++import com.pocketsteward.app.storage.rawValue
++
++/**
++ * A bounded live directory-tree snapshot used to validate cross-root plans.
++ * Unlike [SingleFolderIndex], this knows existing children below project/version
++ * folders, so a reviewed filing plan can catch name collisions before Run.
++ */
++class LiveTreeFileIndex(
++    private val root: FileRef,
++    entries: List<FileEntry>,
++) : FileIndex {
++    private val rootKey = root.rawValue().trimEnd('/')
++    private val byKey = entries.associateBy { it.ref.rawValue().trimEnd('/') }
++    private val byParent = entries.groupBy { it.parentRef.rawValue().trimEnd('/') }
++
++    override fun exists(ref: FileRef): Boolean {
++        val key = ref.rawValue().trimEnd('/')
++        return key == rootKey || key in byKey
++    }
++
++    override fun isDirectory(ref: FileRef): Boolean {
++        val key = ref.rawValue().trimEnd('/')
++        return key == rootKey || byKey[key]?.isDirectory == true
++    }
++
++    override fun parentOf(ref: FileRef): FileRef? {
++        val key = ref.rawValue().trimEnd('/')
++        if (key == rootKey) return null
++        return byKey[key]?.parentRef
++    }
++
++    override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
++        val parentKey = directory.rawValue().trimEnd('/')
++        return byParent[parentKey]
++            .orEmpty()
++            .firstOrNull { entry ->
++                entry.ref != excluding && entry.displayName.equals(name, ignoreCase = true)
++            }
++            ?.ref
++    }
++}
+diff --git a/app/src/main/java/com/pocketsteward/app/filing/InboxFilingEngine.kt b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingEngine.kt
+new file mode 100644
+index 0000000..56a7423
+--- /dev/null
++++ b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingEngine.kt
+@@ -0,0 +1,380 @@
++package com.pocketsteward.app.filing
++
++import com.pocketsteward.app.rules.ProjectKeyword
++import com.pocketsteward.app.saved.CorrectionRule
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import java.util.Locale
++import kotlin.math.abs
++
++/**
++ * Deterministic project/release resolver for inbox filing.
++ *
++ * The engine never emits an arbitrary absolute path from model text. It only
++ * chooses among already-authorized homes or derives a single safe project
++ * name under [storageRoot]. Path construction and mutation stay in the plan
++ * adapter / validator layer.
++ */
++object InboxFilingEngine {
++    private const val STRONG_SCORE = 82
++    private const val PROBABLE_SCORE = 62
++    private const val COHORT_WINDOW_MS = 6L * 60L * 60L * 1000L
++    private const val SUPPORTING_COHORT_WINDOW_MS = 45L * 60L * 1000L
++
++    private val genericTokens = setOf(
++        "app", "application", "apk", "source", "src", "build", "release", "debug",
++        "final", "copy", "handoff", "notes", "note", "readme", "master", "private",
++        "signed", "canonical", "arm64", "universal", "bundle", "zip", "file", "files",
++        "image", "img", "screenshot", "android", "version", "ver", "dev",
++    )
++
++    fun resolve(
++        artifacts: List<FilingArtifact>,
++        persistedHomes: List<ProjectHomeCandidate>,
++        discoveredHomes: List<ProjectHomeCandidate>,
++        projectKeywords: List<ProjectKeyword>,
++        correctionRules: List<CorrectionRule>,
++        storageRoot: String,
++    ): InboxFilingResult {
++        if (artifacts.isEmpty()) return InboxFilingResult(emptyList())
++
++        val homes = (persistedHomes + discoveredHomes)
++            .distinctBy { normalize(it.path) }
++        val repeatedLabels = artifacts
++            .mapNotNull { guessedProjectLabel(it.displayName) }
++            .groupingBy { normalizeCompact(it) }
++            .eachCount()
++
++        val anchors = artifacts.map { artifact ->
++            resolveAnchor(
++                artifact = artifact,
++                homes = homes,
++                projectKeywords = projectKeywords,
++                correctionRules = correctionRules,
++                storageRoot = storageRoot,
++                repeatedLabels = repeatedLabels,
++            )
++        }
++
++        // Second pass: a file with real project evidence but no release can
++        // inherit a nearby unique release from that same project. Time alone
++        // is never enough to establish project membership.
++        val releaseResolved = anchors.map { decision ->
++            if (decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
++                decision
++            } else {
++                val candidates = anchors.filter { other ->
++                    other !== decision &&
++                        other.projectName != null &&
++                        normalizeCompact(other.projectName) == normalizeCompact(decision.projectName) &&
++                        other.release != null &&
++                        closeInTime(eventTime(decision.artifact), eventTime(other.artifact), COHORT_WINDOW_MS)
++                }
++                val releases = candidates.mapNotNull { it.release }.distinct()
++                if (releases.size == 1 && decision.evidence.any { it.kind != FilingEvidenceKind.COHORT }) {
++                    val release = releases.single()
++                    decision.copy(
++                        release = release,
++                        destinationDirectory = destinationFor(
++                            requireNotNull(decision.projectHome),
++                            release,
++                        ),
++                        confidence = if (decision.confidence == FilingConfidence.STRONG) FilingConfidence.STRONG else FilingConfidence.PROBABLE,
++                        evidence = decision.evidence + FilingEvidence(
++                            FilingEvidenceKind.COHORT,
++                            "nearby artifact from the same project identifies release $release",
++                            18,
++                        ),
++                    )
++                } else {
++                    decision
++                }
++            }
++        }
++
++        // A generic supporting asset may still be useful to show in review when
++        // it arrived in the middle of one unambiguous, strongly identified
++        // project/release burst. This never becomes a default-selected strong
++        // match: temporal proximity alone only promotes it to PROBABLE.
++        val resolved = releaseResolved.map { decision ->
++            if (decision.confidence != FilingConfidence.UNRESOLVED || !isSupportingArtifact(decision.artifact)) {
++                decision
++            } else {
++                val nearby = releaseResolved.filter { other ->
++                    other.confidence == FilingConfidence.STRONG &&
++                        other.projectHome != null &&
++                        other.release != null &&
++                        closeInTime(eventTime(decision.artifact), eventTime(other.artifact), SUPPORTING_COHORT_WINDOW_MS)
++                }
++                val cohorts = nearby
++                    .groupBy { normalize(requireNotNull(it.projectHome).path) to requireNotNull(it.release) }
++                    .entries
++                    .sortedByDescending { it.value.size }
++                val winner = cohorts.firstOrNull()?.value.orEmpty()
++                val runnerUpSize = cohorts.getOrNull(1)?.value?.size ?: 0
++                if (winner.isNotEmpty() && winner.size > runnerUpSize) {
++                    val anchor = winner.first()
++                    val home = requireNotNull(anchor.projectHome)
++                    val release = requireNotNull(anchor.release)
++                    decision.copy(
++                        projectName = home.name,
++                        projectHome = home,
++                        release = release,
++                        destinationDirectory = destinationFor(home, release),
++                        confidence = FilingConfidence.PROBABLE,
++                        evidence = listOf(
++                            FilingEvidence(
++                                FilingEvidenceKind.COHORT,
++                                "possible supporting file: arrived with strong ${home.name} $release artifacts",
++                                45,
++                            ),
++                        ),
++                    )
++                } else {
++                    decision
++                }
++            }
++        }
++
++        return InboxFilingResult(resolved)
++    }
++
++    private fun resolveAnchor(
++        artifact: FilingArtifact,
++        homes: List<ProjectHomeCandidate>,
++        projectKeywords: List<ProjectKeyword>,
++        correctionRules: List<CorrectionRule>,
++        storageRoot: String,
++        repeatedLabels: Map<String, Int>,
++    ): FilingDecision {
++        val evidenceByHome = linkedMapOf<ProjectHomeCandidate, MutableList<FilingEvidence>>()
++        fun add(home: ProjectHomeCandidate, kind: FilingEvidenceKind, detail: String, weight: Int) {
++            evidenceByHome.getOrPut(home) { mutableListOf() } += FilingEvidence(kind, detail, weight)
++        }
++
++        correctionRules.forEach { rule ->
++            if (artifact.displayName.contains(rule.term, ignoreCase = true)) {
++                val home = homes.bestNamed(rule.destinationFolder)
++                    ?: syntheticHome(rule.destinationFolder, storageRoot)
++                add(home, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder}", 120)
++            }
++        }
++
++        projectKeywords.forEach { keyword ->
++            val filenameHit = artifact.displayName.contains(keyword.term, ignoreCase = true)
++            val contentHit = !filenameHit && artifact.indexedText.contains(keyword.term, ignoreCase = true)
++            val archiveHit = !filenameHit && artifact.archiveSample.any { it.contains(keyword.term, ignoreCase = true) }
++            if (filenameHit || contentHit || archiveHit) {
++                val home = homes.bestNamed(keyword.projectFolder)
++                    ?: syntheticHome(keyword.projectFolder, storageRoot)
++                val weight = when {
++                    filenameHit -> 105
++                    archiveHit -> 82
++                    else -> 74
++                }
++                val kind = when {
++                    filenameHit -> FilingEvidenceKind.FILENAME
++                    archiveHit -> FilingEvidenceKind.ARCHIVE_ENTRY
++                    else -> FilingEvidenceKind.INDEXED_CONTENT
++                }
++                add(home, kind, "project mapping “${keyword.term}” → ${keyword.projectFolder}", weight)
++            }
++        }
++
++        homes.forEach { home ->
++            val inferredAlias = meaningfulTokens(home.name).joinToString(" ").takeIf { it.length >= 4 }
++            val labels = (listOfNotNull(home.name, inferredAlias) + home.aliases)
++                .filter { it.isNotBlank() }
++                .distinctBy { it.lowercase(Locale.ROOT) }
++            val filenameMatch = labels.maxOfOrNull { label -> textMatchScore(artifact.displayName, label) } ?: 0
++            if (filenameMatch >= 65) {
++                add(home, FilingEvidenceKind.PROJECT_HOME, "filename matches project home ${home.name}", filenameMatch + if (home.persisted) 10 else 0)
++            }
++            val labelMatch = artifact.apkLabel?.let { label -> textMatchScore(label, home.name) } ?: 0
++            if (labelMatch >= 65) {
++                add(home, FilingEvidenceKind.APK_LABEL, "APK label matches ${home.name}", labelMatch + 15)
++            }
++            val packageName = artifact.apkPackageName
++            if (packageName != null && home.packageIds.any { it.equals(packageName, ignoreCase = true) }) {
++                add(home, FilingEvidenceKind.APK_PACKAGE, "APK package $packageName is registered to ${home.name}", 140)
++            }
++            if (labels.any { label -> artifact.archiveSample.any { entry -> entry.contains(label, ignoreCase = true) } }) {
++                add(home, FilingEvidenceKind.ARCHIVE_ENTRY, "archive entries mention ${home.name}", 78)
++            }
++            if (artifact.indexedText.isNotBlank() && labels.any { artifact.indexedText.contains(it, ignoreCase = true) }) {
++                add(home, FilingEvidenceKind.INDEXED_CONTENT, "indexed document content mentions ${home.name}", 70)
++            }
++        }
++
++        artifact.apkLabel?.takeIf { isUsefulLabel(it) }?.let { label ->
++            val home = homes.bestNamed(label) ?: syntheticHome(label, storageRoot)
++            add(home, FilingEvidenceKind.APK_LABEL, "APK metadata identifies “$label”", 112)
++        }
++
++        artifact.apkPackageName?.let { pkg ->
++            val packageLeaf = pkg.substringAfterLast('.').takeIf { it.length >= 3 }
++            if (packageLeaf != null) {
++                homes.forEach { home ->
++                    val score = textMatchScore(packageLeaf, home.name)
++                    if (score >= 70) add(home, FilingEvidenceKind.APK_PACKAGE, "APK package name resembles ${home.name}", score)
++                }
++            }
++        }
++
++        guessedProjectLabel(artifact.displayName)?.let { guessed ->
++            val repeated = (repeatedLabels[normalizeCompact(guessed)] ?: 0) >= 2
++            val matchingHome = homes.bestNamed(guessed)
++            if (matchingHome != null && textMatchScore(guessed, matchingHome.name) >= 65) {
++                add(matchingHome, FilingEvidenceKind.FILENAME, "filename identifies ${matchingHome.name}", if (repeated) 92 else 78)
++            } else if (repeated) {
++                val synthetic = syntheticHome(guessed, storageRoot)
++                add(synthetic, FilingEvidenceKind.FILENAME, "repeated filename family identifies $guessed", 84)
++            }
++        }
++
++        val best = evidenceByHome.entries.maxByOrNull { (_, evidence) -> evidence.sumOf { it.weight } }
++        if (best == null) {
++            return FilingDecision(
++                artifact = artifact,
++                projectName = null,
++                projectHome = null,
++                release = releaseOf(artifact),
++                destinationDirectory = null,
++                confidence = FilingConfidence.UNRESOLVED,
++                evidence = emptyList(),
++            )
++        }
++
++        val home = best.key
++        val evidence = best.value.distinctBy { it.kind to it.detail }
++        val score = evidence.sumOf { it.weight }
++        val release = releaseOf(artifact)
++        val confidence = when {
++            score >= STRONG_SCORE && (release != null || home.hierarchy == ProjectHierarchyStrategy.FLAT) -> FilingConfidence.STRONG
++            score >= STRONG_SCORE -> FilingConfidence.PROBABLE
++            score >= PROBABLE_SCORE -> FilingConfidence.PROBABLE
++            else -> FilingConfidence.UNRESOLVED
++        }
++
++        return FilingDecision(
++            artifact = artifact,
++            projectName = home.name,
++            projectHome = home,
++            release = release,
++            destinationDirectory = if (confidence == FilingConfidence.UNRESOLVED) null else destinationFor(home, release),
++            confidence = confidence,
++            evidence = evidence,
++            createsProjectHome = !home.persisted && homes.none { normalize(it.path) == normalize(home.path) },
++        )
++    }
++
++    fun releaseOf(artifact: FilingArtifact): String? {
++        artifact.apkVersionName?.trim()?.takeIf { isUsefulVersion(it) }?.let { return normalizeVersion(it) }
++        VERSION_REGEX.find(artifact.displayName)?.value?.let { return normalizeVersion(it) }
++        artifact.archiveSample.asSequence()
++            .mapNotNull { VERSION_REGEX.find(it)?.value }
++            .firstOrNull()
++            ?.let { return normalizeVersion(it) }
++        return null
++    }
++
++    fun sanitizeSegment(value: String?): String? {
++        val clean = value?.trim()?.trimEnd('.', ' ')?.take(80)?.trim() ?: return null
++        if (clean.isBlank() || clean == "." || clean == "..") return null
++        if ('/' in clean || '\\' in clean || clean.any { it.isISOControl() }) return null
++        return clean
++    }
++
++    private fun destinationFor(home: ProjectHomeCandidate, release: String?): String {
++        val base = home.path.trimEnd('/')
++        return when (home.hierarchy) {
++            ProjectHierarchyStrategy.FLAT -> base
++            ProjectHierarchyStrategy.VERSIONED -> sanitizeSegment(release)?.let { "$base/$it" } ?: base
++        }
++    }
++
++    private fun syntheticHome(name: String, storageRoot: String): ProjectHomeCandidate {
++        val safe = sanitizeSegment(name) ?: "Unsorted project"
++        return ProjectHomeCandidate(
++            name = safe,
++            path = storageRoot.trimEnd('/') + "/" + safe,
++            aliases = listOf(safe),
++            persisted = false,
++        )
++    }
++
++    private fun List<ProjectHomeCandidate>.bestNamed(label: String): ProjectHomeCandidate? =
++        map { it to textMatchScore(label, it.name) }
++            .filter { it.second >= 62 }
++            .maxWithOrNull(compareBy<Pair<ProjectHomeCandidate, Int>> { it.second }.thenBy { if (it.first.persisted) 1 else 0 })
++            ?.first
++
++    private fun eventTime(artifact: FilingArtifact): Long? = artifact.createdAt ?: artifact.modifiedAt
++
++    private fun closeInTime(a: Long?, b: Long?, windowMs: Long): Boolean =
++        a != null && b != null && abs(a - b) <= windowMs
++
++    private fun isSupportingArtifact(artifact: FilingArtifact): Boolean =
++        artifact.extension.lowercase(Locale.ROOT) in SUPPORTING_EXTENSIONS &&
++            guessedProjectLabel(artifact.displayName) == null
++
++    private fun textMatchScore(a: String, b: String): Int {
++        val ac = normalizeCompact(a)
++        val bc = normalizeCompact(b)
++        if (ac.isBlank() || bc.isBlank()) return 0
++        if (ac == bc) return 100
++        if (ac.contains(bc) || bc.contains(ac)) {
++            val shorter = minOf(ac.length, bc.length)
++            val longer = maxOf(ac.length, bc.length)
++            return (72 + (28.0 * shorter / longer)).toInt().coerceAtMost(98)
++        }
++        val at = meaningfulTokens(a)
++        val bt = meaningfulTokens(b)
++        if (at.isEmpty() || bt.isEmpty()) return 0
++        val intersection = at.intersect(bt).size
++        if (intersection == 0) return 0
++        val union = at.union(bt).size
++        return (55 + 45.0 * intersection / union).toInt()
++    }
++
++    private fun guessedProjectLabel(filename: String): String? {
++        val base = filename.substringBeforeLast('.', filename)
++            .replace(VERSION_REGEX, " ")
++            .replace(Regex("(?i)\\b(?:source|src|build|release|debug|signed|canonical|handoff|notes?|master|private|arm64|universal|apk|zip|bundle|dev\\d*)\\b"), " ")
++            .replace(Regex("[_\\-.]+"), " ")
++            .trim()
++        val tokens = base.split(Regex("\\s+"))
++            .filter { token ->
++                token.length >= 2 &&
++                    token.lowercase(Locale.ROOT) !in genericTokens &&
++                    token.any(Char::isLetter)
++            }
++            .take(4)
++        if (tokens.isEmpty()) return null
++        val joined = tokens.joinToString(" ").trim()
++        if (joined.length < 3) return null
++        return joined.split(Regex("(?<=[a-z])(?=[A-Z])|\\s+"))
++            .filter { it.isNotBlank() }
++            .joinToString(" ") { token -> token.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() } }
++    }
++
++    private fun meaningfulTokens(value: String): Set<String> =
++        value.replace(Regex("(?<=[a-z])(?=[A-Z])"), " ")
++            .lowercase(Locale.ROOT)
++            .split(Regex("[^a-z0-9]+"))
++            .filter { it.length >= 2 && it !in genericTokens && !it.all(Char::isDigit) }
++            .toSet()
++
++    private fun normalize(value: String): String = value.trim().trimEnd('/').lowercase(Locale.ROOT)
++    private fun normalizeCompact(value: String): String = value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
++    private fun isUsefulLabel(value: String): Boolean = value.trim().length >= 3 && value.lowercase(Locale.ROOT) !in genericTokens
++    private fun isUsefulVersion(value: String): Boolean = value.any(Char::isDigit) && value.length <= 40
++    private fun normalizeVersion(value: String): String = value.trim().removePrefix("v").removePrefix("V").trim(' ', '-', '_')
++
++    private val SUPPORTING_EXTENSIONS = setOf(
++        "png", "jpg", "jpeg", "webp", "gif", "svg", "txt", "md", "json", "yaml", "yml",
++    )
++
++    private val VERSION_REGEX = Regex(
++        "(?i)(?<![A-Za-z0-9])v?\\d+(?:\\.\\d+){1,3}(?:[-_](?:dev|alpha|beta|rc|hb)[A-Za-z0-9.-]*)?(?![A-Za-z0-9])",
++    )
++}
+diff --git a/app/src/main/java/com/pocketsteward/app/filing/InboxFilingModels.kt b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingModels.kt
+new file mode 100644
+index 0000000..d666a34
+--- /dev/null
++++ b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingModels.kt
+@@ -0,0 +1,83 @@
++package com.pocketsteward.app.filing
++
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++
++enum class FilingConfidence {
++    STRONG,
++    PROBABLE,
++    UNRESOLVED,
++}
++
++enum class FilingEvidenceKind {
++    USER_MAPPING,
++    PROJECT_HOME,
++    APK_PACKAGE,
++    APK_LABEL,
++    APK_VERSION,
++    FILENAME,
++    ARCHIVE_ENTRY,
++    INDEXED_CONTENT,
++    VERSION_TOKEN,
++    COHORT,
++    DESTINATION_DUPLICATE,
++    DESTINATION_CONFLICT,
++    DESTINATION_PROTECTED,
++}
++
++data class FilingEvidence(
++    val kind: FilingEvidenceKind,
++    val detail: String,
++    val weight: Int,
++)
++
++data class FilingArtifact(
++    val stableRef: String,
++    val displayName: String,
++    val extension: String,
++    val sizeBytes: Long,
++    val createdAt: Long? = null,
++    val modifiedAt: Long?,
++    val parentRef: String?,
++    val apkPackageName: String? = null,
++    val apkVersionName: String? = null,
++    val apkLabel: String? = null,
++    val apkVersionCode: Long? = null,
++    val archiveSample: List<String> = emptyList(),
++    val indexedText: String = "",
++)
++
++data class ProjectHomeCandidate(
++    val name: String,
++    val path: String,
++    val aliases: List<String> = emptyList(),
++    val packageIds: List<String> = emptyList(),
++    val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
++    val persisted: Boolean = false,
++)
++
++data class FilingDecision(
++    val artifact: FilingArtifact,
++    val projectName: String?,
++    val projectHome: ProjectHomeCandidate?,
++    val release: String?,
++    val destinationDirectory: String?,
++    val confidence: FilingConfidence,
++    val evidence: List<FilingEvidence>,
++    val createsProjectHome: Boolean = false,
++) {
++    val evidenceSummary: String
++        get() = evidence
++            .sortedByDescending { it.weight }
++            .take(3)
++            .joinToString(" · ") { it.detail }
++}
++
++data class InboxFilingResult(
++    val decisions: List<FilingDecision>,
++) {
++    val proposed: List<FilingDecision>
++        get() = decisions.filter { it.confidence != FilingConfidence.UNRESOLVED && it.destinationDirectory != null }
++
++    val unresolved: List<FilingDecision>
++        get() = decisions.filter { it.confidence == FilingConfidence.UNRESOLVED || it.destinationDirectory == null }
++}
+diff --git a/app/src/main/java/com/pocketsteward/app/filing/InboxFilingPlanAdapter.kt b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingPlanAdapter.kt
+new file mode 100644
+index 0000000..c26fc50
+--- /dev/null
++++ b/app/src/main/java/com/pocketsteward/app/filing/InboxFilingPlanAdapter.kt
+@@ -0,0 +1,273 @@
++package com.pocketsteward.app.filing
++
++import com.pocketsteward.app.plan.PlannedOperation
++import com.pocketsteward.app.storage.FileRef
++import com.pocketsteward.app.storage.child
++import com.pocketsteward.app.storage.parseFileRef
++import com.pocketsteward.app.storage.rawValue
++import java.io.File
++
++data class FilingReviewItem(
++    val sourceRef: String,
++    val displayName: String,
++    val sizeBytes: Long,
++    val confidence: FilingConfidence,
++    val evidence: List<String>,
++    val destinationPath: String?,
++)
++
++data class FilingReviewGroup(
++    val projectName: String,
++    val projectHomePath: String,
++    val destinationPath: String,
++    val existingProjectHome: Boolean,
++    val release: String?,
++    val items: List<FilingReviewItem>,
++    val editableDirectDestination: Boolean = true,
++)
++
++data class FilingReviewPresentation(
++    val groups: List<FilingReviewGroup>,
++    val unresolved: List<FilingReviewItem>,
++) {
++    val proposedCount: Int get() = groups.sumOf { it.items.size }
++    val unresolvedCount: Int get() = unresolved.size
++}
++
++data class InboxFilingPlan(
++    val operations: List<PlannedOperation>,
++    val authorizedDestinationRoots: List<FileRef.Direct>,
++    val defaultSelectedSourceRefs: Set<String>,
++    val presentation: FilingReviewPresentation,
++)
++
++/** Converts filing decisions into the same typed, reviewable plan used everywhere else. */
++object InboxFilingPlanAdapter {
++    fun build(
++        result: InboxFilingResult,
++        storageRoot: FileRef.Direct,
++        existingDirectories: Set<String>,
++    ): InboxFilingPlan {
++        val existing = existingDirectories.mapTo(linkedSetOf()) { it.trimEnd('/').lowercase() }
++        val operations = mutableListOf<PlannedOperation>()
++        val plannedDirectories = linkedSetOf<String>()
++        val authorization = linkedSetOf<String>()
++        val selectedRefs = linkedSetOf<String>()
++
++        val proposed = result.proposed.filter { decision ->
++            decision.projectHome != null && decision.destinationDirectory != null
++        }
++
++        proposed.groupBy { decision ->
++            Triple(
++                requireNotNull(decision.projectHome).path.trimEnd('/'),
++                requireNotNull(decision.destinationDirectory).trimEnd('/'),
++                decision.projectName.orEmpty(),
++            )
++        }.forEach { (key, decisions) ->
++            val (homePath, destinationPath, projectName) = key
++            val homeRef = FileRef.Direct(homePath)
++            val homeExists = homePath.lowercase() in existing
++
++            if (!homeExists) {
++                val parent = File(homePath).parentFile?.absolutePath?.trimEnd('/')
++                require(parent != null && parent.equals(storageRoot.absolutePath.trimEnd('/'), ignoreCase = true)) {
++                    "A new project home may only be created directly under the authorized storage root."
++                }
++                if (plannedDirectories.add(homePath.lowercase())) {
++                    operations += PlannedOperation.CreateDirectory(
++                        parent = storageRoot,
++                        name = File(homePath).name,
++                        reason = "Create the reviewed project home for $projectName.",
++                    )
++                }
++                authorization += storageRoot.absolutePath.trimEnd('/')
++            } else {
++                authorization += homePath
++            }
++
++            if (!destinationPath.equals(homePath, ignoreCase = true)) {
++                val releaseName = File(destinationPath).name
++                if (plannedDirectories.add(destinationPath.lowercase())) {
++                    operations += PlannedOperation.CreateDirectory(
++                        parent = homeRef,
++                        name = releaseName,
++                        reason = "Create/use the reviewed release folder for $projectName.",
++                    )
++                }
++            }
++
++            decisions.forEach { decision ->
++                val destination = FileRef.Direct(destinationPath).child(decision.artifact.displayName)
++                operations += PlannedOperation.Move(
++                    source = parseFileRef(decision.artifact.stableRef),
++                    destination = destination,
++                    reason = buildString {
++                        append("Inbox filing · ")
++                        append(decision.confidence.name.lowercase())
++                        append(" match to ")
++                        append(projectName)
++                        decision.release?.let { append(" · release ").append(it) }
++                        if (decision.evidenceSummary.isNotBlank()) append(" · ").append(decision.evidenceSummary)
++                    },
++                )
++                if (decision.confidence == FilingConfidence.STRONG) {
++                    selectedRefs += decision.artifact.stableRef
++                }
++            }
++        }
++
++        val groups = proposed
++            .groupBy { requireNotNull(it.destinationDirectory).trimEnd('/') }
++            .map { (destination, decisions) ->
++                val first = decisions.first()
++                val home = requireNotNull(first.projectHome)
++                FilingReviewGroup(
++                    projectName = first.projectName.orEmpty(),
++                    projectHomePath = home.path.trimEnd('/'),
++                    destinationPath = destination,
++                    existingProjectHome = home.path.trimEnd('/').lowercase() in existing,
++                    release = first.release,
++                    items = decisions.map(::reviewItem),
++                    editableDirectDestination = home.path.trimEnd('/').lowercase() in existing,
++                )
++            }
++            .sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() })
++
++        val unresolved = result.unresolved.map(::reviewItem)
++
++        return InboxFilingPlan(
++            operations = operations,
++            authorizedDestinationRoots = authorization.map { FileRef.Direct(it) },
++            defaultSelectedSourceRefs = selectedRefs,
++            presentation = FilingReviewPresentation(groups, unresolved),
++        )
++    }
++
++    private fun reviewItem(decision: FilingDecision): FilingReviewItem = FilingReviewItem(
++        sourceRef = decision.artifact.stableRef,
++        displayName = decision.artifact.displayName,
++        sizeBytes = decision.artifact.sizeBytes,
++        confidence = decision.confidence,
++        evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
++        destinationPath = decision.destinationDirectory,
++    )
++}
++
++
++/**
++ * Same filing semantics inside one already-granted SAF tree. Existing project
++ * folders are preferred, but a new project/release hierarchy can still be
++ * expressed with typed [FileRef.Child] references. No URI is invented.
++ */
++object InboxFilingSafPlanAdapter {
++    fun build(
++        result: InboxFilingResult,
++        scopeRoot: FileRef,
++        existingHomes: Map<String, FileRef>,
++        scopeLabel: String,
++    ): InboxFilingPlan {
++        val operations = mutableListOf<PlannedOperation>()
++        val plannedDirectories = linkedSetOf<String>()
++        val selectedRefs = linkedSetOf<String>()
++        val groups = mutableListOf<FilingReviewGroup>()
++
++        val proposed = result.proposed.filter { it.projectHome != null && it.destinationDirectory != null }
++        proposed.groupBy { decision ->
++            val home = requireNotNull(decision.projectHome)
++            home.path.trimEnd('/') to decision.release
++        }.forEach { (_, decisions) ->
++            val first = decisions.first()
++            val home = requireNotNull(first.projectHome)
++            val projectName = requireNotNull(first.projectName)
++            val existingHomeRef = existingHomes[home.path.trimEnd('/')]
++            val homeRef = existingHomeRef ?: scopeRoot.child(
++                InboxFilingEngine.sanitizeSegment(projectName)
++                    ?: error("Unsafe project folder name: $projectName"),
++            )
++            if (existingHomeRef == null) {
++                val safeProjectName = (homeRef as FileRef.Child).name
++                if (plannedDirectories.add(homeRef.rawValue())) {
++                    operations += PlannedOperation.CreateDirectory(
++                        parent = scopeRoot,
++                        name = safeProjectName,
++                        reason = "Create the reviewed project home for $projectName inside the granted tree.",
++                    )
++                }
++            }
++
++            val release = first.release
++            val destinationRef = if (home.hierarchy == com.pocketsteward.app.saved.ProjectHierarchyStrategy.VERSIONED && release != null) {
++                val safeRelease = InboxFilingEngine.sanitizeSegment(release) ?: error("Unsafe release folder: $release")
++                val releaseRef = homeRef.child(safeRelease)
++                if (plannedDirectories.add(releaseRef.rawValue())) {
++                    operations += PlannedOperation.CreateDirectory(
++                        parent = homeRef,
++                        name = safeRelease,
++                        reason = "Create/use the reviewed release folder for $projectName.",
++                    )
++                }
++                releaseRef
++            } else {
++                homeRef
++            }
++
++            decisions.forEach { decision ->
++                operations += PlannedOperation.Move(
++                    source = parseFileRef(decision.artifact.stableRef),
++                    destination = destinationRef.child(decision.artifact.displayName),
++                    reason = buildString {
++                        append("Inbox filing · ")
++                        append(decision.confidence.name.lowercase())
++                        append(" match to ").append(projectName)
++                        release?.let { append(" · release ").append(it) }
++                        if (decision.evidenceSummary.isNotBlank()) append(" · ").append(decision.evidenceSummary)
++                    },
++                )
++                if (decision.confidence == FilingConfidence.STRONG) selectedRefs += decision.artifact.stableRef
++            }
++
++            val displayDestination = buildString {
++                append(scopeLabel).append(" › ").append(projectName)
++                release?.let { append(" › ").append(it) }
++            }
++            groups += FilingReviewGroup(
++                projectName = projectName,
++                projectHomePath = if (existingHomeRef != null) home.path else displayDestination.substringBeforeLast(" › ", displayDestination),
++                destinationPath = displayDestination,
++                existingProjectHome = existingHomeRef != null,
++                release = release,
++                items = decisions.map { decision ->
++                    FilingReviewItem(
++                        sourceRef = decision.artifact.stableRef,
++                        displayName = decision.artifact.displayName,
++                        sizeBytes = decision.artifact.sizeBytes,
++                        confidence = decision.confidence,
++                        evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
++                        destinationPath = displayDestination,
++                    )
++                },
++                editableDirectDestination = false,
++            )
++        }
++
++        return InboxFilingPlan(
++            operations = operations,
++            authorizedDestinationRoots = emptyList(),
++            defaultSelectedSourceRefs = selectedRefs,
++            presentation = FilingReviewPresentation(
++                groups = groups.sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() }),
++                unresolved = result.unresolved.map { decision ->
++                    FilingReviewItem(
++                        sourceRef = decision.artifact.stableRef,
++                        displayName = decision.artifact.displayName,
++                        sizeBytes = decision.artifact.sizeBytes,
++                        confidence = decision.confidence,
++                        evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
++                        destinationPath = null,
++                    )
++                },
++            ),
++        )
++    }
++}
+diff --git a/app/src/main/java/com/pocketsteward/app/metadata/MetadataEnricher.kt b/app/src/main/java/com/pocketsteward/app/metadata/MetadataEnricher.kt
+index 3d80ad2..3b751bc 100644
+--- a/app/src/main/java/com/pocketsteward/app/metadata/MetadataEnricher.kt
++++ b/app/src/main/java/com/pocketsteward/app/metadata/MetadataEnricher.kt
+@@ -21,6 +21,8 @@ data class MetadataEnrichment(
+     val pdfPageCount: Int? = null,
+     val archiveEntryCount: Int? = null,
+     val archiveSample: List<String> = emptyList(),
++    val apkLabel: String? = null,
++    val apkVersionCode: Long? = null,
+     val exifCamera: String? = null,
+     val exifOrientation: String? = null,
+ )
+@@ -58,6 +60,8 @@ class MetadataEnricher(
+         var pdfPages: Int? = null
+         var archiveCount: Int? = null
+         var archiveSample = emptyList<String>()
++        var apkLabel: String? = null
++        var apkVersionCode: Long? = null
+         var camera: String? = null
+         var orientation: String? = null
+ 
+@@ -87,6 +91,11 @@ class MetadataEnricher(
+             apkInfo(record)?.let { info ->
+                 val packageName = info.packageName
+                 val versionName = info.versionName
++                apkLabel = archiveLabel(info, record)
++                apkVersionCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
++                    @Suppress("DEPRECATION")
++                    info.versionCode.toLong()
++                }
+                 if (packageName.isNotBlank() &&
+                     (record.apkPackageName != packageName || record.apkVersionName != versionName)
+                 ) {
+@@ -117,6 +126,8 @@ class MetadataEnricher(
+             pdfPageCount = pdfPages,
+             archiveEntryCount = archiveCount,
+             archiveSample = archiveSample,
++            apkLabel = apkLabel,
++            apkVersionCode = apkVersionCode,
+             exifCamera = camera,
+             exifOrientation = orientation,
+         )
+@@ -223,6 +234,16 @@ class MetadataEnricher(
+         }
+     }.getOrNull()
+ 
++    private fun archiveLabel(info: PackageInfo, record: FileRecord): String? = runCatching {
++        val applicationInfo = info.applicationInfo ?: return@runCatching null
++        val path = if (record.isSaf()) null else record.stableRef
++        if (path != null) {
++            applicationInfo.sourceDir = path
++            applicationInfo.publicSourceDir = path
++        }
++        context.packageManager.getApplicationLabel(applicationInfo).toString().trim().takeIf { it.isNotBlank() }
++    }.getOrNull()
++
+     private fun pdfPageCount(record: FileRecord): Int? = runCatching {
+         if (record.isSaf()) {
+             context.contentResolver.openFileDescriptor(record.uri(), "r")?.use { descriptor ->
+@@ -275,7 +296,7 @@ class MetadataEnricher(
+     private fun FileRecord.uri(): Uri = Uri.parse(stableRef)
+ 
+     private companion object {
+-        const val MAX_ARCHIVE_SAMPLE = 12
++        const val MAX_ARCHIVE_SAMPLE = 40
+         const val MAX_APK_METADATA_BYTES = 256L * 1024L * 1024L
+ 
+         val IMAGE_EXTENSIONS = setOf(
+diff --git a/app/src/main/java/com/pocketsteward/app/saved/OrganizationPreferences.kt b/app/src/main/java/com/pocketsteward/app/saved/OrganizationPreferences.kt
+index 4af90f6..0cb2a71 100644
+--- a/app/src/main/java/com/pocketsteward/app/saved/OrganizationPreferences.kt
++++ b/app/src/main/java/com/pocketsteward/app/saved/OrganizationPreferences.kt
+@@ -15,7 +15,28 @@ data class CorrectionRule(
+     val destinationFolder: String,
+ )
+ 
++enum class ProjectHierarchyStrategy {
++    FLAT,
++    VERSIONED,
++}
++
++data class ProjectHome(
++    val id: String = UUID.randomUUID().toString(),
++    val name: String,
++    val path: String,
++    val aliases: List<String> = emptyList(),
++    val packageIds: List<String> = emptyList(),
++    val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
++)
++
++data class InboxRoot(
++    val path: String,
++    val name: String,
++)
++
+ object OrganizationPreferenceCodec {
++    private const val LIST_SEPARATOR = '\u001F'
++
+     fun encodeDestinations(values: List<FavoriteDestination>): String =
+         values.joinToString("\n") { value ->
+             listOf(enc(value.id), enc(value.name), enc(value.path)).joinToString(";")
+@@ -48,6 +69,62 @@ object OrganizationPreferenceCodec {
+             .toList()
+     }
+ 
++    fun encodeProjectHomes(values: List<ProjectHome>): String =
++        values.joinToString("\n") { value ->
++            listOf(
++                enc(value.id),
++                enc(value.name),
++                enc(value.path),
++                enc(value.aliases.joinToString(LIST_SEPARATOR.toString())),
++                enc(value.packageIds.joinToString(LIST_SEPARATOR.toString())),
++                enc(value.hierarchy.name),
++            ).joinToString(";")
++        }
++
++    fun decodeProjectHomes(raw: String?): List<ProjectHome> {
++        if (raw.isNullOrBlank()) return emptyList()
++        return raw.lineSequence().mapNotNull { line ->
++            val parts = line.split(';', limit = 6)
++            if (parts.size != 6) return@mapNotNull null
++            runCatching {
++                ProjectHome(
++                    id = dec(parts[0]),
++                    name = dec(parts[1]),
++                    path = dec(parts[2]),
++                    aliases = splitList(dec(parts[3])),
++                    packageIds = splitList(dec(parts[4])),
++                    hierarchy = ProjectHierarchyStrategy.entries.firstOrNull {
++                        it.name == dec(parts[5])
++                    } ?: ProjectHierarchyStrategy.VERSIONED,
++                )
++            }.getOrNull()
++        }.filter { it.name.isNotBlank() && it.path.isNotBlank() }
++            .distinctBy { it.path.lowercase() }
++            .toList()
++    }
++
++    fun encodeInboxRoots(values: List<InboxRoot>): String =
++        values.joinToString("\n") { value ->
++            listOf(enc(value.path), enc(value.name)).joinToString(";")
++        }
++
++    fun decodeInboxRoots(raw: String?): List<InboxRoot> {
++        if (raw.isNullOrBlank()) return emptyList()
++        return raw.lineSequence().mapNotNull { line ->
++            val parts = line.split(';', limit = 2)
++            if (parts.size != 2) return@mapNotNull null
++            runCatching { InboxRoot(dec(parts[0]), dec(parts[1])) }.getOrNull()
++        }.filter { it.path.isNotBlank() && it.name.isNotBlank() }
++            .distinctBy { it.path.lowercase() }
++            .toList()
++    }
++
++    private fun splitList(value: String): List<String> =
++        value.split(LIST_SEPARATOR)
++            .map(String::trim)
++            .filter(String::isNotBlank)
++            .distinctBy(String::lowercase)
++
+     private fun enc(value: String): String =
+         Base64.getUrlEncoder().withoutPadding()
+             .encodeToString(value.toByteArray(StandardCharsets.UTF_8))
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/home/HomeScreen.kt b/app/src/main/java/com/pocketsteward/app/ui/home/HomeScreen.kt
+index a53291f..1e8bc9e 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/home/HomeScreen.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/home/HomeScreen.kt
+@@ -230,8 +230,13 @@ fun HomeScreen(
+             onClick = onAsk,
+         )
+         HomeQuickAction(
+-            title = "Organize Downloads",
+-            supporting = "Scan Downloads and build a preview for obvious type/project matches.",
++            title = "File inboxes into projects",
++            supporting = "Treat Downloads (and any configured inboxes) as landing zones. Match APKs, source bundles, notes, and related files to project homes and releases.",
++            onClick = { onQuickAction(PostScanAction.INBOX_FILING) },
++        )
++        HomeQuickAction(
++            title = "Tidy Downloads locally",
++            supporting = "Keep everything inside Downloads and organize only the loose files there.",
+             onClick = { onQuickAction(PostScanAction.SMART_CLEANUP) },
+         )
+         HomeQuickAction(
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/scan/PlanPreviewScreen.kt b/app/src/main/java/com/pocketsteward/app/ui/scan/PlanPreviewScreen.kt
+index d329d51..341c16a 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/scan/PlanPreviewScreen.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/scan/PlanPreviewScreen.kt
+@@ -20,11 +20,14 @@ import androidx.compose.material3.SegmentedButton
+ import com.pocketsteward.app.ui.components.FileKind
+ import com.pocketsteward.app.ui.components.FileVisual
+ import com.pocketsteward.app.plan.PlanTree
++import com.pocketsteward.app.filing.FilingConfidence
++import com.pocketsteward.app.filing.FilingReviewPresentation
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.lazy.itemsIndexed
+@@ -85,13 +88,32 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+         }
+ 
+         Column(modifier = contentModifier.fillMaxWidth()) {
+-            ScreenHeadline(
+-                text = preview.goal,
+-                supporting = buildString {
+-                    append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
+-                    if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
+-                },
+-            )
++            Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
++                Text(
++                    text = preview.goal,
++                    style = MaterialTheme.typography.titleMedium,
++                )
++                Text(
++                    text = buildString {
++                        val selectedFiles = preview.selectedIndices.count { index ->
++                            when (preview.accepted.getOrNull(index)) {
++                                is PlannedOperation.Move, is PlannedOperation.Copy, is PlannedOperation.Rename, is PlannedOperation.Trash -> true
++                                else -> false
++                            }
++                        }
++                        if (preview.filingPresentation != null) {
++                            append("$selectedFiles selected · ${preview.filingPresentation.proposedCount} proposed")
++                            if (preview.filingPresentation.unresolvedCount > 0) append(" · ${preview.filingPresentation.unresolvedCount} stays")
++                        } else {
++                            append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
++                        }
++                        if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
++                    },
++                    style = MaterialTheme.typography.bodySmall,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    modifier = Modifier.padding(top = Spacing.hairline),
++                )
++            }
+ 
+             val redCount = preview.accepted.count {
+                 it.safetyClass() == MutationSafetyClass.RED
+@@ -133,10 +155,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                 horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+             ) {
+                 OutlinedButton(
+-                    onClick = viewModel::selectSafePlanOperations,
++                    onClick = viewModel::selectRecommendedPlanOperations,
+                     modifier = Modifier.weight(1f),
+                 ) {
+-                    Text("Safe only")
++                    Text(if (preview.filingPresentation != null) "Strong only" else "Safe only")
+                 }
+                 OutlinedButton(
+                     onClick = {
+@@ -148,7 +170,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                     },
+                     modifier = Modifier.weight(1f),
+                 ) {
+-                    Text("All")
++                    Text("Select all")
+                 }
+                 OutlinedButton(
+                     onClick = viewModel::clearPlanSelection,
+@@ -176,6 +198,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+             } else LazyColumn(
+                 modifier = Modifier.weight(1f),
+                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
++                contentPadding = PaddingValues(bottom = Spacing.section),
+             ) {
+                 val destinationGroups = preview.accepted
+                     .mapNotNull(::destinationEditGroup)
+@@ -184,7 +207,50 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                     .mapNotNull(::safDestinationEditGroup)
+                     .distinctBy { it.directory.rawValue() }
+ 
+-                if (destinationGroups.isNotEmpty() || selectedTreeGroups.isNotEmpty()) {
++                preview.filingPresentation?.let { filing ->
++                    item {
++                        FilingOverviewCard(filing)
++                    }
++                    items(filing.groups, key = { it.destinationPath }) { group ->
++                        FilingDestinationCard(
++                            group = group,
++                            preview = preview,
++                            onSetSelected = viewModel::setPlanOperationSelected,
++                            onApplyDestination = { root, name ->
++                                viewModel.editPlanDestinationGroup(
++                                    groupDirectory = group.destinationPath,
++                                    newDestinationRootPath = root,
++                                    newGroupName = name,
++                                    rememberForSimilarFiles = false,
++                                )
++                            },
++                        )
++                    }
++                    if (filing.unresolved.isNotEmpty()) {
++                        item { SectionHeader("Stays in inbox") }
++                        items(filing.unresolved, key = { it.sourceRef }) { item ->
++                            Card(modifier = Modifier.fillMaxWidth()) {
++                                Row(
++                                    modifier = Modifier.padding(Spacing.base),
++                                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
++                                    verticalAlignment = Alignment.CenterVertically,
++                                ) {
++                                    FileVisual(name = item.displayName, location = item.sourceRef)
++                                    Column(modifier = Modifier.weight(1f)) {
++                                        Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
++                                        Text(
++                                            item.evidence.firstOrNull() ?: "Not enough project evidence to move safely.",
++                                            style = MaterialTheme.typography.bodySmall,
++                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                        )
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++
++                if (preview.filingPresentation == null && (destinationGroups.isNotEmpty() || selectedTreeGroups.isNotEmpty())) {
+                     item { SectionHeader("Destinations") }
+                     items(destinationGroups, key = { it.directory }) { group ->
+                         DestinationEditCard(
+@@ -221,7 +287,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                     item {
+                         Card(modifier = Modifier.fillMaxWidth()) {
+                             Column(modifier = Modifier.padding(Spacing.base)) {
+-                                Text("Not included", style = MaterialTheme.typography.titleSmall)
++                                Text("Plan notes", style = MaterialTheme.typography.titleSmall)
+                                 preview.scopeNotes.forEach { note ->
+                                     Text(
+                                         text = note,
+@@ -240,6 +306,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                 }
+ 
+                 itemsIndexed(preview.accepted) { index, operation ->
++                    if (preview.filingPresentation != null && operation is PlannedOperation.CreateDirectory) {
++                        return@itemsIndexed
++                    }
+                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
+                     val selected = index in preview.selectedIndices
+                     val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
+@@ -342,15 +411,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
+                     },
+                     enabled = preview.selectedIndices.isNotEmpty(),
+                 ) {
+-                    Text("Run ${preview.selectedIndices.size} selected")
++                    val selectedFileCount = preview.selectedIndices.count { index ->
++                        when (preview.accepted.getOrNull(index)) {
++                            is PlannedOperation.Move, is PlannedOperation.Copy, is PlannedOperation.Rename, is PlannedOperation.Trash -> true
++                            else -> false
++                        }
++                    }
++                    Text("Run ${if (preview.filingPresentation != null) selectedFileCount else preview.selectedIndices.size} selected")
+                 }
+-                OutlinedButton(
++                TextButton(
+                     onClick = { viewModel.exportReviewedPlan(preview) },
+                     enabled = preview.selectedIndices.isNotEmpty(),
+                 ) {
+-                    Text("Export plan")
++                    Text("Export")
+                 }
+-                OutlinedButton(onClick = onBack) { Text("Cancel") }
++                TextButton(onClick = onBack) { Text("Cancel") }
+             }
+         }
+     }
+@@ -491,6 +566,185 @@ private fun PlanOperationEditControls(
+     }
+ }
+ 
++@Composable
++private fun FilingOverviewCard(filing: FilingReviewPresentation) {
++    val strong = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.STRONG }
++    val probable = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.PROBABLE }
++    Card(modifier = Modifier.fillMaxWidth()) {
++        Column(modifier = Modifier.padding(Spacing.base)) {
++            Text("Inbox filing", style = MaterialTheme.typography.titleMedium)
++            Text(
++                buildString {
++                    append(strong).append(" strong")
++                    if (probable > 0) append(" · ").append(probable).append(" probable")
++                    if (filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" staying put")
++                },
++                style = MaterialTheme.typography.bodyMedium,
++                modifier = Modifier.padding(top = Spacing.hairline),
++            )
++            Text(
++                "Strong matches are checked. Probable matches wait for you. File type never outranks project ownership.",
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                modifier = Modifier.padding(top = Spacing.hairline),
++            )
++        }
++    }
++}
++
++@Composable
++private fun FilingDestinationCard(
++    group: com.pocketsteward.app.filing.FilingReviewGroup,
++    preview: ScanUiState.PlanPreview,
++    onSetSelected: (Int, Boolean) -> Unit,
++    onApplyDestination: (String, String) -> Unit,
++) {
++    var expanded by remember(group.destinationPath) { mutableStateOf(true) }
++    var editing by remember(group.destinationPath) { mutableStateOf(false) }
++    var destinationRoot by remember(group.destinationPath) {
++        mutableStateOf(group.destinationPath.substringBeforeLast('/', missingDelimiterValue = group.projectHomePath))
++    }
++    var groupName by remember(group.destinationPath) {
++        mutableStateOf(group.destinationPath.substringAfterLast('/'))
++    }
++    val totalBytes = group.items.sumOf { it.sizeBytes }
++    val selectedFiles = group.items.count { item ->
++        operationIndexForSource(preview, item.sourceRef)?.let { it in preview.selectedIndices } == true
++    }
++
++    Card(modifier = Modifier.fillMaxWidth().animateContentSize()) {
++        Column(modifier = Modifier.padding(Spacing.base)) {
++            Row(
++                modifier = Modifier.fillMaxWidth(),
++                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                Column(modifier = Modifier.weight(1f)) {
++                    Text(group.projectName, style = MaterialTheme.typography.titleMedium)
++                    Text(
++                        friendlyPath(group.destinationPath),
++                        style = MaterialTheme.typography.bodySmall,
++                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        maxLines = 2,
++                        overflow = TextOverflow.Ellipsis,
++                    )
++                    Text(
++                        buildString {
++                            append(if (group.existingProjectHome) "Existing project" else "New project home")
++                            group.release?.let { append(" · release ").append(it) }
++                            append(" · ").append(selectedFiles).append("/").append(group.items.size).append(" selected")
++                            append(" · ").append(formatBytes(totalBytes))
++                        },
++                        style = MaterialTheme.typography.labelSmall,
++                        color = MaterialTheme.colorScheme.primary,
++                        modifier = Modifier.padding(top = Spacing.hairline),
++                    )
++                }
++                TextButton(onClick = { expanded = !expanded }) {
++                    Text(if (expanded) "Hide" else "Files")
++                }
++            }
++
++            if (expanded) {
++                group.items.forEach { item ->
++                    val operationIndex = operationIndexForSource(preview, item.sourceRef)
++                    val checked = operationIndex?.let { it in preview.selectedIndices } == true
++                    Row(
++                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
++                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
++                        verticalAlignment = Alignment.Top,
++                    ) {
++                        Checkbox(
++                            checked = checked,
++                            onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
++                            enabled = operationIndex != null,
++                        )
++                        FileVisual(name = item.displayName, location = item.sourceRef, size = 28.dp)
++                        Column(modifier = Modifier.weight(1f)) {
++                            Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
++                            Text(
++                                if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review",
++                                style = MaterialTheme.typography.labelSmall,
++                                color = if (item.confidence == FilingConfidence.STRONG) {
++                                    MaterialTheme.colorScheme.primary
++                                } else {
++                                    MaterialTheme.colorScheme.tertiary
++                                },
++                            )
++                            item.evidence.take(3).forEach { reason ->
++                                Text(
++                                    "• $reason",
++                                    style = MaterialTheme.typography.bodySmall,
++                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                                )
++                            }
++                        }
++                    }
++                }
++            }
++
++            if (group.editableDirectDestination) {
++                TextButton(onClick = { editing = !editing }) {
++                    Text(if (editing) "Hide destination editor" else "Edit destination")
++                }
++            }
++            if (editing && group.editableDirectDestination) {
++                OutlinedTextField(
++                    value = groupName,
++                    onValueChange = { groupName = it },
++                    label = { Text(if (group.release != null) "Release folder" else "Folder name") },
++                    singleLine = true,
++                    modifier = Modifier.fillMaxWidth(),
++                )
++                OutlinedTextField(
++                    value = destinationRoot,
++                    onValueChange = { destinationRoot = it },
++                    label = { Text(if (group.release != null) "Project home" else "Parent folder") },
++                    singleLine = true,
++                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
++                )
++                Button(
++                    onClick = {
++                        onApplyDestination(destinationRoot, groupName)
++                        editing = false
++                    },
++                    enabled = destinationRoot.isNotBlank() && groupName.isNotBlank(),
++                    modifier = Modifier.padding(top = Spacing.tight),
++                ) {
++                    Text("Apply destination")
++                }
++            }
++        }
++    }
++}
++
++private fun operationIndexForSource(preview: ScanUiState.PlanPreview, sourceRef: String): Int? {
++    val index = preview.accepted.indexOfFirst { operation ->
++        when (operation) {
++            is PlannedOperation.Move -> operation.source.rawValue() == sourceRef
++            is PlannedOperation.Copy -> operation.source.rawValue() == sourceRef
++            is PlannedOperation.Rename -> operation.source.rawValue() == sourceRef
++            is PlannedOperation.Trash -> operation.source.rawValue() == sourceRef
++            else -> false
++        }
++    }
++    return index.takeIf { it >= 0 }
++}
++
++private fun friendlyPath(path: String): String {
++    val normalized = path.trimEnd('/')
++    val internalPrefix = "/storage/emulated/0"
++    return when {
++        normalized == internalPrefix -> "Internal storage"
++        normalized.startsWith("$internalPrefix/") -> {
++            val relative = normalized.removePrefix("$internalPrefix/")
++            "Internal storage › " + relative.split('/').filter(String::isNotBlank).joinToString(" › ")
++        }
++        normalized.startsWith("content://") -> "Selected storage › " + normalized.substringAfterLast('/')
++        else -> normalized.split('/').filter(String::isNotBlank).takeLast(4).joinToString(" › ")
++    }
++}
++
+ private data class DestinationEditGroup(
+     val directory: String,
+     val root: String,
+@@ -505,51 +759,66 @@ private fun DestinationEditCard(
+     var root by remember(group.directory) { mutableStateOf(group.root) }
+     var groupName by remember(group.directory) { mutableStateOf(group.groupName) }
+     var rememberRule by remember(group.directory) { mutableStateOf(false) }
++    var editing by remember(group.directory) { mutableStateOf(false) }
+ 
+-    Card(modifier = Modifier.fillMaxWidth()) {
++    Card(modifier = Modifier.fillMaxWidth().animateContentSize()) {
+         Column(modifier = Modifier.padding(Spacing.base)) {
+             Text(
+-                text = group.directory,
++                text = group.groupName,
+                 style = MaterialTheme.typography.titleSmall,
+-                maxLines = 2,
++                maxLines = 1,
+                 overflow = TextOverflow.Ellipsis,
+             )
+-            OutlinedTextField(
+-                value = groupName,
+-                onValueChange = { groupName = it },
+-                label = { Text("Group folder name") },
+-                singleLine = true,
+-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+-            )
+-            OutlinedTextField(
+-                value = root,
+-                onValueChange = { root = it },
+-                label = { Text("Destination root") },
+-                singleLine = true,
+-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
++            Text(
++                text = friendlyPath(group.directory),
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                maxLines = 2,
++                overflow = TextOverflow.Ellipsis,
++                modifier = Modifier.padding(top = Spacing.hairline),
+             )
+-            Row(
+-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+-            ) {
+-                Checkbox(
+-                    checked = rememberRule,
+-                    onCheckedChange = { rememberRule = it },
++            TextButton(onClick = { editing = !editing }) {
++                Text(if (editing) "Hide editor" else "Edit destination")
++            }
++            if (editing) {
++                OutlinedTextField(
++                    value = groupName,
++                    onValueChange = { groupName = it },
++                    label = { Text("Folder name") },
++                    singleLine = true,
++                    modifier = Modifier.fillMaxWidth(),
+                 )
+-                Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
+-                    Text("Remember this correction")
+-                    Text(
+-                        "When there is a clear shared filename term, reuse this group for similar files.",
+-                        style = MaterialTheme.typography.bodySmall,
+-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                OutlinedTextField(
++                    value = root,
++                    onValueChange = { root = it },
++                    label = { Text("Parent folder") },
++                    singleLine = true,
++                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
++                )
++                Row(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
++                    Checkbox(
++                        checked = rememberRule,
++                        onCheckedChange = { rememberRule = it },
+                     )
++                    Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
++                        Text("Remember this correction")
++                        Text(
++                            "Reuse this destination when a clear shared filename term appears later.",
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++                Button(
++                    onClick = {
++                        onApply(root, groupName, rememberRule)
++                        editing = false
++                    },
++                    enabled = root.isNotBlank() && groupName.isNotBlank(),
++                    modifier = Modifier.padding(top = Spacing.tight),
++                ) {
++                    Text("Apply destination")
+                 }
+-            }
+-            Button(
+-                onClick = { onApply(root, groupName, rememberRule) },
+-                enabled = root.isNotBlank() && groupName.isNotBlank(),
+-                modifier = Modifier.padding(top = Spacing.tight),
+-            ) {
+-                Text("Apply destination")
+             }
+         }
+     }
+@@ -557,10 +826,6 @@ private fun DestinationEditCard(
+ 
+ private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGroup? {
+     val directory = when (operation) {
+-        is PlannedOperation.CreateDirectory -> {
+-            val parent = operation.parent as? FileRef.Direct ?: return null
+-            "${parent.absolutePath.trimEnd('/')}/${operation.name}"
+-        }
+         is PlannedOperation.Move -> {
+             val destination = operation.destination as? FileRef.Direct ?: return null
+             destination.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanScreen.kt b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanScreen.kt
+index 4775c15..760c12c 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanScreen.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanScreen.kt
+@@ -68,6 +68,7 @@ fun ScanScreen(
+                 !autoSavedSearchId.isNullOrBlank() -> viewModel.startSavedSearch(autoSavedSearchId)
+                 !autoWorkflowId.isNullOrBlank() -> viewModel.startSavedWorkflow(autoWorkflowId)
+                 !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
++                autoAction == PostScanAction.INBOX_FILING -> viewModel.startConfiguredInboxFiling()
+                 autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
+             }
+         }
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModel.kt b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModel.kt
+index baefdc9..bef114f 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModel.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModel.kt
+@@ -42,8 +42,10 @@ import com.pocketsteward.app.executor.CompositeFileIndex
+ import com.pocketsteward.app.executor.ExecutionSummary
+ import com.pocketsteward.app.executor.InMemoryFileIndex
+ import com.pocketsteward.app.executor.SingleFolderIndex
++import com.pocketsteward.app.executor.LiveTreeFileIndex
+ import com.pocketsteward.app.executor.UndoSummary
+ import com.pocketsteward.app.image.ImageInsight
++import com.pocketsteward.app.filing.FilingReviewPresentation
+ import com.pocketsteward.app.metadata.MetadataEnrichment
+ import com.pocketsteward.app.intent.BoundedIntent
+ import com.pocketsteward.app.intent.DeterministicIntentParser
+@@ -73,6 +75,7 @@ import com.pocketsteward.app.saved.LastScanRoot
+ import com.pocketsteward.app.rules.isUncategorized
+ import com.pocketsteward.app.saved.FavoriteDestination
+ import com.pocketsteward.app.saved.SavedSearch
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
+ import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
+ import com.pocketsteward.app.scheduled.ScheduledReviewPolicy
+ import com.pocketsteward.app.scan.FileCategory
+@@ -105,6 +108,7 @@ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.channels.Channel
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.Flow
++import java.io.File
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.StateFlow
+@@ -216,6 +220,8 @@ sealed interface ScanUiState {
+          * with the changed file.
+          */
+         val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
++        /** Optional richer explanation for Inbox Filing plans. */
++        val filingPresentation: FilingReviewPresentation? = null,
+     ) : ScanUiState {
+         init {
+             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
+@@ -425,6 +431,7 @@ enum class ScanRoute(val route: String) {
+  * progress UI, and the action fires on arrival.
+  */
+ enum class PostScanAction {
++    INBOX_FILING,
+     SMART_CLEANUP,
+     FIND_DUPLICATES,
+     FIND_LARGEST,
+@@ -744,6 +751,34 @@ class ScanViewModel(
+         startScan(target, action)
+     }
+ 
++    /** Home entry for Inbox filing. Direct mode scans all configured inboxes;
++     * SAF mode is necessarily bounded to the one granted tree. */
++    fun startConfiguredInboxFiling() {
++        if (autoStarted) return
++        autoStarted = true
++        viewModelScope.launch {
++            val access = settingsRepository.storageAccessState.first()
++            when (access.mode) {
++                StorageAccessMode.DIRECT -> {
++                    val targets = settingsRepository.inboxRoots.first()
++                        .map { it.path.trim().trimEnd('/') }
++                        .filter { it.isNotBlank() && File(it).isDirectory }
++                        .distinctBy { it.lowercase() }
++                        .map(::ScanTarget.CustomFolder)
++                    startScan(
++                        targets = targets.ifEmpty { listOf(ScanTarget.Downloads) },
++                        thenRun = PostScanAction.INBOX_FILING,
++                    )
++                }
++                StorageAccessMode.SAF -> startScan(
++                    target = ScanTarget.GrantedFolder("Granted inbox"),
++                    thenRun = PostScanAction.INBOX_FILING,
++                )
++                null -> _uiState.value = ScanUiState.Error("No storage access granted yet.")
++            }
++        }
++    }
++
+     /** Home prompt entry: scan first, then interpret the request against that exact snapshot. */
+     fun startScanThenRequest(target: ScanTarget, request: String) {
+         if (autoStarted) return
+@@ -956,6 +991,7 @@ class ScanViewModel(
+                 } else {
+                     when (thenRun) {
+                         null -> Unit
++                        PostScanAction.INBOX_FILING -> proposeInboxFiling(summary)
+                         PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
+                         PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
+                         PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
+@@ -1129,6 +1165,8 @@ class ScanViewModel(
+         scopes: List<ScanScope>,
+         scopeNotes: List<String> = emptyList(),
+         authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
++        defaultSelectedSourceRefs: Set<String>? = null,
++        filingPresentation: FilingReviewPresentation? = null,
+     ) {
+         val mode = settingsRepository.storageAccessState.first().mode
+             ?: error("No storage access mode is active.")
+@@ -1141,6 +1179,9 @@ class ScanViewModel(
+         val reviewedSources = withContext(Dispatchers.IO) {
+             ReviewedSources.capture(validated.accepted, container.gatewayFor(mode))
+         }
++        val selectedIndices = defaultSelectedSourceRefs?.let { selectedRefs ->
++            defaultSelectionForSources(validated.accepted, selectedRefs)
++        } ?: PlanSelection.safeSelected(validated.accepted)
+         _uiState.value = ScanUiState.PlanPreview(
+             goal = goal,
+             accepted = validated.accepted,
+@@ -1149,9 +1190,11 @@ class ScanViewModel(
+             acceptedScopeLabels = validated.accepted.map { operation ->
+                 scopeForOperation(operation, scopes)?.label ?: scopes.first().label
+             },
++            selectedIndices = selectedIndices,
+             scopeNotes = scopeNotes,
+             authorizedDestinationRoots = authorizedDestinationRoots,
+             reviewedSources = reviewedSources,
++            filingPresentation = filingPresentation,
+         )
+     }
+ 
+@@ -1168,16 +1211,74 @@ class ScanViewModel(
+                 "Cross-root destination authorization currently requires direct storage access."
+             }
+             val gateway = container.gatewayFor(mode)
++            @Suppress("DEPRECATION")
++            val sharedStorageRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+             destinationRoots
+                 .distinctBy { it.absolutePath.trimEnd('/') }
+                 .forEach { root ->
+-                    val children = withContext(Dispatchers.IO) { gateway.listChildren(root) }
+-                    delegates += SingleFolderIndex(root, children)
++                    val normalized = root.absolutePath.trimEnd('/')
++                    val entries = withContext(Dispatchers.IO) {
++                        if (normalized.equals(sharedStorageRoot, ignoreCase = true)) {
++                            // A new project home may be created at shared-storage root.
++                            // Only its immediate names matter; walking every top-level
++                            // tree would turn a review into a device-wide scan.
++                            gateway.listChildren(root)
++                        } else {
++                            // Existing project homes need release/file children so
++                            // collision checks see what is already there.
++                            liveDestinationEntries(gateway, root, maxDepth = 2, maxEntries = 5_000)
++                        }
++                    }
++                    delegates += LiveTreeFileIndex(root, entries)
+                 }
+         }
+         return if (delegates.size == 1) delegates.single() else CompositeFileIndex(delegates)
+     }
+ 
++    private suspend fun liveDestinationEntries(
++        gateway: StorageGateway,
++        root: FileRef,
++        maxDepth: Int,
++        maxEntries: Int,
++    ): List<com.pocketsteward.app.storage.FileEntry> {
++        val out = mutableListOf<com.pocketsteward.app.storage.FileEntry>()
++        suspend fun walk(directory: FileRef, depth: Int) {
++            if (depth > maxDepth || out.size >= maxEntries) return
++            val children = runCatching { gateway.listChildren(directory) }.getOrDefault(emptyList())
++            for (child in children) {
++                if (out.size >= maxEntries) return
++                out += child
++                if (child.isDirectory && depth < maxDepth) walk(child.ref, depth + 1)
++            }
++        }
++        walk(root, 0)
++        return out
++    }
++
++    internal fun defaultSelectionForSources(
++        operations: List<PlannedOperation>,
++        sourceRefs: Set<String>,
++    ): Set<Int> {
++        val selectedMoveDestinations = operations.mapIndexedNotNull { index, operation ->
++            when (operation) {
++                is PlannedOperation.Move -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
++                is PlannedOperation.Copy -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
++                else -> null
++            }
++        }
++        val selected = selectedMoveDestinations.mapTo(linkedSetOf()) { it.first }
++        val destinations = selectedMoveDestinations.map { it.second }
++        operations.forEachIndexed { index, operation ->
++            if (operation is PlannedOperation.CreateDirectory) {
++                val dir = operation.parent.child(operation.name).rawValue().trimEnd('/')
++                if (destinations.any { destination -> destination == dir || destination.startsWith("$dir/") }) {
++                    selected += index
++                }
++            }
++        }
++        return selected
++    }
++
+     internal suspend fun showPlanPreview(
+         goal: String,
+         operations: List<PlannedOperation>,
+@@ -1253,6 +1354,7 @@ class ScanViewModel(
+                     return@launch
+                 }
+                 val executor = container.planExecutor(mode)
++
+                 val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)
+                 val unindexed = preview.unindexedFolder
+                 val index = if (unindexed == null) {
+@@ -1284,6 +1386,12 @@ class ScanViewModel(
+                 // alter the approved plan or bypass the validator/preview.
+                 container.startForegroundTask(taskRunId)
+ 
++                // Learn project homes only after the approved task has been
++                // durably queued and foreground execution successfully
++                // started. A failed enqueue/start must not teach a mapping
++                // from a filing that never actually began.
++                rememberApprovedFilingHomes(preview, selectedOperations)
++
+                 _uiState.value = ScanUiState.ExecutionQueued(
+                     taskRunId = taskRunId,
+                     operationCount = selectedOperations.size,
+@@ -1308,6 +1416,53 @@ class ScanViewModel(
+         }
+     }
+ 
++
++    private suspend fun rememberApprovedFilingHomes(
++        preview: ScanUiState.PlanPreview,
++        selectedOperations: List<PlannedOperation>,
++    ) {
++        val filing = preview.filingPresentation ?: return
++        val selectedSourceRefs = selectedOperations.mapNotNullTo(linkedSetOf()) { operation ->
++            when (operation) {
++                is PlannedOperation.Move -> operation.source.rawValue()
++                is PlannedOperation.Copy -> operation.source.rawValue()
++                else -> null
++            }
++        }
++        for (group in filing.groups) {
++            if (!group.projectHomePath.startsWith('/')) continue
++            val approvedRefs = group.items.map { it.sourceRef }.filter { it in selectedSourceRefs }
++            if (approvedRefs.isEmpty()) continue
++            val normalizedHome = group.projectHomePath.trimEnd('/')
++            val stillUsesHome = selectedOperations.any { operation ->
++                val destination = when (operation) {
++                    is PlannedOperation.Move -> operation.destination.rawValue()
++                    is PlannedOperation.Copy -> operation.destination.rawValue()
++                    else -> null
++                } ?: return@any false
++                destination == normalizedHome || destination.startsWith("$normalizedHome/")
++            }
++            if (!stillUsesHome) continue
++
++            val packageIds = withContext(Dispatchers.IO) {
++                container.database.fileRecordDao().getByStableRefs(approvedRefs)
++                    .mapNotNull { it.apkPackageName }
++                    .distinct()
++            }
++            settingsRepository.rememberProjectHome(
++                name = group.projectName,
++                path = normalizedHome,
++                aliases = listOf(group.projectName),
++                packageIds = packageIds,
++                hierarchy = if (group.release != null) {
++                    ProjectHierarchyStrategy.VERSIONED
++                } else {
++                    ProjectHierarchyStrategy.FLAT
++                },
++            )
++        }
++    }
++
+     fun pauseTaskExecution() {
+         runCatching { container.pauseForegroundTask() }
+             .onFailure { _error.value = it.message ?: it.javaClass.simpleName }
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelFiling.kt b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelFiling.kt
+new file mode 100644
+index 0000000..b6d434a
+--- /dev/null
++++ b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelFiling.kt
+@@ -0,0 +1,404 @@
++package com.pocketsteward.app.ui.scan
++
++import android.os.Environment
++import com.pocketsteward.app.content.ContentExtractor
++import com.pocketsteward.app.content.index.ContentSearchDatabase
++import com.pocketsteward.app.data.db.FileRecord
++import com.pocketsteward.app.executor.StorageDigest
++import com.pocketsteward.app.filing.FilingArtifact
++import com.pocketsteward.app.filing.FilingConfidence
++import com.pocketsteward.app.filing.FilingEvidence
++import com.pocketsteward.app.filing.FilingEvidenceKind
++import com.pocketsteward.app.filing.InboxFilingResult
++import com.pocketsteward.app.filing.InboxFilingEngine
++import com.pocketsteward.app.filing.InboxFilingPlanAdapter
++import com.pocketsteward.app.filing.InboxFilingSafPlanAdapter
++import com.pocketsteward.app.filing.ProjectHomeCandidate
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import com.pocketsteward.app.storage.FileRef
++import com.pocketsteward.app.storage.DirectProtection
++import com.pocketsteward.app.storage.StorageAccessMode
++import com.pocketsteward.app.storage.rawValue
++import com.pocketsteward.app.storage.child
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++
++private val GENERIC_TOP_LEVEL_FOLDERS = setOf(
++    "android", "download", "downloads", "documents", "pictures", "movies", "music",
++    "dcim", "alarms", "notifications", "ringtones", "podcasts", "audiobooks",
++    "pocketsteward", "trash",
++)
++
++/**
++ * Files loose incoming artifacts into durable project homes. This is separate
++ * from Smart cleanup: the source root is an inbox and the destination may be
++ * elsewhere in authorized shared storage.
++ */
++internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
++    viewModelScope.launch {
++        _uiState.value = ScanUiState.Working(
++            label = "Planning inbox filing",
++            detail = "Matching incoming artifacts to projects and releases",
++        )
++
++        try {
++            val mode = settingsRepository.storageAccessState.first().mode
++                ?: error("No storage access mode is active.")
++            if (mode == StorageAccessMode.SAF) {
++                proposeInboxFilingSaf(summary)
++                return@launch
++            }
++
++            val sourceRootKeys = summary.scopes.map { it.root.rawValue().trimEnd('/') }.toSet()
++            val records = allRecordsForScopes(summary.scopes)
++                .filter { record ->
++                    !record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys
++                }
++
++            if (records.isEmpty()) {
++                _uiState.value = ScanUiState.Error(
++                    "No loose files are waiting in the selected inbox. Files already inside folders were left alone.",
++                )
++                return@launch
++            }
++
++            val enriched = withContext(Dispatchers.IO) {
++                records.map { record ->
++                    val metadata = container.metadataEnricher.enrich(record)
++                    if (metadata.changed) container.database.fileRecordDao().upsert(metadata.record)
++                    record.stableRef to metadata
++                }.toMap()
++            }
++
++            val contentDao = ContentSearchDatabase
++                .getInstance(container.appContextForUi)
++                .contentIndexDao()
++            val indexedText = withContext(Dispatchers.IO) {
++                records.associate { record ->
++                    val segmentText = if (ContentExtractor.supports(record.extension)) {
++                        runCatching {
++                            contentDao.getSegmentsForDocument(record.stableRef)
++                                .take(4)
++                                .joinToString(" ") { it.body.take(2_000) }
++                        }.getOrDefault("")
++                    } else {
++                        ""
++                    }
++                    record.stableRef to listOfNotNull(record.textPreview, segmentText.takeIf { it.isNotBlank() })
++                        .joinToString(" ")
++                }
++            }
++
++            @Suppress("DEPRECATION")
++            val storageRoot = FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath.trimEnd('/'))
++            val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
++            val topLevel = withContext(Dispatchers.IO) {
++                gateway.listChildren(storageRoot).filter { it.isDirectory }
++            }
++            val topLevelDirectories = topLevel.map { it.ref.rawValue().trimEnd('/') }.toSet()
++
++            val savedHomes = settingsRepository.projectHomes.first().mapNotNull { home ->
++                val exists = withContext(Dispatchers.IO) {
++                    gateway.exists(FileRef.Direct(home.path)) &&
++                        runCatching { gateway.stat(FileRef.Direct(home.path)).isDirectory }.getOrDefault(false)
++                }
++                if (!exists) null else ProjectHomeCandidate(
++                    name = home.name,
++                    path = home.path.trimEnd('/'),
++                    aliases = home.aliases,
++                    packageIds = home.packageIds,
++                    hierarchy = home.hierarchy,
++                    persisted = true,
++                )
++            }
++
++            val favorites = settingsRepository.favoriteDestinations.first().mapNotNull { favorite ->
++                val exists = withContext(Dispatchers.IO) {
++                    gateway.exists(FileRef.Direct(favorite.path)) &&
++                        runCatching { gateway.stat(FileRef.Direct(favorite.path)).isDirectory }.getOrDefault(false)
++                }
++                if (!exists) null else ProjectHomeCandidate(
++                    name = favorite.name,
++                    path = favorite.path.trimEnd('/'),
++                    aliases = listOf(favorite.name),
++                    hierarchy = ProjectHierarchyStrategy.VERSIONED,
++                    persisted = true,
++                )
++            }
++
++            val discovered = topLevel.mapNotNull { entry ->
++                val name = entry.displayName.trim()
++                if (name.lowercase() in GENERIC_TOP_LEVEL_FOLDERS || name.startsWith('.')) return@mapNotNull null
++                ProjectHomeCandidate(
++                    name = name,
++                    path = entry.ref.rawValue().trimEnd('/'),
++                    aliases = listOf(name),
++                    hierarchy = ProjectHierarchyStrategy.VERSIONED,
++                    persisted = false,
++                )
++            }
++
++            val artifacts = records.map { record ->
++                val metadata = enriched.getValue(record.stableRef)
++                val updated = metadata.record
++                FilingArtifact(
++                    stableRef = updated.stableRef,
++                    displayName = updated.displayName,
++                    extension = updated.extension,
++                    sizeBytes = updated.sizeBytes,
++                    createdAt = updated.createdAt,
++                    modifiedAt = updated.modifiedAt,
++                    parentRef = updated.parentRef,
++                    apkPackageName = updated.apkPackageName,
++                    apkVersionName = updated.apkVersionName,
++                    apkLabel = metadata.apkLabel,
++                    apkVersionCode = metadata.apkVersionCode,
++                    archiveSample = metadata.archiveSample,
++                    indexedText = indexedText[updated.stableRef].orEmpty(),
++                )
++            }
++
++            val inferred = withContext(Dispatchers.Default) {
++                InboxFilingEngine.resolve(
++                    artifacts = artifacts,
++                    persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
++                    discoveredHomes = discovered,
++                    projectKeywords = settingsRepository.projectKeywords.first(),
++                    correctionRules = settingsRepository.correctionRules.first(),
++                    storageRoot = storageRoot.absolutePath,
++                )
++            }
++            val result = resolveDirectDestinationCollisions(inferred, gateway, storageRoot.absolutePath)
++
++            val existingDirectories = linkedSetOf<String>()
++            existingDirectories += topLevelDirectories
++            existingDirectories += savedHomes.map { it.path }
++            existingDirectories += favorites.map { it.path }
++            // Known release children matter for friendly "existing" UI;
++            // plan validation independently snapshots them live.
++            for (home in (savedHomes + favorites + discovered).distinctBy { it.path.lowercase() }.take(100)) {
++                val children = withContext(Dispatchers.IO) {
++                    runCatching { gateway.listChildren(FileRef.Direct(home.path)) }.getOrDefault(emptyList())
++                }
++                existingDirectories += children.filter { it.isDirectory }.map { it.ref.rawValue().trimEnd('/') }
++            }
++
++            val plan = withContext(Dispatchers.Default) {
++                InboxFilingPlanAdapter.build(
++                    result = result,
++                    storageRoot = storageRoot,
++                    existingDirectories = existingDirectories,
++                )
++            }
++
++            if (plan.operations.isEmpty()) {
++                _uiState.value = ScanUiState.Error(
++                    "Nothing in this inbox has enough project evidence to file safely. " +
++                        "${result.unresolved.size} file(s) were left exactly where they are.",
++                )
++                return@launch
++            }
++
++            val notes = buildList {
++                add("The selected landing folder is being treated as an inbox, not a permanent category tree.")
++                add("Project ownership outranks file type. APK, ZIP, notes, and supporting assets can travel together when their evidence agrees.")
++                add("Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files stay in the inbox.")
++                add("Existing project homes are preferred over creating near-duplicate folders.")
++                if (result.unresolved.isNotEmpty()) {
++                    add("${result.unresolved.size} unresolved file(s) will remain in the inbox unless you handle them separately.")
++                }
++            }
++
++            showPlanPreview(
++                goal = "Inbox filing",
++                operations = plan.operations,
++                scopes = summary.scopes,
++                scopeNotes = notes,
++                authorizedDestinationRoots = plan.authorizedDestinationRoots,
++                defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
++                filingPresentation = plan.presentation,
++            )
++        } catch (t: Throwable) {
++            _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
++        }
++    }
++}
++
++
++private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Summary) {
++    val scope = summary.scopes.singleOrNull() ?: run {
++        _uiState.value = ScanUiState.Error(
++            "Selected-folder filing currently needs one granted tree at a time.",
++        )
++        return
++    }
++    val rootKey = scope.root.rawValue().trimEnd('/')
++    val records = allRecordsForScopes(summary.scopes)
++        .filter { !it.isDirectory && it.parentRef?.trimEnd('/') == rootKey }
++    if (records.isEmpty()) {
++        _uiState.value = ScanUiState.Error(
++            "No loose files are waiting at the top of the granted inbox. Files already inside folders were left alone.",
++        )
++        return
++    }
++
++    val enriched = withContext(Dispatchers.IO) {
++        records.map { record ->
++            val metadata = container.metadataEnricher.enrich(record)
++            if (metadata.changed) container.database.fileRecordDao().upsert(metadata.record)
++            record.stableRef to metadata
++        }.toMap()
++    }
++    val contentDao = ContentSearchDatabase.getInstance(container.appContextForUi).contentIndexDao()
++    val indexedText = withContext(Dispatchers.IO) {
++        records.associate { record ->
++            val segmentText = if (ContentExtractor.supports(record.extension)) {
++                runCatching {
++                    contentDao.getSegmentsForDocument(record.stableRef)
++                        .take(4)
++                        .joinToString(" ") { it.body.take(2_000) }
++                }.getOrDefault("")
++            } else ""
++            record.stableRef to listOfNotNull(record.textPreview, segmentText.takeIf(String::isNotBlank)).joinToString(" ")
++        }
++    }
++
++    val gateway = container.gatewayFor(StorageAccessMode.SAF)
++    val children = withContext(Dispatchers.IO) {
++        runCatching { gateway.listChildren(scope.root) }.getOrDefault(emptyList())
++    }
++    val homes = children.filter { it.isDirectory }
++        .filterNot { it.displayName.startsWith('.') || it.displayName.lowercase() in GENERIC_TOP_LEVEL_FOLDERS }
++        .map { entry ->
++            ProjectHomeCandidate(
++                name = entry.displayName,
++                path = entry.ref.rawValue().trimEnd('/'),
++                aliases = listOf(entry.displayName),
++                hierarchy = ProjectHierarchyStrategy.VERSIONED,
++                persisted = false,
++            )
++        }
++    val artifacts = records.map { record ->
++        val metadata = enriched.getValue(record.stableRef)
++        val updated = metadata.record
++        FilingArtifact(
++            stableRef = updated.stableRef,
++            displayName = updated.displayName,
++            extension = updated.extension,
++            sizeBytes = updated.sizeBytes,
++            createdAt = updated.createdAt,
++            modifiedAt = updated.modifiedAt,
++            parentRef = updated.parentRef,
++            apkPackageName = updated.apkPackageName,
++            apkVersionName = updated.apkVersionName,
++            apkLabel = metadata.apkLabel,
++            apkVersionCode = metadata.apkVersionCode,
++            archiveSample = metadata.archiveSample,
++            indexedText = indexedText[updated.stableRef].orEmpty(),
++        )
++    }
++    val result = withContext(Dispatchers.Default) {
++        InboxFilingEngine.resolve(
++            artifacts = artifacts,
++            persistedHomes = emptyList(),
++            discoveredHomes = homes,
++            projectKeywords = settingsRepository.projectKeywords.first(),
++            correctionRules = settingsRepository.correctionRules.first(),
++            storageRoot = scope.root.rawValue(),
++        )
++    }
++    val existingHomeRefs = homes.associate { home ->
++        home.path to requireNotNull(children.firstOrNull { it.ref.rawValue().trimEnd('/') == home.path }?.ref)
++    }
++    val plan = withContext(Dispatchers.Default) {
++        InboxFilingSafPlanAdapter.build(
++            result = result,
++            scopeRoot = scope.root,
++            existingHomes = existingHomeRefs,
++            scopeLabel = scope.label,
++        )
++    }
++    if (plan.operations.isEmpty()) {
++        _uiState.value = ScanUiState.Error(
++            "Nothing in this granted inbox has enough project evidence to file safely. ${result.unresolved.size} file(s) stay where they are.",
++        )
++        return
++    }
++    showPlanPreview(
++        goal = "Inbox filing",
++        operations = plan.operations,
++        scopes = summary.scopes,
++        scopeNotes = listOf(
++            "Selected-folder access can file only inside this granted tree; it cannot discover project homes elsewhere on the device.",
++            "Strong matches are selected by default. Probable matches wait for review. Unresolved files stay in the inbox.",
++        ),
++        defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
++        filingPresentation = plan.presentation,
++    )
++}
++
++
++private suspend fun resolveDirectDestinationCollisions(
++    result: InboxFilingResult,
++    gateway: com.pocketsteward.app.storage.StorageGateway,
++    storageRoot: String,
++): InboxFilingResult = withContext(Dispatchers.IO) {
++    InboxFilingResult(
++        result.decisions.map { decision ->
++            val directory = decision.destinationDirectory
++            if (decision.confidence == FilingConfidence.UNRESOLVED || directory == null) {
++                decision
++            } else {
++                val homePath = decision.projectHome?.path?.trimEnd('/')
++                val homeExists = homePath != null && runCatching { gateway.exists(FileRef.Direct(homePath)) }.getOrDefault(false)
++                val protectionProbe = when {
++                    homePath == null -> null
++                    homeExists -> "$homePath/.pocket-steward-filing-probe"
++                    else -> homePath
++                }
++                val protectionReason = protectionProbe?.let { DirectProtection.refusalDestination(storageRoot, it) }
++                if (protectionReason != null) {
++                    decision.copy(
++                        destinationDirectory = null,
++                        confidence = FilingConfidence.UNRESOLVED,
++                        evidence = decision.evidence + FilingEvidence(
++                            FilingEvidenceKind.DESTINATION_PROTECTED,
++                            protectionReason,
++                            220,
++                        ),
++                    )
++                } else {
++                    val destination = FileRef.Direct(directory).child(decision.artifact.displayName)
++                    if (!runCatching { gateway.exists(destination) }.getOrDefault(false)) {
++                        decision
++                    } else {
++                    val sameContent = runCatching {
++                        val destinationMeta = gateway.stat(destination)
++                        if (destinationMeta.isDirectory || destinationMeta.sizeBytes != decision.artifact.sizeBytes) {
++                            false
++                        } else {
++                            val source = com.pocketsteward.app.storage.parseFileRef(decision.artifact.stableRef)
++                            StorageDigest.sha256(gateway, source) == StorageDigest.sha256(gateway, destination)
++                        }
++                    }.getOrDefault(false)
++                        decision.copy(
++                            destinationDirectory = null,
++                            confidence = FilingConfidence.UNRESOLVED,
++                            evidence = decision.evidence + FilingEvidence(
++                                kind = if (sameContent) FilingEvidenceKind.DESTINATION_DUPLICATE else FilingEvidenceKind.DESTINATION_CONFLICT,
++                                detail = if (sameContent) {
++                                    "identical file already exists in the proposed destination; source left in inbox"
++                                } else {
++                                    "destination already contains a different item with this name; source left in inbox"
++                                },
++                                weight = 200,
++                            ),
++                        )
++                    }
++                }
++            }
++        },
++    )
++}
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelPlanEditing.kt b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelPlanEditing.kt
+index 78532d3..8aa51b6 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelPlanEditing.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/scan/ScanViewModelPlanEditing.kt
+@@ -540,6 +540,34 @@ internal fun ScanViewModel.editPlanDestinationGroup(
+                 return@launch
+             }
+ 
++            val updatedFilingPresentation = current.filingPresentation?.let { filing ->
++                val newDirectory = "$targetRoot/$targetGroup"
++                filing.copy(
++                    groups = filing.groups.map { group ->
++                        if (group.destinationPath.trimEnd('/') != oldDirectory) {
++                            group
++                        } else if (group.release != null) {
++                            group.copy(
++                                projectName = targetRoot.substringAfterLast('/').ifBlank { group.projectName },
++                                projectHomePath = targetRoot,
++                                destinationPath = newDirectory,
++                                existingProjectHome = true,
++                                release = targetGroup,
++                                items = group.items.map { it.copy(destinationPath = newDirectory) },
++                            )
++                        } else {
++                            group.copy(
++                                projectName = targetGroup,
++                                projectHomePath = newDirectory,
++                                destinationPath = newDirectory,
++                                existingProjectHome = true,
++                                items = group.items.map { it.copy(destinationPath = newDirectory) },
++                            )
++                        }
++                    },
++                )
++            }
++
+             _preview.value = current.copy(
+                 accepted = validated.accepted,
+                 acceptedScopeLabels = validated.accepted.map { operation ->
+@@ -551,6 +579,7 @@ internal fun ScanViewModel.editPlanDestinationGroup(
+                 selectedIndices = current.selectedIndices
+                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
+                 authorizedDestinationRoots = extraRoots,
++                filingPresentation = updatedFilingPresentation,
+             )
+             if (rememberForSimilarFiles) {
+                 learnableFilenameTerm(affectedSourceNames)?.let { term ->
+@@ -592,14 +621,63 @@ internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? {
+ 
+ internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolean) {
+     val current = _preview.value ?: return
+-    _preview.value = current.copy(
+-        selectedIndices = PlanSelection.setSelected(
+-            operations = current.accepted,
+-            current = current.selectedIndices,
+-            index = index,
+-            selected = selected,
+-        ),
++    var updated = PlanSelection.setSelected(
++        operations = current.accepted,
++        current = current.selectedIndices,
++        index = index,
++        selected = selected,
+     )
++
++    // A nested filing move may depend on one or more CreateDirectory actions.
++    // Selecting the file should never leave its required parent unchecked.
++    if (selected) {
++        val destination = when (val operation = current.accepted.getOrNull(index)) {
++            is PlannedOperation.Move -> operation.destination.rawValue()
++            is PlannedOperation.Copy -> operation.destination.rawValue()
++            else -> null
++        }
++        if (destination != null) {
++            current.accepted.forEachIndexed { createIndex, operation ->
++                if (operation is PlannedOperation.CreateDirectory) {
++                    val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
++                    if (destination == directory || destination.startsWith("$directory/")) {
++                        updated = PlanSelection.setSelected(
++                            operations = current.accepted,
++                            current = updated,
++                            index = createIndex,
++                            selected = true,
++                        )
++                    }
++                }
++            }
++        }
++    }
++
++    if (current.filingPresentation != null) {
++        val selectedDestinations = current.accepted.mapIndexedNotNull { operationIndex, operation ->
++            if (operationIndex !in updated) return@mapIndexedNotNull null
++            when (operation) {
++                is PlannedOperation.Move -> operation.destination.rawValue()
++                is PlannedOperation.Copy -> operation.destination.rawValue()
++                else -> null
++            }
++        }
++        current.accepted.forEachIndexed { createIndex, operation ->
++            if (operation is PlannedOperation.CreateDirectory) {
++                val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
++                val needed = selectedDestinations.any { destination ->
++                    destination == directory || destination.startsWith("$directory/")
++                }
++                updated = if (needed) {
++                    updated + createIndex
++                } else {
++                    updated - createIndex
++                }
++            }
++        }
++    }
++
++    _preview.value = current.copy(selectedIndices = updated)
+ }
+ 
+ internal fun ScanViewModel.selectAllPlanOperations() {
+@@ -609,6 +687,22 @@ internal fun ScanViewModel.selectAllPlanOperations() {
+     )
+ }
+ 
++internal fun ScanViewModel.selectRecommendedPlanOperations() {
++    val current = _preview.value ?: return
++    val filing = current.filingPresentation
++    if (filing == null) {
++        selectSafePlanOperations()
++        return
++    }
++    val strongRefs = filing.groups
++        .flatMap { it.items }
++        .filter { it.confidence == com.pocketsteward.app.filing.FilingConfidence.STRONG }
++        .mapTo(linkedSetOf()) { it.sourceRef }
++    _preview.value = current.copy(
++        selectedIndices = defaultSelectionForSources(current.accepted, strongRefs),
++    )
++}
++
+ internal fun ScanViewModel.selectSafePlanOperations() {
+     val current = _preview.value ?: return
+     _preview.value = current.copy(
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsScreen.kt b/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsScreen.kt
+index c78bb94..6ebbffe 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsScreen.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsScreen.kt
+@@ -94,6 +94,8 @@ fun SettingsScreen(
+     val storedKeywords by viewModel.projectKeywords.collectAsState()
+     val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
+     val correctionRules by viewModel.correctionRules.collectAsState()
++    val projectHomes by viewModel.projectHomes.collectAsState()
++    val inboxRoots by viewModel.inboxRoots.collectAsState()
+     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
+     val modelStatus by viewModel.modelStatus.collectAsState()
+     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
+@@ -117,6 +119,8 @@ fun SettingsScreen(
+     var keywordsText by remember { mutableStateOf<String?>(null) }
+     var favoritesText by remember { mutableStateOf<String?>(null) }
+     var correctionsText by remember { mutableStateOf<String?>(null) }
++    var projectHomesText by remember { mutableStateOf<String?>(null) }
++    var inboxRootsText by remember { mutableStateOf<String?>(null) }
+     var scheduleRootsText by remember { mutableStateOf<String?>(null) }
+     var scheduleIntervalText by remember { mutableStateOf<String?>(null) }
+     LaunchedEffect(storedKeywords) {
+@@ -134,6 +138,23 @@ fun SettingsScreen(
+             correctionsText = correctionRules.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
+         }
+     }
++    LaunchedEffect(projectHomes) {
++        if (projectHomesText == null) {
++            projectHomesText = projectHomes.joinToString("\n") { home ->
++                buildString {
++                    append(home.name).append("=").append(home.path)
++                    if (home.aliases.isNotEmpty()) append(" ; aliases=").append(home.aliases.joinToString(","))
++                    if (home.packageIds.isNotEmpty()) append(" ; packages=").append(home.packageIds.joinToString(","))
++                    append(" ; strategy=").append(home.hierarchy.name)
++                }
++            }
++        }
++    }
++    LaunchedEffect(inboxRoots) {
++        if (inboxRootsText == null) {
++            inboxRootsText = inboxRoots.joinToString("\n") { "${it.name}=${it.path}" }
++        }
++    }
+     LaunchedEffect(scheduledCleanup) {
+         if (scheduleRootsText == null) {
+             scheduleRootsText = scheduledCleanup.roots.joinToString("\n")
+@@ -307,9 +328,57 @@ fun SettingsScreen(
+         }
+ 
+         SectionTitle("Organization preferences")
++        Text(
++            text = "File inboxes",
++            style = MaterialTheme.typography.titleMedium,
++        )
++        Text(
++            text = "Landing folders whose loose files are expected to leave after review. Downloads is the default. One per line as name=/absolute/path.",
++            style = MaterialTheme.typography.bodySmall,
++            color = MaterialTheme.colorScheme.onSurfaceVariant,
++            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
++        )
++        OutlinedTextField(
++            value = inboxRootsText ?: "",
++            onValueChange = { inboxRootsText = it },
++            modifier = Modifier.fillMaxWidth(),
++            minLines = 2,
++        )
++        Button(
++            onClick = { viewModel.setInboxRootsFromText(inboxRootsText ?: "") },
++            modifier = Modifier.padding(top = 8.dp),
++        ) {
++            Text("Save inboxes")
++        }
++
++        Text(
++            text = "Project homes",
++            style = MaterialTheme.typography.titleMedium,
++            modifier = Modifier.padding(top = 16.dp),
++        )
++        Text(
++            text = "Durable project roots used by Inbox filing. Format: name=/path ; aliases=a,b ; packages=com.example.app ; strategy=VERSIONED. Successful reviewed filing can learn these automatically.",
++            style = MaterialTheme.typography.bodySmall,
++            color = MaterialTheme.colorScheme.onSurfaceVariant,
++            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
++        )
++        OutlinedTextField(
++            value = projectHomesText ?: "",
++            onValueChange = { projectHomesText = it },
++            modifier = Modifier.fillMaxWidth(),
++            minLines = 3,
++        )
++        Button(
++            onClick = { viewModel.setProjectHomesFromText(projectHomesText ?: "") },
++            modifier = Modifier.padding(top = 8.dp),
++        ) {
++            Text("Save project homes")
++        }
++
+         Text(
+             text = "Favorite destinations",
+             style = MaterialTheme.typography.titleMedium,
++            modifier = Modifier.padding(top = 16.dp),
+         )
+         Text(
+             text = "One per line as name=/absolute/path. Favorite roots appear in organization destination choices.",
+diff --git a/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsViewModel.kt b/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsViewModel.kt
+index c3a4243..84b1e59 100644
+--- a/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsViewModel.kt
++++ b/app/src/main/java/com/pocketsteward/app/ui/settings/SettingsViewModel.kt
+@@ -14,6 +14,9 @@ import com.pocketsteward.app.diagnostics.RuntimeDiagnosticsSnapshot
+ import com.pocketsteward.app.rules.ProjectKeyword
+ import com.pocketsteward.app.saved.CorrectionRule
+ import com.pocketsteward.app.saved.FavoriteDestination
++import com.pocketsteward.app.saved.ProjectHome
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import com.pocketsteward.app.saved.InboxRoot
+ import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.SharingStarted
+@@ -125,6 +128,12 @@ class SettingsViewModel(
+     val correctionRules: StateFlow<List<CorrectionRule>> = settingsRepository.correctionRules
+         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+ 
++    val projectHomes: StateFlow<List<ProjectHome>> = settingsRepository.projectHomes
++        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
++
++    val inboxRoots: StateFlow<List<InboxRoot>> = settingsRepository.inboxRoots
++        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
++
+     val scheduledCleanupSettings: StateFlow<ScheduledCleanupSettings> =
+         settingsRepository.scheduledCleanupSettings
+             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScheduledCleanupSettings())
+@@ -304,6 +313,57 @@ class SettingsViewModel(
+         viewModelScope.launch { settingsRepository.setFavoriteDestinations(values) }
+     }
+ 
++    fun setProjectHomesFromText(text: String) {
++        val values = text.lineSequence()
++            .map(String::trim)
++            .filter(String::isNotBlank)
++            .mapNotNull { line ->
++                val fields = line.split(';').map(String::trim).filter(String::isNotBlank)
++                val head = fields.firstOrNull()?.split("=", limit = 2) ?: return@mapNotNull null
++                if (head.size != 2 || head[0].isBlank() || head[1].isBlank()) return@mapNotNull null
++                var aliases = emptyList<String>()
++                var packages = emptyList<String>()
++                var hierarchy = ProjectHierarchyStrategy.VERSIONED
++                fields.drop(1).forEach { field ->
++                    val parts = field.split("=", limit = 2)
++                    if (parts.size == 2) {
++                        when (parts[0].trim().lowercase()) {
++                            "aliases" -> aliases = parts[1].split(',').map(String::trim).filter(String::isNotBlank)
++                            "packages", "packageids" -> packages = parts[1].split(',').map(String::trim).filter(String::isNotBlank)
++                            "strategy", "hierarchy" -> hierarchy = ProjectHierarchyStrategy.entries.firstOrNull {
++                                it.name.equals(parts[1].trim(), ignoreCase = true)
++                            } ?: hierarchy
++                        }
++                    }
++                }
++                ProjectHome(
++                    name = head[0].trim(),
++                    path = head[1].trim(),
++                    aliases = aliases,
++                    packageIds = packages,
++                    hierarchy = hierarchy,
++                )
++            }
++            .toList()
++        viewModelScope.launch { settingsRepository.setProjectHomes(values) }
++    }
++
++    fun setInboxRootsFromText(text: String) {
++        val values = text.lineSequence()
++            .map(String::trim)
++            .filter(String::isNotBlank)
++            .mapNotNull { line ->
++                val parts = line.split("=", limit = 2)
++                if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
++                    InboxRoot(path = parts[1].trim(), name = parts[0].trim())
++                } else {
++                    null
++                }
++            }
++            .toList()
++        viewModelScope.launch { settingsRepository.setInboxRoots(values) }
++    }
++
+     fun setCorrectionRulesFromText(text: String) {
+         val values = text.lineSequence()
+             .filter { it.isNotBlank() }
+diff --git a/app/src/test/java/com/pocketsteward/app/filing/InboxFilingEngineTest.kt b/app/src/test/java/com/pocketsteward/app/filing/InboxFilingEngineTest.kt
+new file mode 100644
+index 0000000..74f8753
+--- /dev/null
++++ b/app/src/test/java/com/pocketsteward/app/filing/InboxFilingEngineTest.kt
+@@ -0,0 +1,220 @@
++package com.pocketsteward.app.filing
++
++import com.google.common.truth.Truth.assertThat
++import com.pocketsteward.app.rules.ProjectKeyword
++import com.pocketsteward.app.saved.CorrectionRule
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import org.junit.Test
++
++class InboxFilingEngineTest {
++    private val lilith = ProjectHomeCandidate(
++        name = "Lilith Companion App",
++        path = "/storage/emulated/0/Lilith Companion App",
++        aliases = listOf("Lilith Companion", "LilithCompanion"),
++        packageIds = listOf("com.example.lilithcompanion"),
++        hierarchy = ProjectHierarchyStrategy.VERSIONED,
++        persisted = true,
++    )
++
++    @Test
++    fun apkMetadataAndRegisteredPackageFilesIntoExistingVersionHome() {
++        val result = resolve(
++            FilingArtifact(
++                stableRef = "/Download/release.apk",
++                displayName = "release.apk",
++                extension = "apk",
++                sizeBytes = 10,
++                createdAt = 1_000,
++                modifiedAt = 1_000,
++                parentRef = "/Download",
++                apkPackageName = "com.example.lilithcompanion",
++                apkVersionName = "0.3.105",
++                apkLabel = "Lilith Companion",
++            ),
++        )
++
++        val decision = result.decisions.single()
++        assertThat(decision.confidence).isEqualTo(FilingConfidence.STRONG)
++        assertThat(decision.projectName).isEqualTo("Lilith Companion App")
++        assertThat(decision.release).isEqualTo("0.3.105")
++        assertThat(decision.destinationDirectory)
++            .isEqualTo("/storage/emulated/0/Lilith Companion App/0.3.105")
++    }
++
++    @Test
++    fun heterogeneousReleaseArtifactsConvergeOnSameProjectAndVersion() {
++        val artifacts = listOf(
++            artifact("LilithCompanion-0.3.105-SOURCE.zip", "zip", 2_000),
++            artifact("LilithCompanion-0.3.105-notes.md", "md", 2_100),
++        )
++        val result = InboxFilingEngine.resolve(
++            artifacts = artifacts,
++            persistedHomes = listOf(lilith),
++            discoveredHomes = emptyList(),
++            projectKeywords = emptyList(),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++
++        assertThat(result.proposed).hasSize(2)
++        assertThat(result.proposed.map { it.destinationDirectory }.distinct())
++            .containsExactly("/storage/emulated/0/Lilith Companion App/0.3.105")
++    }
++
++    @Test
++    fun sameProjectDifferentVersionsDoNotCollapseTogether() {
++        val result = InboxFilingEngine.resolve(
++            artifacts = listOf(
++                artifact("LilithCompanion-0.3.104.apk", "apk", 1_000),
++                artifact("LilithCompanion-0.3.105.apk", "apk", 2_000),
++            ),
++            persistedHomes = listOf(lilith),
++            discoveredHomes = emptyList(),
++            projectKeywords = emptyList(),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++
++        assertThat(result.proposed.mapNotNull { it.release }).containsExactly("0.3.104", "0.3.105")
++    }
++
++    @Test
++    fun genericUnrelatedFileStaysUnresolved() {
++        val result = resolve(artifact("receipt.pdf", "pdf", 50_000))
++        assertThat(result.unresolved).hasSize(1)
++        assertThat(result.proposed).isEmpty()
++    }
++
++    @Test
++    fun supportingImageNearUniqueStrongReleaseIsOnlyProbable() {
++        val result = InboxFilingEngine.resolve(
++            artifacts = listOf(
++                FilingArtifact(
++                    stableRef = "/Download/LilithCompanion-0.3.105.apk",
++                    displayName = "LilithCompanion-0.3.105.apk",
++                    extension = "apk",
++                    sizeBytes = 10,
++                    createdAt = 100_000,
++                    modifiedAt = 100_000,
++                    parentRef = "/Download",
++                    apkPackageName = "com.example.lilithcompanion",
++                    apkVersionName = "0.3.105",
++                ),
++                artifact("IMG_7832.png", "png", 100_500),
++            ),
++            persistedHomes = listOf(lilith),
++            discoveredHomes = emptyList(),
++            projectKeywords = emptyList(),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++
++        val image = result.decisions.single { it.artifact.displayName == "IMG_7832.png" }
++        assertThat(image.confidence).isEqualTo(FilingConfidence.PROBABLE)
++        assertThat(image.projectName).isEqualTo("Lilith Companion App")
++        assertThat(image.release).isEqualTo("0.3.105")
++    }
++
++    @Test
++    fun supportingImageIsNotPulledIntoAmbiguousTwoProjectBurst() {
++        val mothership = ProjectHomeCandidate(
++            name = "Mothership",
++            path = "/storage/emulated/0/Mothership",
++            packageIds = listOf("com.example.mothership"),
++            persisted = true,
++        )
++        val result = InboxFilingEngine.resolve(
++            artifacts = listOf(
++                FilingArtifact(
++                    stableRef = "/Download/l.apk",
++                    displayName = "l.apk",
++                    extension = "apk",
++                    sizeBytes = 10,
++                    createdAt = 100_000,
++                    modifiedAt = 100_000,
++                    parentRef = "/Download",
++                    apkPackageName = "com.example.lilithcompanion",
++                    apkVersionName = "0.3.105",
++                ),
++                FilingArtifact(
++                    stableRef = "/Download/m.apk",
++                    displayName = "m.apk",
++                    extension = "apk",
++                    sizeBytes = 10,
++                    createdAt = 100_100,
++                    modifiedAt = 100_100,
++                    parentRef = "/Download",
++                    apkPackageName = "com.example.mothership",
++                    apkVersionName = "0.3.0",
++                ),
++                artifact("IMG_7832.png", "png", 100_200),
++            ),
++            persistedHomes = listOf(lilith, mothership),
++            discoveredHomes = emptyList(),
++            projectKeywords = emptyList(),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++
++        val image = result.decisions.single { it.artifact.displayName == "IMG_7832.png" }
++        assertThat(image.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
++    }
++
++    @Test
++    fun repeatedUnknownProjectFamilyCanCreateReviewedHome() {
++        val result = InboxFilingEngine.resolve(
++            artifacts = listOf(
++                artifact("PocketWidget-1.2.0.apk", "apk", 1_000),
++                artifact("PocketWidget-1.2.0-SOURCE.zip", "zip", 1_010),
++            ),
++            persistedHomes = emptyList(),
++            discoveredHomes = emptyList(),
++            projectKeywords = emptyList(),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++
++        assertThat(result.proposed).hasSize(2)
++        assertThat(result.proposed.first().projectHome?.path).isEqualTo("/storage/emulated/0/Pocket Widget")
++        assertThat(result.proposed.first().createsProjectHome).isTrue()
++    }
++
++    @Test
++    fun explicitProjectKeywordOutranksTypeCategory() {
++        val result = InboxFilingEngine.resolve(
++            artifacts = listOf(artifact("Lilith-0.3.105-build-notes.md", "md", 1_000)),
++            persistedHomes = listOf(lilith),
++            discoveredHomes = emptyList(),
++            projectKeywords = listOf(ProjectKeyword("Lilith", "Lilith Companion App")),
++            correctionRules = emptyList(),
++            storageRoot = "/storage/emulated/0",
++        )
++        assertThat(result.proposed.single().projectName).isEqualTo("Lilith Companion App")
++    }
++
++    @Test
++    fun unsafeHierarchySegmentIsRejected() {
++        assertThat(InboxFilingEngine.sanitizeSegment("../escape")).isNull()
++        assertThat(InboxFilingEngine.sanitizeSegment("good/name")).isNull()
++        assertThat(InboxFilingEngine.sanitizeSegment("0.3.105")).isEqualTo("0.3.105")
++    }
++
++    private fun resolve(artifact: FilingArtifact): InboxFilingResult = InboxFilingEngine.resolve(
++        artifacts = listOf(artifact),
++        persistedHomes = listOf(lilith),
++        discoveredHomes = emptyList(),
++        projectKeywords = emptyList(),
++        correctionRules = emptyList<CorrectionRule>(),
++        storageRoot = "/storage/emulated/0",
++    )
++
++    private fun artifact(name: String, extension: String, time: Long) = FilingArtifact(
++        stableRef = "/Download/$name",
++        displayName = name,
++        extension = extension,
++        sizeBytes = 10,
++        createdAt = time,
++        modifiedAt = time,
++        parentRef = "/Download",
++    )
++}
+diff --git a/app/src/test/java/com/pocketsteward/app/filing/InboxFilingPlanAdapterTest.kt b/app/src/test/java/com/pocketsteward/app/filing/InboxFilingPlanAdapterTest.kt
+new file mode 100644
+index 0000000..ac087e9
+--- /dev/null
++++ b/app/src/test/java/com/pocketsteward/app/filing/InboxFilingPlanAdapterTest.kt
+@@ -0,0 +1,95 @@
++package com.pocketsteward.app.filing
++
++import com.google.common.truth.Truth.assertThat
++import com.pocketsteward.app.plan.PlannedOperation
++import com.pocketsteward.app.saved.ProjectHierarchyStrategy
++import com.pocketsteward.app.storage.FileRef
++import com.pocketsteward.app.storage.rawValue
++import org.junit.Test
++
++class InboxFilingPlanAdapterTest {
++    @Test
++    fun newDirectProjectBuildsHomeThenVersionThenMove() {
++        val decision = decision(
++            home = ProjectHomeCandidate(
++                name = "Lilith Companion App",
++                path = "/storage/emulated/0/Lilith Companion App",
++                hierarchy = ProjectHierarchyStrategy.VERSIONED,
++            ),
++            release = "0.3.105",
++        )
++        val plan = InboxFilingPlanAdapter.build(
++            result = InboxFilingResult(listOf(decision)),
++            storageRoot = FileRef.Direct("/storage/emulated/0"),
++            existingDirectories = setOf("/storage/emulated/0"),
++        )
++
++        assertThat(plan.operations).hasSize(3)
++        assertThat(plan.operations[0]).isInstanceOf(PlannedOperation.CreateDirectory::class.java)
++        assertThat(plan.operations[1]).isInstanceOf(PlannedOperation.CreateDirectory::class.java)
++        val move = plan.operations[2] as PlannedOperation.Move
++        assertThat(move.destination.rawValue())
++            .isEqualTo("/storage/emulated/0/Lilith Companion App/0.3.105/LilithCompanion-0.3.105.apk")
++        assertThat(plan.defaultSelectedSourceRefs).containsExactly("/storage/emulated/0/Download/LilithCompanion-0.3.105.apk")
++    }
++
++    @Test
++    fun existingDirectProjectAuthorizesHomeNotWholeStorageRoot() {
++        val home = ProjectHomeCandidate(
++            name = "Lilith Companion App",
++            path = "/storage/emulated/0/Lilith Companion App",
++            persisted = true,
++        )
++        val plan = InboxFilingPlanAdapter.build(
++            result = InboxFilingResult(listOf(decision(home, "0.3.105"))),
++            storageRoot = FileRef.Direct("/storage/emulated/0"),
++            existingDirectories = setOf(home.path),
++        )
++
++        assertThat(plan.authorizedDestinationRoots.map { it.absolutePath })
++            .containsExactly(home.path)
++    }
++
++    @Test
++    fun safPlanUsesTypedChildrenRatherThanInventingUris() {
++        val root = FileRef.Saf("content://provider/tree/root")
++        val home = ProjectHomeCandidate(
++            name = "Lilith Companion App",
++            path = "content://provider/tree/root/Lilith Companion App",
++            hierarchy = ProjectHierarchyStrategy.VERSIONED,
++        )
++        val plan = InboxFilingSafPlanAdapter.build(
++            result = InboxFilingResult(listOf(decision(home, "0.3.105"))),
++            scopeRoot = root,
++            existingHomes = emptyMap(),
++            scopeLabel = "Granted inbox",
++        )
++
++        val homeCreate = plan.operations[0] as PlannedOperation.CreateDirectory
++        val releaseCreate = plan.operations[1] as PlannedOperation.CreateDirectory
++        val move = plan.operations[2] as PlannedOperation.Move
++        assertThat(homeCreate.parent).isEqualTo(root)
++        assertThat(releaseCreate.parent).isInstanceOf(FileRef.Child::class.java)
++        assertThat(move.destination).isInstanceOf(FileRef.Child::class.java)
++        assertThat(plan.presentation.groups.single().editableDirectDestination).isFalse()
++    }
++
++    private fun decision(home: ProjectHomeCandidate, release: String) = FilingDecision(
++        artifact = FilingArtifact(
++            stableRef = "/storage/emulated/0/Download/LilithCompanion-0.3.105.apk",
++            displayName = "LilithCompanion-0.3.105.apk",
++            extension = "apk",
++            sizeBytes = 10,
++            createdAt = 1,
++            modifiedAt = 1,
++            parentRef = "/storage/emulated/0/Download",
++        ),
++        projectName = home.name,
++        projectHome = home,
++        release = release,
++        destinationDirectory = home.path.trimEnd('/') + "/" + release,
++        confidence = FilingConfidence.STRONG,
++        evidence = listOf(FilingEvidence(FilingEvidenceKind.FILENAME, "project", 100)),
++        createsProjectHome = !home.persisted,
++    )
++}
+diff --git a/app/src/test/java/com/pocketsteward/app/saved/OrganizationPreferenceCodecTest.kt b/app/src/test/java/com/pocketsteward/app/saved/OrganizationPreferenceCodecTest.kt
+index 9e2a6f2..a073450 100644
+--- a/app/src/test/java/com/pocketsteward/app/saved/OrganizationPreferenceCodecTest.kt
++++ b/app/src/test/java/com/pocketsteward/app/saved/OrganizationPreferenceCodecTest.kt
+@@ -25,4 +25,29 @@ class OrganizationPreferenceCodecTest {
+             OrganizationPreferenceCodec.encodeCorrections(input),
+         )).containsExactlyElementsIn(input).inOrder()
+     }
++
++    @Test
++    fun projectHomesRoundTripAliasesPackagesAndStrategy() {
++        val input = listOf(
++            ProjectHome(
++                id = "id-1",
++                name = "Lilith Companion App",
++                path = "/storage/emulated/0/Lilith Companion App",
++                aliases = listOf("Lilith", "LilithCompanion"),
++                packageIds = listOf("com.example.lilith"),
++                hierarchy = ProjectHierarchyStrategy.VERSIONED,
++            ),
++        )
++        assertThat(OrganizationPreferenceCodec.decodeProjectHomes(
++            OrganizationPreferenceCodec.encodeProjectHomes(input),
++        )).containsExactlyElementsIn(input).inOrder()
++    }
++
++    @Test
++    fun inboxRootsRoundTrip() {
++        val input = listOf(InboxRoot("/storage/emulated/0/Download", "Downloads"))
++        assertThat(OrganizationPreferenceCodec.decodeInboxRoots(
++            OrganizationPreferenceCodec.encodeInboxRoots(input),
++        )).containsExactlyElementsIn(input).inOrder()
++    }
+ }
+diff --git a/INBOX_PROJECT_FILING_LEDGER.md b/INBOX_PROJECT_FILING_LEDGER.md
+new file mode 100644
+index 0000000..4485ddd
+--- /dev/null
++++ b/INBOX_PROJECT_FILING_LEDGER.md
+@@ -0,0 +1,343 @@
++# Pocket Steward — Inbox / Project Filing Ledger
++
++Status: RATIFIED IMPLEMENTATION TARGET
++Established: 2026-09-25
++Baseline: 1.3.2-dev1 (`release/v1.3.2-review-snapshot`, `d4a6c60af420686d9766e398e5e743ca1e6c02fb`)
++
++## Product intent
++
++Downloads and similar landing folders are **inboxes**, not permanent filing cabinets.
++Pocket Steward must be able to inspect incoming files, infer what durable project/entity they belong to, discover or remember that project's existing home elsewhere in storage, infer a release/version/cohort when evidence supports it, and propose moving the related artifacts together into a useful hierarchy.
++
++The organizing question is **what does this file belong to?**, not merely **what file type is this?**
++
++Example target:
++
++```
++Internal storage/
++  Download/                              # inbox / recent landing zone
++    LilithCompanion-0.3.105.apk
++    LilithCompanion-0.3.105-SOURCE.zip
++    0.3.105-build-notes.md
++    lilith-back-turnaround.png
++
++  Lilith Companion App/                 # durable project home
++    0.3.104/
++    0.3.105/
++      LilithCompanion-0.3.105.apk
++      LilithCompanion-0.3.105-SOURCE.zip
++      0.3.105-build-notes.md
++      lilith-back-turnaround.png
++```
++
++A generic `APKs/`, `Archives/`, `Documents/` split is not an acceptable substitute when multiple heterogeneous files clearly belong to the same project/release.
++
++## Feature split
++
++### Smart cleanup
++Retain the current feature for **local tidying inside the scanned folder**.
++
++### Inbox filing
++Add a distinct workflow for **moving incoming files from one or more inbox roots into durable homes elsewhere in authorized storage**.
++
++Both workflows must ultimately produce ordinary typed `AgentPlan` operations and use the existing review / source-precondition / validation / execution / history / undo architecture.
++
++No new privileged mutation bypass is permitted.
++
++## Core data concepts
++
++The implementation should support explicit representations equivalent to:
++
++- `InboxRoot`: a landing folder such as Downloads.
++- `ProjectHome`: durable root for a project/entity, with aliases and optional known package IDs.
++- `ArtifactMetadata`: normalized metadata learned from the file itself.
++- `ProjectIdentity`: inferred project/entity membership.
++- `ReleaseIdentity`: inferred version/release/cohort.
++- `FilingEvidence`: concrete reasons for a match.
++- `FilingDecision`: proposed destination and confidence.
++- `FilingCohort`: related heterogeneous files that belong together.
++- `DestinationHierarchy`: safe semantic path segments resolved deterministically under an authorized root.
++
++## Evidence priority
++
++Prefer deterministic evidence in roughly this order:
++
++1. Explicit user mapping or remembered correction.
++2. Known Project Home and aliases.
++3. Artifact-native metadata.
++4. Strong filename/project/version evidence.
++5. Indexed document contents.
++6. Cohort evidence such as download/modified-time proximity and neighboring artifacts.
++7. On-device semantic/model suggestion.
++
++Time proximity alone is never sufficient for an automatic move. It may strengthen an already plausible relationship.
++
++## Artifact metadata
++
++### APK
++APK files should be treated as first-class project evidence. Where platform access allows, inspect:
++
++- app label
++- package/application ID
++- versionName
++- versionCode
++- signer/certificate identity when practical
++- filename, size, modified time
++
++An APK is not primarily classified as "APK" when metadata identifies the project and version it belongs to.
++
++### ZIP
++Inspect ZIP entry names without extracting the archive into user storage. Entry paths, README names, project directories, and version tokens can provide project/release evidence.
++
++### Documents
++Reuse indexed filename/title/content evidence.
++
++### Images and other supporting files
++Use filename/project terms and cohort evidence. Generic files with weak evidence should remain unresolved rather than being force-filed.
++
++## Confidence behavior
++
++Use operational confidence classes rather than decorative percentages:
++
++- **STRONG** — selected by default in review.
++- **PROBABLE** — proposed but demands attention / may default unselected.
++- **UNRESOLVED** — no move is planned; file remains in inbox.
++
++Every proposed file should retain human-readable evidence explaining why it was associated with a project/release/destination.
++
++## Project-home behavior
++
++Pocket Steward should prefer an existing durable project home over creating a near-duplicate folder.
++
++Discovery priority:
++
++1. remembered Project Homes
++2. favorite destinations
++3. previously indexed/scanned folders
++4. shallow top-level storage directory discovery
++5. deeper inspection only for promising candidates
++
++Do not recursively walk the whole device for every filing run.
++
++If no strong existing destination exists, Pocket Steward may propose creating a new project home, but that creation remains part of the reviewable plan.
++
++User corrections may be one-time or explicitly remembered. Do not silently turn every manual destination edit into a permanent rule.
++
++## Destination hierarchy
++
++The semantic/model layer must never emit arbitrary absolute paths.
++
++It may identify semantic segments such as:
++
++```
++project = "Lilith Companion App"
++release = "0.3.105"
++```
++
++The deterministic planner resolves those into safe destination segments beneath an authorized root.
++
++Each path segment is sanitized independently. Reject blank segments, `.` / `..`, separators, control characters, and unsafe traversal.
++
++Initial structure strategies:
++
++- flat project home
++- project / version
++- project / category
++
++Do not force one universal taxonomy onto every project.
++
++## Inbox defaults and persistence
++
++Downloads should work as the default inbox under Direct storage access without requiring setup ceremony.
++
++Settings should expose:
++
++- Inbox roots
++- Project Homes
++- remembered aliases/package IDs
++- hierarchy strategy per home when applicable
++
++The app should be useful before the user configures any of these manually; successful explicit decisions can populate them over time.
++
++## Review UI target
++
++The review surface should emphasize human concepts first and raw filesystem mechanics second.
++
++Target hierarchy:
++
++```
++Review changes
++Inbox filing
++7 selected · 9 proposed
++
++[List] [Now] [After]
++Safe only   Select all   Clear
++
++DESTINATIONS
++
++Lilith Companion App
++Internal storage › Lilith Companion App › 0.3.105
++Existing project · New version folder
++7 files · 34.2 MB
++
++  ✓ LilithCompanion-0.3.105.apk
++    APK metadata + project alias
++
++  ? rear_sprite_fix.png
++    Possible supporting file
++
++UNRESOLVED
++1 file stays in Downloads
++```
++
++UI requirements:
++
++- tighten title/context spacing
++- compact List / Now / After control
++- compact filter controls
++- use `Select all`, not ambiguous `All`
++- fix destination cards being clipped behind sticky actions
++- scrolling content must include footer-safe bottom padding
++- show friendly/breadcrumb paths by default; raw absolute path remains available on demand
++- destination cards expandable/collapsible
++- show selected count and total size by destination
++- allow destination editing and "leave here" decisions
++- expose evidence/reason per file
++- keep Run action sticky
++- reduce Export Plan visual dominance while preserving access
++- `Now` should show relevant current structure
++- `After` should show the proposed resulting tree
++
++## Folder discovery UI
++
++When destination is uncertain, offer ranked existing candidates and creation:
++
++```
++Possible project homes
++● Lilith Companion App — strong name/history match
++○ Animator — weak match
+++ Create new project home
++```
++
++Reuse the existing direct-storage folder browser for manual destination selection.
++
++## Collision and duplicate behavior
++
++Never overwrite silently.
++
++- same destination name + identical content: surface as duplicate; leave source by default or offer reversible cleanup separately
++- same name + different content: conflict requiring revised plan/user choice
++- timestamps alone never justify replacement
++
++Reuse existing fingerprint/dedupe facilities where possible.
++
++## SAF behavior
++
++Direct-storage mode gets storage-wide project-home discovery within authorized storage.
++
++SAF mode may perform the workflow only within the granted tree. UI must clearly state this limitation rather than offering unavailable cross-storage behavior.
++
++## Safety invariants
++
++All Inbox Filing proposals must preserve existing Pocket Steward invariants:
++
++- no permanent deletion
++- no silent overwrite
++- protected folders remain protected
++- source scope and destination authorization validated
++- review captures source preconditions
++- source changed after review invalidates execution
++- unsafe destination changes invalidate execution
++- every mutation journaled
++- undo restores original locations
++- model never directly performs filesystem mutation
++
++The organizer gets smarter. The executor does not get more authority.
++
++## Initial integrated implementation target
++
++The first substantial implementation should handle the user's real workflow end-to-end:
++
++- Downloads as default inbox
++- cross-root filing in Direct mode
++- existing project-home discovery
++- persistent project homes / aliases / package IDs
++- project identity inference
++- version/release inference
++- APK metadata evidence
++- ZIP entry evidence
++- filename evidence
++- indexed-document/content evidence where already available
++- temporal/cohort evidence only as a supporting signal
++- project/version hierarchy
++- unresolved files left in place
++- learned explicit mappings
++- destination-group review
++- Review UI cleanup
++- useful Now/After tree representations
++- existing review/precondition/history/undo safety retained
++- focused unit tests plus broader suite and clean APK build when environment permits
++
++## Explicit non-blocking later extensions
++
++Design for, but do not block the first implementation on:
++
++- richer image understanding
++- EXIF/event filing
++- music/video tag filing
++- document-topic templates
++- archive formats beyond ZIP
++- automatic stale-inbox suggestions
++- duplicate Project Home consolidation
++- background inbox watching
++- scheduled filing suggestions
++- storage-wide project knowledge graph
++- user-created hierarchy templates
++
++## Acceptance matrix
++
++At minimum cover:
++
++1. existing Lilith project root + new release artifacts
++2. missing project root
++3. APK with weak filename but strong package metadata
++4. notes with explicit project/version
++5. generic image beside strong release cohort
++6. unrelated simultaneous download remains unresolved
++7. two projects downloaded at once
++8. same project with two versions in inbox
++9. existing version folder
++10. filename collision
++11. identical duplicate
++12. protected destination
++13. source changed after review
++14. destination changed after review where relevant
++15. undo multi-file cross-root filing
++16. restart/resume where supported
++17. Direct cross-root filing
++18. SAF constrained filing
++19. large Downloads folder
++20. review UI with enough groups/files to require heavy scrolling
++
++## Implementation sequencing
++
++Implement as one integrated feature line, not a chain of tiny user-facing builds:
++
++1. data models / persistence
++2. artifact metadata inspectors
++3. project + release inference
++4. destination discovery
++5. hierarchical plan adapter
++6. existing validation/executor integration
++7. remembered mappings
++8. Review UI cleanup / destination grouping
++9. inbox + project-home settings/entry points
++10. Now/After hierarchy preview
++11. focused tests
++12. broad unit tests
++13. clean build
++14. canonical signing
++15. signer verification
++16. user hardware acceptance
++
++Do not stop for every isolated nonfatal defect. Produce the next APK at a coherent integrated boundary.
