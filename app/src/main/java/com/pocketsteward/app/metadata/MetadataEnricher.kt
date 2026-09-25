@@ -2,6 +2,7 @@ package com.pocketsteward.app.metadata
 
 import android.content.Context
 import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import androidx.exifinterface.media.ExifInterface
@@ -11,6 +12,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.pocketsteward.app.data.db.FileRecord
 import java.io.File
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
@@ -21,6 +23,9 @@ data class MetadataEnrichment(
     val pdfPageCount: Int? = null,
     val archiveEntryCount: Int? = null,
     val archiveSample: List<String> = emptyList(),
+    val apkLabel: String? = null,
+    val apkVersionCode: Long? = null,
+    val apkSignerSha256: String? = null,
     val exifCamera: String? = null,
     val exifOrientation: String? = null,
 )
@@ -58,6 +63,9 @@ class MetadataEnricher(
         var pdfPages: Int? = null
         var archiveCount: Int? = null
         var archiveSample = emptyList<String>()
+        var apkLabel: String? = null
+        var apkVersionCode: Long? = null
+        var apkSignerSha256: String? = null
         var camera: String? = null
         var orientation: String? = null
 
@@ -87,6 +95,9 @@ class MetadataEnricher(
             apkInfo(record)?.let { info ->
                 val packageName = info.packageName
                 val versionName = info.versionName
+                apkVersionCode = info.longVersionCode
+                apkLabel = apkLabel(info)
+                apkSignerSha256 = apkSignerSha256(info)
                 if (packageName.isNotBlank() &&
                     (record.apkPackageName != packageName || record.apkVersionName != versionName)
                 ) {
@@ -117,6 +128,9 @@ class MetadataEnricher(
             pdfPageCount = pdfPages,
             archiveEntryCount = archiveCount,
             archiveSample = archiveSample,
+            apkLabel = apkLabel,
+            apkVersionCode = apkVersionCode,
+            apkSignerSha256 = apkSignerSha256,
             exifCamera = camera,
             exifOrientation = orientation,
         )
@@ -212,15 +226,36 @@ class MetadataEnricher(
     }
 
     private fun packageInfoForPath(path: String): PackageInfo? = runCatching {
-        if (Build.VERSION.SDK_INT >= 33) {
+        val info = if (Build.VERSION.SDK_INT >= 33) {
             context.packageManager.getPackageArchiveInfo(
                 path,
-                android.content.pm.PackageManager.PackageInfoFlags.of(0),
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
             )
         } else {
             @Suppress("DEPRECATION")
-            context.packageManager.getPackageArchiveInfo(path, 0)
+            context.packageManager.getPackageArchiveInfo(path, PackageManager.GET_SIGNING_CERTIFICATES)
         }
+        info?.applicationInfo?.apply {
+            sourceDir = path
+            publicSourceDir = path
+        }
+        info
+    }.getOrNull()
+
+    private fun apkLabel(info: PackageInfo): String? = runCatching {
+        info.applicationInfo
+            ?.let(context.packageManager::getApplicationLabel)
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    private fun apkSignerSha256(info: PackageInfo): String? = runCatching {
+        val signers = info.signingInfo?.apkContentsSigners.orEmpty()
+        val first = signers.firstOrNull() ?: return@runCatching null
+        MessageDigest.getInstance("SHA-256")
+            .digest(first.toByteArray())
+            .joinToString(":") { byte -> "%02X".format(byte) }
     }.getOrNull()
 
     private fun pdfPageCount(record: FileRecord): Int? = runCatching {

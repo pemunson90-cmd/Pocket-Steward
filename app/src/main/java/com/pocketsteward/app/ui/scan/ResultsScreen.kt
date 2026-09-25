@@ -203,6 +203,17 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                     )
                 }
                 item {
+                    ActionCard(
+                        title = "File inbox by project",
+                        supporting = if (hasBroadAccess) {
+                            "Treat loose arrivals as an inbox: match project/version, find their durable homes elsewhere in storage, and review the proposed moves."
+                        } else {
+                            "Project filing across storage needs full file-manager access. Smart cleanup remains available inside this selected tree."
+                        },
+                        onClick = { viewModel.proposeInboxFiling(state) },
+                    )
+                }
+                item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

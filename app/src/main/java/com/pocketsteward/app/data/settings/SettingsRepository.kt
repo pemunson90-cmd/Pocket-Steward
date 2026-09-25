@@ -2,6 +2,7 @@ package com.pocketsteward.app.data.settings
 
 import kotlinx.coroutines.flow.first
 import android.content.Context
+import android.os.Environment
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -13,6 +14,8 @@ import com.pocketsteward.app.content.index.ContentSearchSort
 import androidx.datastore.preferences.preferencesDataStore
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.CorrectionRule
+import com.pocketsteward.app.saved.InboxRoot
+import com.pocketsteward.app.saved.ProjectHome
 import com.pocketsteward.app.saved.LastScanSessionCodec
 import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.FavoriteDestination
@@ -103,6 +106,8 @@ class SettingsRepository(private val context: Context) {
         val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
         val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
         val CORRECTION_RULES = stringPreferencesKey("correction_rules")
+        val INBOX_ROOTS = stringPreferencesKey("inbox_roots")
+        val PROJECT_HOMES = stringPreferencesKey("project_homes")
         val SCHEDULED_CLEANUP = stringPreferencesKey("scheduled_cleanup")
         val PENDING_CLEANUP_SUGGESTION = stringPreferencesKey("pending_cleanup_suggestion")
         val LAST_SCAN_SESSION = stringPreferencesKey("last_scan_session")
@@ -159,6 +164,21 @@ class SettingsRepository(private val context: Context) {
 
     val correctionRules: Flow<List<CorrectionRule>> = context.dataStore.data.map { prefs ->
         OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+    }
+
+    /**
+     * Landing zones where files are expected to arrive temporarily. Downloads
+     * is useful without setup ceremony, but once the user saves an explicit
+     * list that list becomes authoritative.
+     */
+    val inboxRoots: Flow<List<InboxRoot>> = context.dataStore.data.map { prefs ->
+        OrganizationPreferenceCodec.decodeInboxRoots(prefs[Keys.INBOX_ROOTS])
+            .ifEmpty { listOf(defaultDownloadsInbox()) }
+    }
+
+    /** Durable homes learned or explicitly configured for project-aware filing. */
+    val projectHomes: Flow<List<ProjectHome>> = context.dataStore.data.map { prefs ->
+        OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
     }
 
     val scheduledCleanupSettings: Flow<ScheduledCleanupSettings> = context.dataStore.data.map { prefs ->
@@ -243,6 +263,89 @@ class SettingsRepository(private val context: Context) {
             it[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(cleaned)
         }
     }
+
+    suspend fun setInboxRoots(values: List<InboxRoot>) {
+        val cleaned = values
+            .map { root ->
+                root.copy(
+                    name = root.name.trim().take(60),
+                    path = root.path.trim().trimEnd('/'),
+                )
+            }
+            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .take(20)
+        context.dataStore.edit { prefs ->
+            prefs[Keys.INBOX_ROOTS] = OrganizationPreferenceCodec.encodeInboxRoots(cleaned)
+        }
+    }
+
+    suspend fun setProjectHomes(values: List<ProjectHome>) {
+        val cleaned = values
+            .map(::cleanProjectHome)
+            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .take(50)
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(cleaned)
+        }
+    }
+
+    /**
+     * Remember a destination the user approved. Existing records are merged
+     * rather than replaced so APK package IDs and useful aliases accumulate.
+     */
+    suspend fun rememberProjectHome(value: ProjectHome) {
+        val cleaned = cleanProjectHome(value)
+        if (cleaned.name.isBlank() || cleaned.path.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
+            val existing = current.firstOrNull {
+                it.path.equals(cleaned.path, ignoreCase = true) ||
+                    it.name.equals(cleaned.name, ignoreCase = true)
+            }
+            val merged = if (existing == null) {
+                cleaned
+            } else {
+                cleanProjectHome(
+                    existing.copy(
+                        name = cleaned.name.ifBlank { existing.name },
+                        path = cleaned.path.ifBlank { existing.path },
+                        aliases = (cleaned.aliases + existing.aliases + existing.name + cleaned.name),
+                        packageIds = cleaned.packageIds + existing.packageIds,
+                        hierarchy = cleaned.hierarchy,
+                    ),
+                )
+            }
+            val updated = listOf(merged) + current.filterNot { it.id == existing?.id }
+            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(
+                updated.distinctBy { it.path.lowercase() }.take(50),
+            )
+        }
+    }
+
+    private fun cleanProjectHome(value: ProjectHome): ProjectHome = value.copy(
+        name = value.name.trim().take(80),
+        path = value.path.trim().trimEnd('/'),
+        aliases = value.aliases
+            .map { it.trim().take(80) }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+            .take(30),
+        packageIds = value.packageIds
+            .map { it.trim().take(180) }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase() }
+            .take(20),
+    )
+
+    private fun defaultDownloadsInbox(): InboxRoot = InboxRoot(
+        id = "default-downloads",
+        name = "Downloads",
+        path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            .absolutePath
+            .trimEnd('/'),
+    )
 
 
     val savedSearches: Flow<List<SavedSearch>> = context.dataStore.data.map { prefs ->

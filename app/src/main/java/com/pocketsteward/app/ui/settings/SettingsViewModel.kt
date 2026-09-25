@@ -14,6 +14,9 @@ import com.pocketsteward.app.diagnostics.RuntimeDiagnosticsSnapshot
 import com.pocketsteward.app.rules.ProjectKeyword
 import com.pocketsteward.app.saved.CorrectionRule
 import com.pocketsteward.app.saved.FavoriteDestination
+import com.pocketsteward.app.saved.InboxRoot
+import com.pocketsteward.app.saved.ProjectHierarchy
+import com.pocketsteward.app.saved.ProjectHome
 import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -123,6 +126,12 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val correctionRules: StateFlow<List<CorrectionRule>> = settingsRepository.correctionRules
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val inboxRoots: StateFlow<List<InboxRoot>> = settingsRepository.inboxRoots
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val projectHomes: StateFlow<List<ProjectHome>> = settingsRepository.projectHomes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val scheduledCleanupSettings: StateFlow<ScheduledCleanupSettings> =
@@ -320,6 +329,54 @@ class SettingsViewModel(
             }
             .toList()
         viewModelScope.launch { settingsRepository.setCorrectionRules(values) }
+    }
+
+    fun setInboxRootsFromText(text: String) {
+        val values = text.lineSequence()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val parts = line.split("=", limit = 2)
+                if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+                    InboxRoot(name = parts[0].trim(), path = parts[1].trim())
+                } else {
+                    null
+                }
+            }
+            .toList()
+        viewModelScope.launch { settingsRepository.setInboxRoots(values) }
+    }
+
+    /**
+     * Human-editable format:
+     * Name=/absolute/path | aliases=foo,bar | packages=com.example.app | hierarchy=versioned
+     * Only name/path are required.
+     */
+    fun setProjectHomesFromText(text: String) {
+        val values = text.lineSequence()
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val sections = line.split('|').map { it.trim() }
+                val head = sections.firstOrNull()?.split("=", limit = 2) ?: return@mapNotNull null
+                if (head.size != 2 || head[0].isBlank() || head[1].isBlank()) return@mapNotNull null
+                val options = sections.drop(1).mapNotNull { section ->
+                    val pair = section.split("=", limit = 2)
+                    if (pair.size == 2) pair[0].trim().lowercase() to pair[1].trim() else null
+                }.toMap()
+                val hierarchy = when (options["hierarchy"]?.lowercase()) {
+                    "flat" -> ProjectHierarchy.FLAT
+                    "category", "categorized" -> ProjectHierarchy.CATEGORY
+                    else -> ProjectHierarchy.VERSIONED
+                }
+                ProjectHome(
+                    name = head[0].trim(),
+                    path = head[1].trim(),
+                    aliases = options["aliases"].orEmpty().split(',').map { it.trim() }.filter { it.isNotBlank() },
+                    packageIds = options["packages"].orEmpty().split(',').map { it.trim() }.filter { it.isNotBlank() },
+                    hierarchy = hierarchy,
+                )
+            }
+            .toList()
+        viewModelScope.launch { settingsRepository.setProjectHomes(values) }
     }
 
     fun setProjectKeywordsFromText(text: String) {

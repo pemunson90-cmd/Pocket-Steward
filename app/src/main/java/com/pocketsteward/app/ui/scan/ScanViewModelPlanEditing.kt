@@ -264,6 +264,11 @@ internal fun ScanViewModel.editPlanOperation(
                 selectedIndices = current.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
+                pendingProjectHomes = if (current.filingHints.isEmpty()) {
+                    current.pendingProjectHomes
+                } else {
+                    emptyList()
+                },
             )
         } catch (t: Throwable) {
             _error.value = t.message ?: t.javaClass.simpleName
@@ -519,10 +524,36 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 .mapNotNull { it.root as? FileRef.Direct }
                 .map { it.absolutePath.trimEnd('/') }
             val extraRoots = transformed
-                .filterIsInstance<PlannedOperation.CreateDirectory>()
-                .mapNotNull { it.parent as? FileRef.Direct }
-                .filterNot { parent ->
-                    parent.absolutePath.trimEnd('/') in sourceRoots
+                .flatMap { operation ->
+                    when (operation) {
+                        is PlannedOperation.CreateDirectory ->
+                            listOfNotNull(operation.parent as? FileRef.Direct)
+                        is PlannedOperation.Move -> listOfNotNull(
+                            (operation.destination as? FileRef.Direct)
+                                ?.absolutePath
+                                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let(FileRef::Direct),
+                        )
+                        is PlannedOperation.Copy -> listOfNotNull(
+                            (operation.destination as? FileRef.Direct)
+                                ?.absolutePath
+                                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let(FileRef::Direct),
+                        )
+                        is PlannedOperation.WriteTextFile ->
+                            listOfNotNull(operation.parent as? FileRef.Direct)
+                        is PlannedOperation.Rename,
+                        is PlannedOperation.Trash,
+                        -> emptyList()
+                    }
+                }
+                .filterNot { candidate ->
+                    sourceRoots.any { sourceRoot ->
+                        val path = candidate.absolutePath.trimEnd('/')
+                        path == sourceRoot || path.startsWith("$sourceRoot/")
+                    }
                 }
                 .distinctBy { it.absolutePath.trimEnd('/') }
 
@@ -551,6 +582,11 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 selectedIndices = current.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
+                pendingProjectHomes = if (current.filingHints.isEmpty()) {
+                    current.pendingProjectHomes
+                } else {
+                    emptyList()
+                },
             )
             if (rememberForSimilarFiles) {
                 learnableFilenameTerm(affectedSourceNames)?.let { term ->
@@ -592,14 +628,54 @@ internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? {
 
 internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolean) {
     val current = _preview.value ?: return
-    _preview.value = current.copy(
-        selectedIndices = PlanSelection.setSelected(
-            operations = current.accepted,
-            current = current.selectedIndices,
-            index = index,
-            selected = selected,
-        ),
+    if (index !in current.accepted.indices) return
+    var next = PlanSelection.setSelected(
+        operations = current.accepted,
+        current = current.selectedIndices,
+        index = index,
+        selected = selected,
     )
+
+    if (selected) {
+        next = includeRequiredDirectoryCreates(current.accepted, next)
+    } else {
+        val deselected = current.accepted[index]
+        if (deselected is PlannedOperation.CreateDirectory) {
+            val directory = deselected.parent.child(deselected.name).rawValue().trimEnd('/')
+            next = next.filterTo(linkedSetOf()) { candidateIndex ->
+                val destination = when (val operation = current.accepted[candidateIndex]) {
+                    is PlannedOperation.Move -> operation.destination.rawValue()
+                    is PlannedOperation.Copy -> operation.destination.rawValue()
+                    else -> null
+                }
+                destination == null || !destination.trimEnd('/').startsWith("$directory/")
+            }
+        }
+    }
+
+    _preview.value = current.copy(selectedIndices = next)
+}
+
+private fun includeRequiredDirectoryCreates(
+    operations: List<PlannedOperation>,
+    selected: Set<Int>,
+): Set<Int> {
+    val selectedDestinations = selected.mapNotNull { index ->
+        when (val operation = operations.getOrNull(index)) {
+            is PlannedOperation.Move -> operation.destination.rawValue().trimEnd('/')
+            is PlannedOperation.Copy -> operation.destination.rawValue().trimEnd('/')
+            else -> null
+        }
+    }
+    if (selectedDestinations.isEmpty()) return selected
+    val expanded = selected.toMutableSet()
+    operations.forEachIndexed { index, operation ->
+        if (operation is PlannedOperation.CreateDirectory) {
+            val created = operation.parent.child(operation.name).rawValue().trimEnd('/')
+            if (selectedDestinations.any { it.startsWith("$created/") }) expanded += index
+        }
+    }
+    return expanded
 }
 
 internal fun ScanViewModel.selectAllPlanOperations() {

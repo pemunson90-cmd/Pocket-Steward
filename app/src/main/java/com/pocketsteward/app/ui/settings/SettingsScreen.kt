@@ -94,6 +94,8 @@ fun SettingsScreen(
     val storedKeywords by viewModel.projectKeywords.collectAsState()
     val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
     val correctionRules by viewModel.correctionRules.collectAsState()
+    val inboxRoots by viewModel.inboxRoots.collectAsState()
+    val projectHomes by viewModel.projectHomes.collectAsState()
     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
@@ -117,6 +119,8 @@ fun SettingsScreen(
     var keywordsText by remember { mutableStateOf<String?>(null) }
     var favoritesText by remember { mutableStateOf<String?>(null) }
     var correctionsText by remember { mutableStateOf<String?>(null) }
+    var inboxRootsText by remember { mutableStateOf<String?>(null) }
+    var projectHomesText by remember { mutableStateOf<String?>(null) }
     var scheduleRootsText by remember { mutableStateOf<String?>(null) }
     var scheduleIntervalText by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(storedKeywords) {
@@ -132,6 +136,23 @@ fun SettingsScreen(
     LaunchedEffect(correctionRules) {
         if (correctionsText == null) {
             correctionsText = correctionRules.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
+        }
+    }
+    LaunchedEffect(inboxRoots) {
+        if (inboxRootsText == null) {
+            inboxRootsText = inboxRoots.joinToString("\n") { "${it.name}=${it.path}" }
+        }
+    }
+    LaunchedEffect(projectHomes) {
+        if (projectHomesText == null) {
+            projectHomesText = projectHomes.joinToString("\n") { home ->
+                buildString {
+                    append("${home.name}=${home.path}")
+                    if (home.aliases.isNotEmpty()) append(" | aliases=${home.aliases.joinToString(",")}")
+                    if (home.packageIds.isNotEmpty()) append(" | packages=${home.packageIds.joinToString(",")}")
+                    append(" | hierarchy=${home.hierarchy.name.lowercase()}")
+                }
+            }
         }
     }
     LaunchedEffect(scheduledCleanup) {
@@ -307,6 +328,56 @@ fun SettingsScreen(
         }
 
         SectionTitle("Organization preferences")
+
+        Text(
+            text = "File inboxes",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "Landing folders that hold recent incoming files before project filing. Downloads is the default when this list has never been saved.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = inboxRootsText ?: "",
+            onValueChange = { inboxRootsText = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            placeholder = { Text("Downloads=/storage/emulated/0/Download") },
+        )
+        Button(
+            onClick = { viewModel.setInboxRootsFromText(inboxRootsText ?: "") },
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text("Save inbox roots")
+        }
+
+        Text(
+            text = "Project homes",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = "Durable project roots learned from approved filing or configured here. Format: Name=/path | aliases=a,b | packages=com.example.app | hierarchy=versioned.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = projectHomesText ?: "",
+            onValueChange = { projectHomesText = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            placeholder = { Text("Lilith Companion App=/storage/emulated/0/Lilith Companion App | aliases=LilithCompanion | hierarchy=versioned") },
+        )
+        Button(
+            onClick = { viewModel.setProjectHomesFromText(projectHomesText ?: "") },
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            Text("Save project homes")
+        }
+
         Text(
             text = "Favorite destinations",
             style = MaterialTheme.typography.titleMedium,

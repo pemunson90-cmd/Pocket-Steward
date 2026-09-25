@@ -44,6 +44,7 @@ import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.image.ImageInsight
+import com.pocketsteward.app.inbox.FilingUiHint
 import com.pocketsteward.app.metadata.MetadataEnrichment
 import com.pocketsteward.app.intent.BoundedIntent
 import com.pocketsteward.app.intent.DeterministicIntentParser
@@ -72,6 +73,7 @@ import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.LastScanRoot
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
+import com.pocketsteward.app.saved.ProjectHome
 import com.pocketsteward.app.saved.SavedSearch
 import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
 import com.pocketsteward.app.scheduled.ScheduledReviewPolicy
@@ -209,6 +211,10 @@ sealed interface ScanUiState {
          * of it rather than the scan index, which for such a folder is empty.
          */
         val unindexedFolder: FileRef? = null,
+        /** Optional inbox-filing evidence keyed by source raw ref. The executor never consumes this. */
+        val filingHints: Map<String, FilingUiHint> = emptyMap(),
+        /** Project homes inferred/discovered by an inbox plan; persisted only after the user approves it. */
+        val pendingProjectHomes: List<ProjectHome> = emptyList(),
         /**
          * Size/modified-time of every source as it was when this preview was
          * built, keyed by raw ref. Approval refuses any source that no longer
@@ -1129,6 +1135,9 @@ class ScanViewModel(
         scopes: List<ScanScope>,
         scopeNotes: List<String> = emptyList(),
         authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
+        filingHints: Map<String, FilingUiHint> = emptyMap(),
+        preferredSelectedSourceRefs: Set<String>? = null,
+        pendingProjectHomes: List<ProjectHome> = emptyList(),
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
             ?: error("No storage access mode is active.")
@@ -1149,10 +1158,43 @@ class ScanViewModel(
             acceptedScopeLabels = validated.accepted.map { operation ->
                 scopeForOperation(operation, scopes)?.label ?: scopes.first().label
             },
+            selectedIndices = preferredSelectedSourceRefs?.let { refs ->
+                filingInitialSelection(validated.accepted, refs)
+            } ?: PlanSelection.safeSelected(validated.accepted),
             scopeNotes = scopeNotes,
             authorizedDestinationRoots = authorizedDestinationRoots,
+            filingHints = filingHints,
+            pendingProjectHomes = pendingProjectHomes,
             reviewedSources = reviewedSources,
         )
+    }
+
+    private fun filingInitialSelection(
+        operations: List<PlannedOperation>,
+        preferredSourceRefs: Set<String>,
+    ): Set<Int> {
+        val selectedMoveDestinations = operations.mapNotNull { operation ->
+            when (operation) {
+                is PlannedOperation.Move -> operation.takeIf { it.source.rawValue() in preferredSourceRefs }?.destination
+                is PlannedOperation.Copy -> operation.takeIf { it.source.rawValue() in preferredSourceRefs }?.destination
+                else -> null
+            }
+        }.map { it.rawValue() }
+
+        return operations.indices.filterTo(linkedSetOf()) { index ->
+            when (val operation = operations[index]) {
+                is PlannedOperation.Move -> operation.source.rawValue() in preferredSourceRefs
+                is PlannedOperation.Copy -> operation.source.rawValue() in preferredSourceRefs
+                is PlannedOperation.CreateDirectory -> {
+                    val created = operation.parent.child(operation.name).rawValue().trimEnd('/')
+                    selectedMoveDestinations.any { destination ->
+                        val normalized = destination.trimEnd('/')
+                        normalized.startsWith("$created/")
+                    }
+                }
+                else -> false
+            }
+        }
     }
 
     internal suspend fun buildAuthorizedPlanIndex(
@@ -1279,6 +1321,22 @@ class ScanViewModel(
                     )
                 }
                 queuedTaskRunId = taskRunId
+
+                if (preview.pendingProjectHomes.isNotEmpty()) {
+                    val approvedSources = selectedOperations.mapNotNull { operation ->
+                        when (operation) {
+                            is PlannedOperation.Move -> operation.source.rawValue()
+                            is PlannedOperation.Copy -> operation.source.rawValue()
+                            else -> null
+                        }
+                    }.toSet()
+                    val approvedHomePaths = approvedSources.mapNotNull { source ->
+                        preview.filingHints[source]?.projectHomePath
+                    }.toSet()
+                    preview.pendingProjectHomes
+                        .filter { it.path in approvedHomePaths }
+                        .forEach { settingsRepository.rememberProjectHome(it) }
+                }
 
                 // The service receives only the durable task id. It cannot
                 // alter the approved plan or bypass the validator/preview.

@@ -21,6 +21,8 @@ import com.pocketsteward.app.ui.components.FileKind
 import com.pocketsteward.app.ui.components.FileVisual
 import com.pocketsteward.app.plan.PlanTree
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +42,8 @@ import com.pocketsteward.app.storage.child
 import com.pocketsteward.app.storage.knownParentOrNull
 import com.pocketsteward.app.storage.rawValue
 import com.pocketsteward.app.plan.PlannedOperation
+import com.pocketsteward.app.inbox.FilingConfidence
+import com.pocketsteward.app.inbox.FilingUiHint
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -85,20 +89,28 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
-            ScreenHeadline(
-                text = preview.goal,
-                supporting = buildString {
-                    append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
-                    if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
-                },
-            )
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+                Text(
+                    text = preview.goal,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    text = buildString {
+                        append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
+                        if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
 
             val redCount = preview.accepted.count {
                 it.safetyClass() == MutationSafetyClass.RED
             }
             if (redCount > 0) {
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.hairline),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -106,7 +118,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 ) {
                     Text(
                         "$redCount quarantine/trash action(s) are intentionally unchecked by default. " +
-                            "Select them deliberately, or use All if you have reviewed the whole set.",
+                            "Select them deliberately, or use Select all if you have reviewed the whole set.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(Spacing.base),
                     )
@@ -116,7 +128,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             // Now/After draw the selected actions as folder trees: the
             // shape of the result, which is what is actually being approved.
             // Display only; the executor still runs the selected list.
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().height(44.dp).padding(bottom = Spacing.hairline)) {
                 PlanView.entries.forEachIndexed { i, option ->
                     SegmentedButton(
                         selected = view == option,
@@ -134,9 +146,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             ) {
                 OutlinedButton(
                     onClick = viewModel::selectSafePlanOperations,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(42.dp),
                 ) {
-                    Text("Safe only")
+                    Text("Safe only", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = {
@@ -146,15 +158,15 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             viewModel.selectAllPlanOperations()
                         }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(42.dp),
                 ) {
-                    Text("All")
+                    Text("Select all", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = viewModel::clearPlanSelection,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(42.dp),
                 ) {
-                    Text("Clear")
+                    Text("Clear", maxLines = 1)
                 }
             }
 
@@ -176,10 +188,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             } else LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+                contentPadding = PaddingValues(bottom = Spacing.section),
             ) {
-                val destinationGroups = preview.accepted
-                    .mapNotNull(::destinationEditGroup)
-                    .distinctBy { it.directory }
+                val destinationGroups = buildDestinationEditGroups(preview.accepted, preview.filingHints)
                 val selectedTreeGroups = preview.accepted
                     .mapNotNull(::safDestinationEditGroup)
                     .distinctBy { it.directory.rawValue() }
@@ -221,7 +232,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(Spacing.base)) {
-                                Text("Not included", style = MaterialTheme.typography.titleSmall)
+                                Text(if (preview.filingHints.isNotEmpty()) "Unresolved / not included" else "Not included", style = MaterialTheme.typography.titleSmall)
                                 preview.scopeNotes.forEach { note ->
                                     Text(
                                         text = note,
@@ -243,10 +254,11 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
                     val selected = index in preview.selectedIndices
                     val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
-                    val groupLabel = destinationLabel(operation) ?: fallbackLabel
+                    val groupLabel = destinationSectionLabel(operation, preview.filingHints) ?: fallbackLabel
                     val previousLabel = preview.accepted.getOrNull(index - 1)
-                        ?.let(::destinationLabel)
+                        ?.let { destinationSectionLabel(it, preview.filingHints) }
                         ?: preview.acceptedScopeLabels.getOrNull(index - 1)
+                    val filingHint = filingHintFor(operation, preview.filingHints)
                     Column(modifier = Modifier.animateItem()) {
                         if (index == 0 || previousLabel != groupLabel) {
                             SectionHeader(groupLabel)
@@ -278,6 +290,22 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 OperationVisual(operation)
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
+                                    filingHint?.let { hint ->
+                                        Text(
+                                            text = when (hint.confidence) {
+                                                FilingConfidence.STRONG -> "Strong project match"
+                                                FilingConfidence.PROBABLE -> "Probable project match · review this one"
+                                                FilingConfidence.UNRESOLVED -> "Unresolved"
+                                            },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = if (hint.confidence == FilingConfidence.PROBABLE) {
+                                                MaterialTheme.colorScheme.tertiary
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            },
+                                            modifier = Modifier.padding(top = Spacing.hairline),
+                                        )
+                                    }
                                     Text(
                                         text = operation.reason,
                                         style = MaterialTheme.typography.bodySmall,
@@ -350,7 +378,6 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 ) {
                     Text("Export plan")
                 }
-                OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
         }
     }
@@ -495,6 +522,11 @@ private data class DestinationEditGroup(
     val directory: String,
     val root: String,
     val groupName: String,
+    val projectName: String? = null,
+    val fileCount: Int = 0,
+    val totalBytes: Long = 0,
+    val strongCount: Int = 0,
+    val probableCount: Int = 0,
 )
 
 @Composable
@@ -505,54 +537,116 @@ private fun DestinationEditCard(
     var root by remember(group.directory) { mutableStateOf(group.root) }
     var groupName by remember(group.directory) { mutableStateOf(group.groupName) }
     var rememberRule by remember(group.directory) { mutableStateOf(false) }
+    var editing by remember(group.directory) { mutableStateOf(false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
             Text(
-                text = group.directory,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 2,
+                text = group.projectName ?: group.groupName,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            OutlinedTextField(
-                value = groupName,
-                onValueChange = { groupName = it },
-                label = { Text("Group folder name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            Text(
+                text = friendlyStoragePath(group.directory),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = Spacing.hairline),
             )
-            OutlinedTextField(
-                value = root,
-                onValueChange = { root = it },
-                label = { Text("Destination root") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-            ) {
-                Checkbox(
-                    checked = rememberRule,
-                    onCheckedChange = { rememberRule = it },
+            if (group.fileCount > 0) {
+                Text(
+                    text = buildString {
+                        append("${group.fileCount} file")
+                        if (group.fileCount != 1) append("s")
+                        if (group.totalBytes > 0) append(" · ${formatBytes(group.totalBytes)}")
+                        if (group.strongCount > 0) append(" · ${group.strongCount} strong")
+                        if (group.probableCount > 0) append(" · ${group.probableCount} probable")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.hairline),
                 )
-                Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
-                    Text("Remember this correction")
-                    Text(
-                        "When there is a clear shared filename term, reuse this group for similar files.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
-            Button(
-                onClick = { onApply(root, groupName, rememberRule) },
-                enabled = root.isNotBlank() && groupName.isNotBlank(),
-                modifier = Modifier.padding(top = Spacing.tight),
+            TextButton(
+                onClick = { editing = !editing },
+                modifier = Modifier.padding(top = Spacing.hairline),
             ) {
-                Text("Apply destination")
+                Text(if (editing) "Hide destination edit" else "Edit destination")
+            }
+            if (editing) {
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Group folder name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
+                )
+                OutlinedTextField(
+                    value = root,
+                    onValueChange = { root = it },
+                    label = { Text("Destination root") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                ) {
+                    Checkbox(
+                        checked = rememberRule,
+                        onCheckedChange = { rememberRule = it },
+                    )
+                    Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
+                        Text("Remember this correction")
+                        Text(
+                            "Reuse this destination when a clear shared filename term appears later.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        onApply(root, groupName, rememberRule)
+                        editing = false
+                    },
+                    enabled = root.isNotBlank() && groupName.isNotBlank(),
+                    modifier = Modifier.padding(top = Spacing.tight),
+                ) {
+                    Text("Apply destination")
+                }
             }
         }
     }
+}
+
+private fun buildDestinationEditGroups(
+    operations: List<PlannedOperation>,
+    hints: Map<String, FilingUiHint>,
+): List<DestinationEditGroup> {
+    val rows = operations.mapNotNull { operation ->
+        val base = destinationEditGroup(operation) ?: return@mapNotNull null
+        val hint = filingHintFor(operation, hints)
+        val isFileAction = operation is PlannedOperation.Move || operation is PlannedOperation.Copy
+        Triple(base, hint, isFileAction)
+    }
+    val grouped = rows.groupBy { it.first.directory }.values.map { entries ->
+        val base = entries.first().first
+        val fileEntries = entries.filter { it.third }
+        val fileHints = fileEntries.mapNotNull { it.second }
+        base.copy(
+            projectName = fileHints.firstOrNull()?.projectName,
+            fileCount = fileEntries.size,
+            totalBytes = fileHints.sumOf { it.sizeBytes },
+            strongCount = fileHints.count { it.confidence == FilingConfidence.STRONG },
+            probableCount = fileHints.count { it.confidence == FilingConfidence.PROBABLE },
+        )
+    }
+    val displayGroups = grouped.filter { it.fileCount > 0 }.ifEmpty { grouped }
+    return displayGroups.sortedWith(
+        compareBy<DestinationEditGroup> { it.projectName ?: it.groupName }.thenBy { it.directory },
+    )
 }
 
 private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGroup? {
@@ -671,6 +765,49 @@ private fun FileRef.Child.selectedTreeRelativePath(): String {
 private fun destinationLabel(operation: PlannedOperation): String? =
     destinationEditGroup(operation)?.directory
         ?: safDestinationEditGroup(operation)?.displayPath
+
+private fun filingHintFor(
+    operation: PlannedOperation,
+    hints: Map<String, FilingUiHint>,
+): FilingUiHint? {
+    val source = when (operation) {
+        is PlannedOperation.Move -> operation.source.rawValue()
+        is PlannedOperation.Copy -> operation.source.rawValue()
+        else -> null
+    }
+    return source?.let(hints::get)
+}
+
+private fun destinationSectionLabel(
+    operation: PlannedOperation,
+    hints: Map<String, FilingUiHint>,
+): String? {
+    val hint = filingHintFor(operation, hints)
+    if (hint != null) {
+        return buildString {
+            append(hint.projectName)
+            hint.release?.let { append(" · $it") }
+        }
+    }
+    return destinationLabel(operation)?.let(::friendlyStoragePath)
+}
+
+private fun friendlyStoragePath(path: String): String {
+    val normalized = path.trim().trimEnd('/')
+    val storagePrefix = "/storage/emulated/0"
+    if (normalized == storagePrefix) return "Internal storage"
+    if (normalized.startsWith("$storagePrefix/")) {
+        val relative = normalized.removePrefix("$storagePrefix/")
+        return buildString {
+            append("Internal storage")
+            if (relative.isNotBlank()) {
+                append(" › ")
+                append(relative.split('/').joinToString(" › "))
+            }
+        }
+    }
+    return normalized
+}
 
 
 private enum class PlanView(val label: String) { LIST("List"), NOW("Now"), AFTER("After") }

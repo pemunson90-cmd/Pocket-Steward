@@ -25,4 +25,32 @@ class OrganizationPreferenceCodecTest {
             OrganizationPreferenceCodec.encodeCorrections(input),
         )).containsExactlyElementsIn(input).inOrder()
     }
+
+    @Test
+    fun inboxRootsRoundTrip() {
+        val input = listOf(
+            InboxRoot("1", "Downloads", "/storage/emulated/0/Download"),
+            InboxRoot("2", "Incoming", "/storage/emulated/0/Incoming"),
+        )
+        assertThat(OrganizationPreferenceCodec.decodeInboxRoots(
+            OrganizationPreferenceCodec.encodeInboxRoots(input),
+        )).containsExactlyElementsIn(input).inOrder()
+    }
+
+    @Test
+    fun projectHomesRoundTripAliasesPackagesAndHierarchy() {
+        val input = listOf(
+            ProjectHome(
+                id = "lilith",
+                name = "Lilith Companion App",
+                path = "/storage/emulated/0/Lilith Companion App",
+                aliases = listOf("LilithCompanion", "Lilith"),
+                packageIds = listOf("com.example.lilith"),
+                hierarchy = ProjectHierarchy.VERSIONED,
+            ),
+        )
+        assertThat(OrganizationPreferenceCodec.decodeProjectHomes(
+            OrganizationPreferenceCodec.encodeProjectHomes(input),
+        )).containsExactlyElementsIn(input).inOrder()
+    }
 }
