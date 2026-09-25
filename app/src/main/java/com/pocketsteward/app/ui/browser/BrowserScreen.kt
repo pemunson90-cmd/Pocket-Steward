@@ -769,14 +769,21 @@ private fun Centered(text: String) {
 // ---- Bottom bars ------------------------------------------------------------
 
 @Composable
-private fun ActionBar(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+private fun ActionBar(
+    scrollable: Boolean = false,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+        val base = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = if (scrollable) base.horizontalScroll(rememberScrollState()) else base,
+            horizontalArrangement = if (scrollable) {
+                Arrangement.spacedBy(4.dp)
+            } else {
+                Arrangement.spacedBy(8.dp)
+            },
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
@@ -805,7 +812,7 @@ private fun SelectionActions(
 ) {
     val single = s.selection.size == 1
     val anyFolder = s.selectedItems.any { it.isDirectory }
-    ActionBar {
+    ActionBar(scrollable = true) {
         LabeledAction("Share", Icons.Default.Share, onShare, enabled = !anyFolder)
         LabeledAction("Move", null, onCut)
         LabeledAction("Copy", null, onCopy)
