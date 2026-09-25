@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug-only SAF fixture hosted by the target app UID. DocumentsProvider
+             still requires MANAGE_DOCUMENTS, while same-UID access lets the real
+             SafStorageGateway exercise it without faking a system-picker grant. -->
+        <provider
+            android:name="com.pocketsteward.app.storage.TestSafDocumentsProvider"
+            android:authorities="com.pocketsteward.app.test.saf"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+    </application>
+</manifest>
