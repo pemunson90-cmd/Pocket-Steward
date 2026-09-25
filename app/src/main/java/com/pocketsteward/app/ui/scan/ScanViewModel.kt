@@ -764,7 +764,7 @@ class ScanViewModel(
                         .map { it.path.trim().trimEnd('/') }
                         .filter { it.isNotBlank() && File(it).isDirectory }
                         .distinctBy { it.lowercase() }
-                        .map(::ScanTarget.CustomFolder)
+                        .map { path -> ScanTarget.CustomFolder(path) }
                     startScan(
                         targets = targets.ifEmpty { listOf(ScanTarget.Downloads) },
                         thenRun = PostScanAction.INBOX_FILING,

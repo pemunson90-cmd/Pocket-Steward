@@ -16,7 +16,11 @@ class LiveTreeFileIndex(
 ) : FileIndex {
     private val rootKey = root.rawValue().trimEnd('/')
     private val byKey = entries.associateBy { it.ref.rawValue().trimEnd('/') }
-    private val byParent = entries.groupBy { it.parentRef.rawValue().trimEnd('/') }
+    private val byParent = entries
+        .mapNotNull { entry ->
+            entry.parentRef?.rawValue()?.trimEnd('/')?.let { parent -> parent to entry }
+        }
+        .groupBy(keySelector = { it.first }, valueTransform = { it.second })
 
     override fun exists(ref: FileRef): Boolean {
         val key = ref.rawValue().trimEnd('/')

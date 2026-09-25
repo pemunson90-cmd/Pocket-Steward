@@ -1,6 +1,7 @@
 package com.pocketsteward.app.ui.scan
 
 import android.os.Environment
+import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.content.ContentExtractor
 import com.pocketsteward.app.content.index.ContentSearchDatabase
 import com.pocketsteward.app.data.db.FileRecord
