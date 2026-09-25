@@ -124,6 +124,39 @@ class TestSafDocumentsProvider : DocumentsProvider() {
         return child.path.startsWith(parent.path.trimEnd(File.separatorChar) + File.separator)
     }
 
+    override fun findDocumentPath(
+        parentDocumentId: String?,
+        childDocumentId: String,
+    ): DocumentsContract.Path {
+        val canonicalRoot = root.canonicalFile
+        val child = fileForId(childDocumentId).canonicalFile
+        if (child != canonicalRoot &&
+            !child.path.startsWith(canonicalRoot.path.trimEnd(File.separatorChar) + File.separator)
+        ) {
+            throw FileNotFoundException(childDocumentId)
+        }
+
+        val pathIds = mutableListOf(ROOT_ID)
+        if (child != canonicalRoot) {
+            var current = canonicalRoot
+            child.relativeTo(canonicalRoot)
+                .invariantSeparatorsPath
+                .split('/')
+                .filter(String::isNotBlank)
+                .forEach { segment ->
+                    current = File(current, segment)
+                    pathIds += idForFile(current)
+                }
+        }
+
+        parentDocumentId?.let { parentId ->
+            if (parentId !in pathIds) {
+                throw FileNotFoundException("Parent is not an ancestor: $parentId")
+            }
+        }
+        return DocumentsContract.Path(ROOT_ID, pathIds)
+    }
+
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
         if (method == METHOD_RESET) {
             root.deleteRecursively()
