@@ -21,6 +21,8 @@ data class MetadataEnrichment(
     val pdfPageCount: Int? = null,
     val archiveEntryCount: Int? = null,
     val archiveSample: List<String> = emptyList(),
+    val apkLabel: String? = null,
+    val apkVersionCode: Long? = null,
     val exifCamera: String? = null,
     val exifOrientation: String? = null,
 )
@@ -58,6 +60,8 @@ class MetadataEnricher(
         var pdfPages: Int? = null
         var archiveCount: Int? = null
         var archiveSample = emptyList<String>()
+        var apkLabel: String? = null
+        var apkVersionCode: Long? = null
         var camera: String? = null
         var orientation: String? = null
 
@@ -87,6 +91,11 @@ class MetadataEnricher(
             apkInfo(record)?.let { info ->
                 val packageName = info.packageName
                 val versionName = info.versionName
+                apkLabel = archiveLabel(info, record)
+                apkVersionCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
+                    @Suppress("DEPRECATION")
+                    info.versionCode.toLong()
+                }
                 if (packageName.isNotBlank() &&
                     (record.apkPackageName != packageName || record.apkVersionName != versionName)
                 ) {
@@ -117,6 +126,8 @@ class MetadataEnricher(
             pdfPageCount = pdfPages,
             archiveEntryCount = archiveCount,
             archiveSample = archiveSample,
+            apkLabel = apkLabel,
+            apkVersionCode = apkVersionCode,
             exifCamera = camera,
             exifOrientation = orientation,
         )
@@ -223,6 +234,16 @@ class MetadataEnricher(
         }
     }.getOrNull()
 
+    private fun archiveLabel(info: PackageInfo, record: FileRecord): String? = runCatching {
+        val applicationInfo = info.applicationInfo ?: return@runCatching null
+        val path = if (record.isSaf()) null else record.stableRef
+        if (path != null) {
+            applicationInfo.sourceDir = path
+            applicationInfo.publicSourceDir = path
+        }
+        context.packageManager.getApplicationLabel(applicationInfo).toString().trim().takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     private fun pdfPageCount(record: FileRecord): Int? = runCatching {
         if (record.isSaf()) {
             context.contentResolver.openFileDescriptor(record.uri(), "r")?.use { descriptor ->
@@ -275,7 +296,7 @@ class MetadataEnricher(
     private fun FileRecord.uri(): Uri = Uri.parse(stableRef)
 
     private companion object {
-        const val MAX_ARCHIVE_SAMPLE = 12
+        const val MAX_ARCHIVE_SAMPLE = 40
         const val MAX_APK_METADATA_BYTES = 256L * 1024L * 1024L
 
         val IMAGE_EXTENSIONS = setOf(

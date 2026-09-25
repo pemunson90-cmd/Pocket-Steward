@@ -42,8 +42,10 @@ import com.pocketsteward.app.executor.CompositeFileIndex
 import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.InMemoryFileIndex
 import com.pocketsteward.app.executor.SingleFolderIndex
+import com.pocketsteward.app.executor.LiveTreeFileIndex
 import com.pocketsteward.app.executor.UndoSummary
 import com.pocketsteward.app.image.ImageInsight
+import com.pocketsteward.app.filing.FilingReviewPresentation
 import com.pocketsteward.app.metadata.MetadataEnrichment
 import com.pocketsteward.app.intent.BoundedIntent
 import com.pocketsteward.app.intent.DeterministicIntentParser
@@ -73,6 +75,7 @@ import com.pocketsteward.app.saved.LastScanRoot
 import com.pocketsteward.app.rules.isUncategorized
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.SavedSearch
+import com.pocketsteward.app.saved.ProjectHierarchyStrategy
 import com.pocketsteward.app.scheduled.PendingCleanupSuggestion
 import com.pocketsteward.app.scheduled.ScheduledReviewPolicy
 import com.pocketsteward.app.scan.FileCategory
@@ -105,6 +108,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -216,6 +220,8 @@ sealed interface ScanUiState {
          * with the changed file.
          */
         val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
+        /** Optional richer explanation for Inbox Filing plans. */
+        val filingPresentation: FilingReviewPresentation? = null,
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
@@ -425,6 +431,7 @@ enum class ScanRoute(val route: String) {
  * progress UI, and the action fires on arrival.
  */
 enum class PostScanAction {
+    INBOX_FILING,
     SMART_CLEANUP,
     FIND_DUPLICATES,
     FIND_LARGEST,
@@ -744,6 +751,34 @@ class ScanViewModel(
         startScan(target, action)
     }
 
+    /** Home entry for Inbox filing. Direct mode scans all configured inboxes;
+     * SAF mode is necessarily bounded to the one granted tree. */
+    fun startConfiguredInboxFiling() {
+        if (autoStarted) return
+        autoStarted = true
+        viewModelScope.launch {
+            val access = settingsRepository.storageAccessState.first()
+            when (access.mode) {
+                StorageAccessMode.DIRECT -> {
+                    val targets = settingsRepository.inboxRoots.first()
+                        .map { it.path.trim().trimEnd('/') }
+                        .filter { it.isNotBlank() && File(it).isDirectory }
+                        .distinctBy { it.lowercase() }
+                        .map(::ScanTarget.CustomFolder)
+                    startScan(
+                        targets = targets.ifEmpty { listOf(ScanTarget.Downloads) },
+                        thenRun = PostScanAction.INBOX_FILING,
+                    )
+                }
+                StorageAccessMode.SAF -> startScan(
+                    target = ScanTarget.GrantedFolder("Granted inbox"),
+                    thenRun = PostScanAction.INBOX_FILING,
+                )
+                null -> _uiState.value = ScanUiState.Error("No storage access granted yet.")
+            }
+        }
+    }
+
     /** Home prompt entry: scan first, then interpret the request against that exact snapshot. */
     fun startScanThenRequest(target: ScanTarget, request: String) {
         if (autoStarted) return
@@ -956,13 +991,13 @@ class ScanViewModel(
                 } else {
                     when (thenRun) {
                         null -> Unit
+                        PostScanAction.INBOX_FILING -> proposeInboxFiling(summary)
                         PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
                         PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
                         PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
                         PostScanAction.FIND_OLD -> findOldFiles(summary)
                         PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
-                    }
-                }
+                    }                }
 
                 thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
                     handleNaturalLanguage(summary, request)
@@ -1129,6 +1164,8 @@ class ScanViewModel(
         scopes: List<ScanScope>,
         scopeNotes: List<String> = emptyList(),
         authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
+        defaultSelectedSourceRefs: Set<String>? = null,
+        filingPresentation: FilingReviewPresentation? = null,
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
             ?: error("No storage access mode is active.")
@@ -1141,6 +1178,9 @@ class ScanViewModel(
         val reviewedSources = withContext(Dispatchers.IO) {
             ReviewedSources.capture(validated.accepted, container.gatewayFor(mode))
         }
+        val selectedIndices = defaultSelectedSourceRefs?.let { selectedRefs ->
+            defaultSelectionForSources(validated.accepted, selectedRefs)
+        } ?: PlanSelection.safeSelected(validated.accepted)
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
@@ -1149,9 +1189,11 @@ class ScanViewModel(
             acceptedScopeLabels = validated.accepted.map { operation ->
                 scopeForOperation(operation, scopes)?.label ?: scopes.first().label
             },
+            selectedIndices = selectedIndices,
             scopeNotes = scopeNotes,
             authorizedDestinationRoots = authorizedDestinationRoots,
             reviewedSources = reviewedSources,
+            filingPresentation = filingPresentation,
         )
     }
 
@@ -1168,14 +1210,72 @@ class ScanViewModel(
                 "Cross-root destination authorization currently requires direct storage access."
             }
             val gateway = container.gatewayFor(mode)
+            @Suppress("DEPRECATION")
+            val sharedStorageRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
             destinationRoots
                 .distinctBy { it.absolutePath.trimEnd('/') }
                 .forEach { root ->
-                    val children = withContext(Dispatchers.IO) { gateway.listChildren(root) }
-                    delegates += SingleFolderIndex(root, children)
+                    val normalized = root.absolutePath.trimEnd('/')
+                    val entries = withContext(Dispatchers.IO) {
+                        if (normalized.equals(sharedStorageRoot, ignoreCase = true)) {
+                            // A new project home may be created at shared-storage root.
+                            // Only its immediate names matter; walking every top-level
+                            // tree would turn a review into a device-wide scan.
+                            gateway.listChildren(root)
+                        } else {
+                            // Existing project homes need release/file children so
+                            // collision checks see what is already there.
+                            liveDestinationEntries(gateway, root, maxDepth = 2, maxEntries = 5_000)
+                        }
+                    }
+                    delegates += LiveTreeFileIndex(root, entries)
                 }
         }
         return if (delegates.size == 1) delegates.single() else CompositeFileIndex(delegates)
+    }
+
+    private suspend fun liveDestinationEntries(
+        gateway: StorageGateway,
+        root: FileRef,
+        maxDepth: Int,
+        maxEntries: Int,
+    ): List<com.pocketsteward.app.storage.FileEntry> {
+        val out = mutableListOf<com.pocketsteward.app.storage.FileEntry>()
+        suspend fun walk(directory: FileRef, depth: Int) {
+            if (depth > maxDepth || out.size >= maxEntries) return
+            val children = runCatching { gateway.listChildren(directory) }.getOrDefault(emptyList())
+            for (child in children) {
+                if (out.size >= maxEntries) return
+                out += child
+                if (child.isDirectory && depth < maxDepth) walk(child.ref, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return out
+    }
+
+    internal fun defaultSelectionForSources(
+        operations: List<PlannedOperation>,
+        sourceRefs: Set<String>,
+    ): Set<Int> {
+        val selectedMoveDestinations = operations.mapIndexedNotNull { index, operation ->
+            when (operation) {
+                is PlannedOperation.Move -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
+                is PlannedOperation.Copy -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
+                else -> null
+            }
+        }
+        val selected = selectedMoveDestinations.mapTo(linkedSetOf()) { it.first }
+        val destinations = selectedMoveDestinations.map { it.second }
+        operations.forEachIndexed { index, operation ->
+            if (operation is PlannedOperation.CreateDirectory) {
+                val dir = operation.parent.child(operation.name).rawValue().trimEnd('/')
+                if (destinations.any { destination -> destination == dir || destination.startsWith("$dir/") }) {
+                    selected += index
+                }
+            }
+        }
+        return selected
     }
 
     internal suspend fun showPlanPreview(
@@ -1253,6 +1353,7 @@ class ScanViewModel(
                     return@launch
                 }
                 val executor = container.planExecutor(mode)
+
                 val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
@@ -1284,6 +1385,12 @@ class ScanViewModel(
                 // alter the approved plan or bypass the validator/preview.
                 container.startForegroundTask(taskRunId)
 
+                // Learn project homes only after the approved task has been
+                // durably queued and foreground execution successfully
+                // started. A failed enqueue/start must not teach a mapping
+                // from a filing that never actually began.
+                rememberApprovedFilingHomes(preview, selectedOperations)
+
                 _uiState.value = ScanUiState.ExecutionQueued(
                     taskRunId = taskRunId,
                     operationCount = selectedOperations.size,
@@ -1305,6 +1412,53 @@ class ScanViewModel(
                 }
                 _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
             }
+        }
+    }
+
+
+    private suspend fun rememberApprovedFilingHomes(
+        preview: ScanUiState.PlanPreview,
+        selectedOperations: List<PlannedOperation>,
+    ) {
+        val filing = preview.filingPresentation ?: return
+        val selectedSourceRefs = selectedOperations.mapNotNullTo(linkedSetOf()) { operation ->
+            when (operation) {
+                is PlannedOperation.Move -> operation.source.rawValue()
+                is PlannedOperation.Copy -> operation.source.rawValue()
+                else -> null
+            }
+        }
+        for (group in filing.groups) {
+            if (!group.projectHomePath.startsWith('/')) continue
+            val approvedRefs = group.items.map { it.sourceRef }.filter { it in selectedSourceRefs }
+            if (approvedRefs.isEmpty()) continue
+            val normalizedHome = group.projectHomePath.trimEnd('/')
+            val stillUsesHome = selectedOperations.any { operation ->
+                val destination = when (operation) {
+                    is PlannedOperation.Move -> operation.destination.rawValue()
+                    is PlannedOperation.Copy -> operation.destination.rawValue()
+                    else -> null
+                } ?: return@any false
+                destination == normalizedHome || destination.startsWith("$normalizedHome/")
+            }
+            if (!stillUsesHome) continue
+
+            val packageIds = withContext(Dispatchers.IO) {
+                container.database.fileRecordDao().getByStableRefs(approvedRefs)
+                    .mapNotNull { it.apkPackageName }
+                    .distinct()
+            }
+            settingsRepository.rememberProjectHome(
+                name = group.projectName,
+                path = normalizedHome,
+                aliases = listOf(group.projectName),
+                packageIds = packageIds,
+                hierarchy = if (group.release != null) {
+                    ProjectHierarchyStrategy.VERSIONED
+                } else {
+                    ProjectHierarchyStrategy.FLAT
+                },
+            )
         }
     }
 

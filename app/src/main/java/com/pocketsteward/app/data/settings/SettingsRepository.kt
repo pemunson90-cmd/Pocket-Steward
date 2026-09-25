@@ -17,6 +17,9 @@ import com.pocketsteward.app.saved.LastScanSessionCodec
 import com.pocketsteward.app.saved.LastScanSession
 import com.pocketsteward.app.saved.FavoriteDestination
 import com.pocketsteward.app.saved.OrganizationPreferenceCodec
+import com.pocketsteward.app.saved.ProjectHome
+import com.pocketsteward.app.saved.ProjectHierarchyStrategy
+import com.pocketsteward.app.saved.InboxRoot
 import com.pocketsteward.app.saved.SavedWorkflow
 import com.pocketsteward.app.saved.SavedWorkflowCodec
 import com.pocketsteward.app.saved.SavedSearch
@@ -29,6 +32,7 @@ import com.pocketsteward.app.scheduled.ScheduledCleanupSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
+import android.os.Environment
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "pocket_steward_settings")
 
@@ -103,6 +107,8 @@ class SettingsRepository(private val context: Context) {
         val SAVED_SEARCHES = stringPreferencesKey("saved_searches")
         val FAVORITE_DESTINATIONS = stringPreferencesKey("favorite_destinations")
         val CORRECTION_RULES = stringPreferencesKey("correction_rules")
+        val PROJECT_HOMES = stringPreferencesKey("project_homes")
+        val INBOX_ROOTS = stringPreferencesKey("inbox_roots")
         val SCHEDULED_CLEANUP = stringPreferencesKey("scheduled_cleanup")
         val PENDING_CLEANUP_SUGGESTION = stringPreferencesKey("pending_cleanup_suggestion")
         val LAST_SCAN_SESSION = stringPreferencesKey("last_scan_session")
@@ -159,6 +165,15 @@ class SettingsRepository(private val context: Context) {
 
     val correctionRules: Flow<List<CorrectionRule>> = context.dataStore.data.map { prefs ->
         OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+    }
+
+    val projectHomes: Flow<List<ProjectHome>> = context.dataStore.data.map { prefs ->
+        OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
+    }
+
+    val inboxRoots: Flow<List<InboxRoot>> = context.dataStore.data.map { prefs ->
+        val stored = OrganizationPreferenceCodec.decodeInboxRoots(prefs[Keys.INBOX_ROOTS])
+        if (stored.isNotEmpty()) stored else listOf(defaultDownloadsInbox())
     }
 
     val scheduledCleanupSettings: Flow<ScheduledCleanupSettings> = context.dataStore.data.map { prefs ->
@@ -242,6 +257,69 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit {
             it[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(cleaned)
         }
+    }
+
+    suspend fun setProjectHomes(values: List<ProjectHome>) {
+        val cleaned = values
+            .map { home ->
+                home.copy(
+                    name = home.name.trim().take(80),
+                    path = home.path.trim().trimEnd('/'),
+                    aliases = home.aliases.map { it.trim().take(80) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
+                    packageIds = home.packageIds.map { it.trim().take(160) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
+                )
+            }
+            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .take(100)
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(cleaned)
+        }
+    }
+
+    suspend fun rememberProjectHome(
+        name: String,
+        path: String,
+        aliases: List<String> = emptyList(),
+        packageIds: List<String> = emptyList(),
+        hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
+    ) {
+        val cleanName = name.trim().take(80)
+        val cleanPath = path.trim().trimEnd('/')
+        if (cleanName.isBlank() || cleanPath.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
+            val existing = current.firstOrNull { it.path.equals(cleanPath, ignoreCase = true) }
+            val merged = ProjectHome(
+                id = existing?.id ?: UUID.randomUUID().toString(),
+                name = cleanName,
+                path = cleanPath,
+                aliases = (existing?.aliases.orEmpty() + aliases + cleanName)
+                    .map { it.trim().take(80) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
+                packageIds = (existing?.packageIds.orEmpty() + packageIds)
+                    .map { it.trim().take(160) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
+                hierarchy = existing?.hierarchy ?: hierarchy,
+            )
+            val updated = listOf(merged) + current.filterNot { it.path.equals(cleanPath, ignoreCase = true) }
+            prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(updated.take(100))
+        }
+    }
+
+    suspend fun setInboxRoots(values: List<InboxRoot>) {
+        val cleaned = values
+            .map { InboxRoot(path = it.path.trim().trimEnd('/'), name = it.name.trim().take(80)) }
+            .filter { it.path.isNotBlank() && it.name.isNotBlank() }
+            .distinctBy { it.path.lowercase() }
+            .take(20)
+        context.dataStore.edit { prefs ->
+            prefs[Keys.INBOX_ROOTS] = OrganizationPreferenceCodec.encodeInboxRoots(cleaned)
+        }
+    }
+
+    private fun defaultDownloadsInbox(): InboxRoot {
+        @Suppress("DEPRECATION")
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        return InboxRoot(downloads.absolutePath.trimEnd('/'), "Downloads")
     }
 
 

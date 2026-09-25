@@ -20,11 +20,14 @@ import androidx.compose.material3.SegmentedButton
 import com.pocketsteward.app.ui.components.FileKind
 import com.pocketsteward.app.ui.components.FileVisual
 import com.pocketsteward.app.plan.PlanTree
+import com.pocketsteward.app.filing.FilingConfidence
+import com.pocketsteward.app.filing.FilingReviewPresentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -85,13 +88,32 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
-            ScreenHeadline(
-                text = preview.goal,
-                supporting = buildString {
-                    append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
-                    if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
-                },
-            )
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+                Text(
+                    text = preview.goal,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = buildString {
+                        val selectedFiles = preview.selectedIndices.count { index ->
+                            when (preview.accepted.getOrNull(index)) {
+                                is PlannedOperation.Move, is PlannedOperation.Copy, is PlannedOperation.Rename, is PlannedOperation.Trash -> true
+                                else -> false
+                            }
+                        }
+                        if (preview.filingPresentation != null) {
+                            append("$selectedFiles selected · ${preview.filingPresentation.proposedCount} proposed")
+                            if (preview.filingPresentation.unresolvedCount > 0) append(" · ${preview.filingPresentation.unresolvedCount} stays")
+                        } else {
+                            append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
+                        }
+                        if (preview.rejected.isNotEmpty()) append(" · ${preview.rejected.size} not included")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.hairline),
+                )
+            }
 
             val redCount = preview.accepted.count {
                 it.safetyClass() == MutationSafetyClass.RED
@@ -133,10 +155,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
                 OutlinedButton(
-                    onClick = viewModel::selectSafePlanOperations,
+                    onClick = viewModel::selectRecommendedPlanOperations,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Safe only")
+                    Text(if (preview.filingPresentation != null) "Strong only" else "Safe only")
                 }
                 OutlinedButton(
                     onClick = {
@@ -148,7 +170,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("All")
+                    Text("Select all")
                 }
                 OutlinedButton(
                     onClick = viewModel::clearPlanSelection,
@@ -176,6 +198,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             } else LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
+                contentPadding = PaddingValues(bottom = Spacing.section),
             ) {
                 val destinationGroups = preview.accepted
                     .mapNotNull(::destinationEditGroup)
@@ -184,7 +207,50 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     .mapNotNull(::safDestinationEditGroup)
                     .distinctBy { it.directory.rawValue() }
 
-                if (destinationGroups.isNotEmpty() || selectedTreeGroups.isNotEmpty()) {
+                preview.filingPresentation?.let { filing ->
+                    item {
+                        FilingOverviewCard(filing)
+                    }
+                    items(filing.groups, key = { it.destinationPath }) { group ->
+                        FilingDestinationCard(
+                            group = group,
+                            preview = preview,
+                            onSetSelected = viewModel::setPlanOperationSelected,
+                            onApplyDestination = { root, name ->
+                                viewModel.editPlanDestinationGroup(
+                                    groupDirectory = group.destinationPath,
+                                    newDestinationRootPath = root,
+                                    newGroupName = name,
+                                    rememberForSimilarFiles = false,
+                                )
+                            },
+                        )
+                    }
+                    if (filing.unresolved.isNotEmpty()) {
+                        item { SectionHeader("Stays in inbox") }
+                        items(filing.unresolved, key = { it.sourceRef }) { item ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.padding(Spacing.base),
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    FileVisual(name = item.displayName, location = item.sourceRef)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            item.evidence.firstOrNull() ?: "Not enough project evidence to move safely.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (preview.filingPresentation == null && (destinationGroups.isNotEmpty() || selectedTreeGroups.isNotEmpty())) {
                     item { SectionHeader("Destinations") }
                     items(destinationGroups, key = { it.directory }) { group ->
                         DestinationEditCard(
@@ -221,7 +287,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(Spacing.base)) {
-                                Text("Not included", style = MaterialTheme.typography.titleSmall)
+                                Text("Plan notes", style = MaterialTheme.typography.titleSmall)
                                 preview.scopeNotes.forEach { note ->
                                     Text(
                                         text = note,
@@ -240,6 +306,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
 
                 itemsIndexed(preview.accepted) { index, operation ->
+                    if (preview.filingPresentation != null && operation is PlannedOperation.CreateDirectory) {
+                        return@itemsIndexed
+                    }
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
                     val selected = index in preview.selectedIndices
                     val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
@@ -342,15 +411,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     },
                     enabled = preview.selectedIndices.isNotEmpty(),
                 ) {
-                    Text("Run ${preview.selectedIndices.size} selected")
+                    val selectedFileCount = preview.selectedIndices.count { index ->
+                        when (preview.accepted.getOrNull(index)) {
+                            is PlannedOperation.Move, is PlannedOperation.Copy, is PlannedOperation.Rename, is PlannedOperation.Trash -> true
+                            else -> false
+                        }
+                    }
+                    Text("Run ${if (preview.filingPresentation != null) selectedFileCount else preview.selectedIndices.size} selected")
                 }
-                OutlinedButton(
+                TextButton(
                     onClick = { viewModel.exportReviewedPlan(preview) },
                     enabled = preview.selectedIndices.isNotEmpty(),
                 ) {
-                    Text("Export plan")
+                    Text("Export")
                 }
-                OutlinedButton(onClick = onBack) { Text("Cancel") }
+                TextButton(onClick = onBack) { Text("Cancel") }
             }
         }
     }
@@ -491,6 +566,185 @@ private fun PlanOperationEditControls(
     }
 }
 
+@Composable
+private fun FilingOverviewCard(filing: FilingReviewPresentation) {
+    val strong = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.STRONG }
+    val probable = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.PROBABLE }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text("Inbox filing", style = MaterialTheme.typography.titleMedium)
+            Text(
+                buildString {
+                    append(strong).append(" strong")
+                    if (probable > 0) append(" · ").append(probable).append(" probable")
+                    if (filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" staying put")
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+            Text(
+                "Strong matches are checked. Probable matches wait for you. File type never outranks project ownership.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Spacing.hairline),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilingDestinationCard(
+    group: com.pocketsteward.app.filing.FilingReviewGroup,
+    preview: ScanUiState.PlanPreview,
+    onSetSelected: (Int, Boolean) -> Unit,
+    onApplyDestination: (String, String) -> Unit,
+) {
+    var expanded by remember(group.destinationPath) { mutableStateOf(true) }
+    var editing by remember(group.destinationPath) { mutableStateOf(false) }
+    var destinationRoot by remember(group.destinationPath) {
+        mutableStateOf(group.destinationPath.substringBeforeLast('/', missingDelimiterValue = group.projectHomePath))
+    }
+    var groupName by remember(group.destinationPath) {
+        mutableStateOf(group.destinationPath.substringAfterLast('/'))
+    }
+    val totalBytes = group.items.sumOf { it.sizeBytes }
+    val selectedFiles = group.items.count { item ->
+        operationIndexForSource(preview, item.sourceRef)?.let { it in preview.selectedIndices } == true
+    }
+
+    Card(modifier = Modifier.fillMaxWidth().animateContentSize()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(group.projectName, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        friendlyPath(group.destinationPath),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        buildString {
+                            append(if (group.existingProjectHome) "Existing project" else "New project home")
+                            group.release?.let { append(" · release ").append(it) }
+                            append(" · ").append(selectedFiles).append("/").append(group.items.size).append(" selected")
+                            append(" · ").append(formatBytes(totalBytes))
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = Spacing.hairline),
+                    )
+                }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide" else "Files")
+                }
+            }
+
+            if (expanded) {
+                group.items.forEach { item ->
+                    val operationIndex = operationIndexForSource(preview, item.sourceRef)
+                    val checked = operationIndex?.let { it in preview.selectedIndices } == true
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
+                            enabled = operationIndex != null,
+                        )
+                        FileVisual(name = item.displayName, location = item.sourceRef, size = 28.dp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (item.confidence == FilingConfidence.STRONG) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.tertiary
+                                },
+                            )
+                            item.evidence.take(3).forEach { reason ->
+                                Text(
+                                    "• $reason",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (group.editableDirectDestination) {
+                TextButton(onClick = { editing = !editing }) {
+                    Text(if (editing) "Hide destination editor" else "Edit destination")
+                }
+            }
+            if (editing && group.editableDirectDestination) {
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text(if (group.release != null) "Release folder" else "Folder name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = destinationRoot,
+                    onValueChange = { destinationRoot = it },
+                    label = { Text(if (group.release != null) "Project home" else "Parent folder") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                )
+                Button(
+                    onClick = {
+                        onApplyDestination(destinationRoot, groupName)
+                        editing = false
+                    },
+                    enabled = destinationRoot.isNotBlank() && groupName.isNotBlank(),
+                    modifier = Modifier.padding(top = Spacing.tight),
+                ) {
+                    Text("Apply destination")
+                }
+            }
+        }
+    }
+}
+
+private fun operationIndexForSource(preview: ScanUiState.PlanPreview, sourceRef: String): Int? {
+    val index = preview.accepted.indexOfFirst { operation ->
+        when (operation) {
+            is PlannedOperation.Move -> operation.source.rawValue() == sourceRef
+            is PlannedOperation.Copy -> operation.source.rawValue() == sourceRef
+            is PlannedOperation.Rename -> operation.source.rawValue() == sourceRef
+            is PlannedOperation.Trash -> operation.source.rawValue() == sourceRef
+            else -> false
+        }
+    }
+    return index.takeIf { it >= 0 }
+}
+
+private fun friendlyPath(path: String): String {
+    val normalized = path.trimEnd('/')
+    val internalPrefix = "/storage/emulated/0"
+    return when {
+        normalized == internalPrefix -> "Internal storage"
+        normalized.startsWith("$internalPrefix/") -> {
+            val relative = normalized.removePrefix("$internalPrefix/")
+            "Internal storage › " + relative.split('/').filter(String::isNotBlank).joinToString(" › ")
+        }
+        normalized.startsWith("content://") -> "Selected storage › " + normalized.substringAfterLast('/')
+        else -> normalized.split('/').filter(String::isNotBlank).takeLast(4).joinToString(" › ")
+    }
+}
+
 private data class DestinationEditGroup(
     val directory: String,
     val root: String,
@@ -505,51 +759,66 @@ private fun DestinationEditCard(
     var root by remember(group.directory) { mutableStateOf(group.root) }
     var groupName by remember(group.directory) { mutableStateOf(group.groupName) }
     var rememberRule by remember(group.directory) { mutableStateOf(false) }
+    var editing by remember(group.directory) { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().animateContentSize()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
             Text(
-                text = group.directory,
+                text = group.groupName,
                 style = MaterialTheme.typography.titleSmall,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            OutlinedTextField(
-                value = groupName,
-                onValueChange = { groupName = it },
-                label = { Text("Group folder name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+            Text(
+                text = friendlyPath(group.directory),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = Spacing.hairline),
             )
-            OutlinedTextField(
-                value = root,
-                onValueChange = { root = it },
-                label = { Text("Destination root") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-            ) {
-                Checkbox(
-                    checked = rememberRule,
-                    onCheckedChange = { rememberRule = it },
-                )
-                Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
-                    Text("Remember this correction")
-                    Text(
-                        "When there is a clear shared filename term, reuse this group for similar files.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            TextButton(onClick = { editing = !editing }) {
+                Text(if (editing) "Hide editor" else "Edit destination")
             }
-            Button(
-                onClick = { onApply(root, groupName, rememberRule) },
-                enabled = root.isNotBlank() && groupName.isNotBlank(),
-                modifier = Modifier.padding(top = Spacing.tight),
-            ) {
-                Text("Apply destination")
+            if (editing) {
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Folder name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = root,
+                    onValueChange = { root = it },
+                    label = { Text("Parent folder") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                )
+                Row(modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight)) {
+                    Checkbox(
+                        checked = rememberRule,
+                        onCheckedChange = { rememberRule = it },
+                    )
+                    Column(modifier = Modifier.weight(1f).padding(start = Spacing.hairline)) {
+                        Text("Remember this correction")
+                        Text(
+                            "Reuse this destination when a clear shared filename term appears later.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        onApply(root, groupName, rememberRule)
+                        editing = false
+                    },
+                    enabled = root.isNotBlank() && groupName.isNotBlank(),
+                    modifier = Modifier.padding(top = Spacing.tight),
+                ) {
+                    Text("Apply destination")
+                }
             }
         }
     }
@@ -557,10 +826,6 @@ private fun DestinationEditCard(
 
 private fun destinationEditGroup(operation: PlannedOperation): DestinationEditGroup? {
     val directory = when (operation) {
-        is PlannedOperation.CreateDirectory -> {
-            val parent = operation.parent as? FileRef.Direct ?: return null
-            "${parent.absolutePath.trimEnd('/')}/${operation.name}"
-        }
         is PlannedOperation.Move -> {
             val destination = operation.destination as? FileRef.Direct ?: return null
             destination.absolutePath.substringBeforeLast('/', missingDelimiterValue = "")
@@ -733,7 +998,6 @@ private fun PlanTreeView(
         }
     }
 }
-
 @Composable
 private fun PlanTreeRow(row: PlanTree.Row, after: Boolean) {
     val markLabel = row.mark?.let { treeMarkLabel(it, after) }

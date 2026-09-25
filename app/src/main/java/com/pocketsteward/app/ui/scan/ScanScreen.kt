@@ -68,6 +68,7 @@ fun ScanScreen(
                 !autoSavedSearchId.isNullOrBlank() -> viewModel.startSavedSearch(autoSavedSearchId)
                 !autoWorkflowId.isNullOrBlank() -> viewModel.startSavedWorkflow(autoWorkflowId)
                 !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
+                autoAction == PostScanAction.INBOX_FILING -> viewModel.startConfiguredInboxFiling()
                 autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
             }
         }

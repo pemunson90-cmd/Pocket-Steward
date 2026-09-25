@@ -540,6 +540,34 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 return@launch
             }
 
+            val updatedFilingPresentation = current.filingPresentation?.let { filing ->
+                val newDirectory = "$targetRoot/$targetGroup"
+                filing.copy(
+                    groups = filing.groups.map { group ->
+                        if (group.destinationPath.trimEnd('/') != oldDirectory) {
+                            group
+                        } else if (group.release != null) {
+                            group.copy(
+                                projectName = targetRoot.substringAfterLast('/').ifBlank { group.projectName },
+                                projectHomePath = targetRoot,
+                                destinationPath = newDirectory,
+                                existingProjectHome = true,
+                                release = targetGroup,
+                                items = group.items.map { it.copy(destinationPath = newDirectory) },
+                            )
+                        } else {
+                            group.copy(
+                                projectName = targetGroup,
+                                projectHomePath = newDirectory,
+                                destinationPath = newDirectory,
+                                existingProjectHome = true,
+                                items = group.items.map { it.copy(destinationPath = newDirectory) },
+                            )
+                        }
+                    },
+                )
+            }
+
             _preview.value = current.copy(
                 accepted = validated.accepted,
                 acceptedScopeLabels = validated.accepted.map { operation ->
@@ -551,6 +579,7 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 selectedIndices = current.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
+                filingPresentation = updatedFilingPresentation,
             )
             if (rememberForSimilarFiles) {
                 learnableFilenameTerm(affectedSourceNames)?.let { term ->
@@ -592,20 +621,85 @@ internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? {
 
 internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolean) {
     val current = _preview.value ?: return
-    _preview.value = current.copy(
-        selectedIndices = PlanSelection.setSelected(
-            operations = current.accepted,
-            current = current.selectedIndices,
-            index = index,
-            selected = selected,
-        ),
+    var updated = PlanSelection.setSelected(
+        operations = current.accepted,
+        current = current.selectedIndices,
+        index = index,
+        selected = selected,
     )
+
+    // A nested filing move may depend on one or more CreateDirectory actions.
+    // Selecting the file should never leave its required parent unchecked.
+    if (selected) {
+        val destination = when (val operation = current.accepted.getOrNull(index)) {
+            is PlannedOperation.Move -> operation.destination.rawValue()
+            is PlannedOperation.Copy -> operation.destination.rawValue()
+            else -> null
+        }
+        if (destination != null) {
+            current.accepted.forEachIndexed { createIndex, operation ->
+                if (operation is PlannedOperation.CreateDirectory) {
+                    val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
+                    if (destination == directory || destination.startsWith("$directory/")) {
+                        updated = PlanSelection.setSelected(
+                            operations = current.accepted,
+                            current = updated,
+                            index = createIndex,
+                            selected = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (current.filingPresentation != null) {
+        val selectedDestinations = current.accepted.mapIndexedNotNull { operationIndex, operation ->
+            if (operationIndex !in updated) return@mapIndexedNotNull null
+            when (operation) {
+                is PlannedOperation.Move -> operation.destination.rawValue()
+                is PlannedOperation.Copy -> operation.destination.rawValue()
+                else -> null
+            }
+        }
+        current.accepted.forEachIndexed { createIndex, operation ->
+            if (operation is PlannedOperation.CreateDirectory) {
+                val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
+                val needed = selectedDestinations.any { destination ->
+                    destination == directory || destination.startsWith("$directory/")
+                }
+                updated = if (needed) {
+                    updated + createIndex
+                } else {
+                    updated - createIndex
+                }
+            }
+        }
+    }
+
+    _preview.value = current.copy(selectedIndices = updated)
 }
 
 internal fun ScanViewModel.selectAllPlanOperations() {
     val current = _preview.value ?: return
     _preview.value = current.copy(
         selectedIndices = PlanSelection.allSelected(current.accepted),
+    )
+}
+
+internal fun ScanViewModel.selectRecommendedPlanOperations() {
+    val current = _preview.value ?: return
+    val filing = current.filingPresentation
+    if (filing == null) {
+        selectSafePlanOperations()
+        return
+    }
+    val strongRefs = filing.groups
+        .flatMap { it.items }
+        .filter { it.confidence == com.pocketsteward.app.filing.FilingConfidence.STRONG }
+        .mapTo(linkedSetOf()) { it.sourceRef }
+    _preview.value = current.copy(
+        selectedIndices = defaultSelectionForSources(current.accepted, strongRefs),
     )
 }
 
