@@ -311,79 +311,79 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 // still cost composition/measurement work.
                 if (preview.filingPresentation == null) {
                     itemsIndexed(preview.accepted) { index, operation ->
-                    val destructive = operation.safetyClass() == MutationSafetyClass.RED
-                    val selected = index in preview.selectedIndices
-                    val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
-                    val groupLabel = destinationLabel(operation) ?: fallbackLabel
-                    val previousLabel = preview.accepted.getOrNull(index - 1)
-                        ?.let(::destinationLabel)
-                        ?: preview.acceptedScopeLabels.getOrNull(index - 1)
-                    Column(modifier = Modifier.animateItem()) {
-                        if (index == 0 || previousLabel != groupLabel) {
-                            SectionHeader(groupLabel)
-                        }
-                        Card(
-                            modifier = Modifier.fillMaxWidth().animateContentSize(),
-                            colors = if (destructive) {
-                                CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                                )
-                            } else {
-                                CardDefaults.cardColors()
-                            },
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(Spacing.base),
-                                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                        val destructive = operation.safetyClass() == MutationSafetyClass.RED
+                        val selected = index in preview.selectedIndices
+                        val fallbackLabel = preview.acceptedScopeLabels.getOrElse(index) { preview.scopeLabel }
+                        val groupLabel = destinationLabel(operation) ?: fallbackLabel
+                        val previousLabel = preview.accepted.getOrNull(index - 1)
+                            ?.let(::destinationLabel)
+                            ?: preview.acceptedScopeLabels.getOrNull(index - 1)
+                        Column(modifier = Modifier.animateItem()) {
+                            if (index == 0 || previousLabel != groupLabel) {
+                                SectionHeader(groupLabel)
+                            }
+                            Card(
+                                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                                colors = if (destructive) {
+                                    CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                } else {
+                                    CardDefaults.cardColors()
+                                },
                             ) {
-                                Checkbox(
-                                    checked = selected,
-                                    onCheckedChange = { checked ->
-                                        viewModel.setPlanOperationSelected(index, checked)
-                                    },
-                                    modifier = Modifier.semantics {
-                                        contentDescription = "Include: ${operationSummary(operation)}"
-                                    },
-                                )
-                                OperationVisual(operation)
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        text = operation.reason,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (destructive) {
-                                            MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                Row(
+                                    modifier = Modifier.padding(Spacing.base),
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                                ) {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = { checked ->
+                                            viewModel.setPlanOperationSelected(index, checked)
+                                        },
+                                        modifier = Modifier.semantics {
+                                            contentDescription = "Include: ${operationSummary(operation)}"
                                         },
                                     )
-                                    PlanOperationEditControls(
-                                        operation = operation,
-                                        onApplyMove = { destination ->
-                                            viewModel.editPlanOperation(
-                                                operationIndex = index,
-                                                newDestinationPath = destination,
-                                            )
-                                        },
-                                        onApplyRename = { name ->
-                                            viewModel.editPlanOperation(
-                                                operationIndex = index,
-                                                newName = name,
-                                            )
-                                        },
-                                        onKeepOriginalChange = { keepOriginal ->
-                                            viewModel.editPlanOperation(
-                                                operationIndex = index,
-                                                keepOriginal = keepOriginal,
-                                            )
-                                        },
-                                    )
+                                    OperationVisual(operation)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = operationSummary(operation), style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            text = operation.reason,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (destructive) {
+                                                MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                        PlanOperationEditControls(
+                                            operation = operation,
+                                            onApplyMove = { destination ->
+                                                viewModel.editPlanOperation(
+                                                    operationIndex = index,
+                                                    newDestinationPath = destination,
+                                                )
+                                            },
+                                            onApplyRename = { name ->
+                                                viewModel.editPlanOperation(
+                                                    operationIndex = index,
+                                                    newName = name,
+                                                )
+                                            },
+                                            onKeepOriginalChange = { keepOriginal ->
+                                                viewModel.editPlanOperation(
+                                                    operationIndex = index,
+                                                    keepOriginal = keepOriginal,
+                                                )
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
                 }
 
