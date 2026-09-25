@@ -128,7 +128,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 ) {
                     Text(
                         "$redCount quarantine/trash action(s) are intentionally unchecked by default. " +
-                            "Select them deliberately, or use All if you have reviewed the whole set.",
+                            "Select them deliberately, or use Select all if you have reviewed the whole set.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(Spacing.base),
                     )
@@ -138,7 +138,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             // Now/After draw the selected actions as folder trees: the
             // shape of the result, which is what is actually being approved.
             // Display only; the executor still runs the selected list.
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(bottom = Spacing.tight)) {
                 PlanView.entries.forEachIndexed { i, option ->
                     SegmentedButton(
                         selected = view == option,
@@ -151,12 +151,11 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             }
 
             if (view == PlanView.LIST) Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight),
+                modifier = Modifier.padding(bottom = Spacing.tight),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
                 OutlinedButton(
                     onClick = viewModel::selectRecommendedPlanOperations,
-                    modifier = Modifier.weight(1f),
                 ) {
                     Text(if (preview.filingPresentation != null) "Strong only" else "Safe only")
                 }
@@ -168,13 +167,11 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             viewModel.selectAllPlanOperations()
                         }
                     },
-                    modifier = Modifier.weight(1f),
                 ) {
                     Text("Select all")
                 }
                 OutlinedButton(
                     onClick = viewModel::clearPlanSelection,
-                    modifier = Modifier.weight(1f),
                 ) {
                     Text("Clear")
                 }
@@ -239,7 +236,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                                         Text(
-                                            item.evidence.firstOrNull() ?: "Not enough project evidence to move safely.",
+                                            buildString {
+                                                append(formatBytes(item.sizeBytes)).append(" · ")
+                                                append(item.evidence.firstOrNull() ?: "Not enough project evidence to move safely.")
+                                            },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -306,7 +306,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
 
                 itemsIndexed(preview.accepted) { index, operation ->
-                    if (preview.filingPresentation != null && operation is PlannedOperation.CreateDirectory) {
+                    // Inbox Filing already renders every proposed file inside its human-facing
+                    // Project Home card above. Repeating the same moves as raw filesystem
+                    // operations makes review longer and pushes the useful evidence off-screen.
+                    if (preview.filingPresentation != null) {
                         return@itemsIndexed
                     }
                     val destructive = operation.safetyClass() == MutationSafetyClass.RED
@@ -663,7 +666,10 @@ private fun FilingDestinationCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review",
+                                buildString {
+                                    append(if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
+                                    append(" · ").append(formatBytes(item.sizeBytes))
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (item.confidence == FilingConfidence.STRONG) {
                                     MaterialTheme.colorScheme.primary
