@@ -3,12 +3,16 @@ package com.pocketsteward.app.ui.scan
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import com.pocketsteward.app.ui.components.SmoothProgressBar
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
@@ -61,19 +65,24 @@ fun ScanFlowScaffold(
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = Spacing.screen, vertical = Spacing.tight),
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            // Above the content, never instead of it. An error that replaced
-            // the screen was how a failed action used to cost a rescan.
-            error?.let { message ->
-                ErrorBanner(message = message, onDismiss = onDismissError)
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 960.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = Spacing.screen, vertical = Spacing.tight),
+            ) {
+                // Above the content, never instead of it. An error that replaced
+                // the screen was how a failed action used to cost a rescan.
+                error?.let { message ->
+                    ErrorBanner(message = message, onDismiss = onDismissError)
+                }
+                busy?.let { BusyIndicator(it) }
+                content(Modifier.weight(1f))
             }
-            busy?.let { BusyIndicator(it) }
-            content(Modifier.weight(1f))
         }
     }
 }
@@ -186,7 +195,10 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun ActionRow(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Row(
-        modifier = modifier.fillMaxWidth().padding(top = Spacing.base, bottom = Spacing.tight),
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(top = Spacing.hairline, bottom = Spacing.hairline),
         horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
         verticalAlignment = Alignment.CenterVertically,
     ) {

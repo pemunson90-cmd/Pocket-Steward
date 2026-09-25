@@ -2,6 +2,8 @@ package com.pocketsteward.app.ui.scan
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
@@ -88,7 +90,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.hairline)) {
                 Text(
                     text = preview.goal,
                     style = MaterialTheme.typography.titleMedium,
@@ -138,26 +140,31 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             // Now/After draw the selected actions as folder trees: the
             // shape of the result, which is what is actually being approved.
             // Display only; the executor still runs the selected list.
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(bottom = Spacing.tight)) {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.tight)) {
                 PlanView.entries.forEachIndexed { i, option ->
                     SegmentedButton(
+                        modifier = Modifier.weight(1f, fill = false),
                         selected = view == option,
                         onClick = { view = option },
                         shape = SegmentedButtonDefaults.itemShape(index = i, count = PlanView.entries.size),
                     ) {
-                        Text(option.label)
+                        Text(option.label, maxLines = 1)
                     }
                 }
             }
 
             if (view == PlanView.LIST) Row(
-                modifier = Modifier.padding(bottom = Spacing.tight),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = Spacing.tight),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.hairline),
             ) {
                 OutlinedButton(
                     onClick = viewModel::selectRecommendedPlanOperations,
+                    contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
-                    Text(if (preview.filingPresentation != null) "Strong only" else "Safe only")
+                    Text(if (preview.filingPresentation != null) "Strong only" else "Safe only", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = {
@@ -167,13 +174,15 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             viewModel.selectAllPlanOperations()
                         }
                     },
+                    contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
-                    Text("Select all")
+                    Text("Select all", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = viewModel::clearPlanSelection,
+                    contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
-                    Text("Clear")
+                    Text("Clear", maxLines = 1)
                 }
             }
 
@@ -193,9 +202,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     modifier = Modifier.weight(1f),
                 )
             } else LazyColumn(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
-                contentPadding = PaddingValues(bottom = Spacing.section),
+                contentPadding = PaddingValues(bottom = Spacing.tight),
             ) {
                 val destinationGroups = preview.accepted
                     .mapNotNull(::destinationEditGroup)
@@ -276,28 +285,6 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 )
                             },
                         )
-                    }
-                }
-
-                // Spec 6b: a protection that applies silently is
-                // indistinguishable from a bug. Whatever the plan source
-                // declined to touch is stated above the row list, because a
-                // 3,000-row list is not read.
-                if (preview.scopeNotes.isNotEmpty()) {
-                    item {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(Spacing.base)) {
-                                Text("Plan notes", style = MaterialTheme.typography.titleSmall)
-                                preview.scopeNotes.forEach { note ->
-                                    Text(
-                                        text = note,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = Spacing.hairline),
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -387,6 +374,19 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
                 }
 
+                if (preview.scopeNotes.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = preview.scopeNotes.joinToString(separator = " · ", prefix = "Note: "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = Spacing.hairline, vertical = Spacing.hairline),
+                        )
+                    }
+                }
+
                 if (preview.rejected.isNotEmpty()) {
                     item { SectionHeader("Not included") }
                     items(preview.rejected) { rejected ->
@@ -421,7 +421,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             else -> false
                         }
                     }
-                    Text("Run ${if (preview.filingPresentation != null) selectedFileCount else preview.selectedIndices.size} selected")
+                    Text("Run ${if (preview.filingPresentation != null) selectedFileCount else preview.selectedIndices.size}")
                 }
                 TextButton(
                     onClick = { viewModel.exportReviewedPlan(preview) },
@@ -480,36 +480,32 @@ private fun PlanOperationEditControls(
         is PlannedOperation.Move,
         is PlannedOperation.Copy,
         -> {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
-            ) {
-                Checkbox(
-                    checked = operation is PlannedOperation.Copy,
-                    onCheckedChange = onKeepOriginalChange,
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Keep original")
-                    Text(
-                        if (operation is PlannedOperation.Copy) {
-                            "This action copies the file; the source stays where it is."
-                        } else {
-                            "Off means move. Turn on to copy instead."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
             val directDestination = when (operation) {
                 is PlannedOperation.Move -> operation.destination as? FileRef.Direct
                 is PlannedOperation.Copy -> operation.destination as? FileRef.Direct
                 else -> null
             }
-            if (directDestination != null) {
-                TextButton(onClick = { editing = !editing }) {
-                    Text(if (editing) "Hide editor" else "Edit destination")
+            TextButton(
+                onClick = { editing = !editing },
+                contentPadding = PaddingValues(horizontal = 0.dp),
+            ) {
+                Text(if (editing) "Done editing" else "Edit action", maxLines = 1)
+            }
+            if (editing) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = operation is PlannedOperation.Copy,
+                        onCheckedChange = onKeepOriginalChange,
+                    )
+                    Text(
+                        if (operation is PlannedOperation.Copy) "Keep original: on" else "Keep original: off",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
-                if (editing) {
+                if (directDestination != null) {
                     val current = directDestination.absolutePath
                     var destination by remember(operation) { mutableStateOf(current) }
                     OutlinedTextField(
@@ -527,16 +523,15 @@ private fun PlanOperationEditControls(
                         enabled = destination.isNotBlank() && destination != current,
                         modifier = Modifier.padding(top = Spacing.hairline),
                     ) {
-                        Text("Apply destination edit")
+                        Text("Apply destination")
                     }
+                } else {
+                    Text(
+                        "Destination is inside the selected tree. Edit its group above.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            } else {
-                Text(
-                    "Destination is inside the selected tree. Edit its group in Destinations above.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = Spacing.hairline),
-                )
             }
         }
 

@@ -2,6 +2,7 @@ package com.pocketsteward.app.ui.ask
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -104,22 +105,45 @@ fun AskScreen(onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = question,
-                    onValueChange = { question = it },
-                    placeholder = { Text("When does my lease end?") },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 3,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit() }),
-                )
-                Button(onClick = submit, enabled = question.isNotBlank() && state !is AskUiState.Searching) {
-                    Text("Ask")
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                if (maxWidth < 420.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = question,
+                            onValueChange = { question = it },
+                            placeholder = { Text("When does my lease end?") },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 3,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { submit() }),
+                        )
+                        Button(
+                            onClick = submit,
+                            enabled = question.isNotBlank() && state !is AskUiState.Searching,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Ask")
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedTextField(
+                            value = question,
+                            onValueChange = { question = it },
+                            placeholder = { Text("When does my lease end?") },
+                            modifier = Modifier.weight(1f),
+                            maxLines = 3,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { submit() }),
+                        )
+                        Button(onClick = submit, enabled = question.isNotBlank() && state !is AskUiState.Searching) {
+                            Text("Ask")
+                        }
+                    }
                 }
             }
 

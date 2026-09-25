@@ -12,7 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -116,7 +118,10 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
                 text = stringResource(R.string.onboarding_body),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
             )
 
             Button(
@@ -132,7 +137,10 @@ fun OnboardingScreen(onAccessGranted: () -> Unit) {
                         manageStorageLauncher.launch(intent)
                     }
                 },
-                modifier = Modifier.padding(top = 24.dp),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .padding(top = 24.dp),
             ) {
                 Text(text = stringResource(R.string.onboarding_grant_broad_access))
             }

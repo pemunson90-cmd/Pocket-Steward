@@ -1,10 +1,15 @@
 package com.pocketsteward.app.navigation
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
@@ -19,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination
@@ -77,7 +83,7 @@ fun PocketStewardShell(
                 }
 
                 Scaffold(modifier = Modifier.weight(1f)) { padding ->
-                    content(Modifier.padding(padding))
+                    ShellContentFrame(current, padding, content)
                 }
             }
         } else {
@@ -97,7 +103,7 @@ fun PocketStewardShell(
                     }
                 },
             ) { padding ->
-                content(Modifier.padding(padding))
+                ShellContentFrame(current, padding, content)
             }
         }
     }
@@ -134,4 +140,34 @@ private fun AppDestination.matches(destination: NavDestination?): Boolean {
         return true
     }
     return destination.hierarchy.any { it.route == route }
+}
+
+
+@Composable
+private fun ShellContentFrame(
+    current: NavDestination?,
+    padding: PaddingValues,
+    content: @Composable (Modifier) -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(padding),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        val screen = if (current.usesWideWorkspace()) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier
+                .widthIn(max = 840.dp)
+                .fillMaxHeight()
+                .fillMaxWidth()
+        }
+        content(screen)
+    }
+}
+
+private fun NavDestination?.usesWideWorkspace(): Boolean {
+    if (this == null) return false
+    return hierarchy.any { destination ->
+        destination.route == Routes.FILES || destination.route == ScanFlow.GRAPH
+    }
 }

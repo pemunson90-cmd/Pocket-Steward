@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -244,22 +245,39 @@ fun HomeScreen(
             supporting = "Scan Downloads for exact SHA-256 duplicate sets.",
             onClick = { onQuickAction(PostScanAction.FIND_DUPLICATES) },
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            HomeQuickAction(
-                title = "Largest files",
-                supporting = "Top 50 in Downloads.",
-                onClick = { onQuickAction(PostScanAction.FIND_LARGEST) },
-                modifier = Modifier.weight(1f),
-            )
-            HomeQuickAction(
-                title = "Old files",
-                supporting = "Older than six months.",
-                onClick = { onQuickAction(PostScanAction.FIND_OLD) },
-                modifier = Modifier.weight(1f),
-            )
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (maxWidth < 480.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeQuickAction(
+                        title = "Largest files",
+                        supporting = "Top 50 in Downloads.",
+                        onClick = { onQuickAction(PostScanAction.FIND_LARGEST) },
+                    )
+                    HomeQuickAction(
+                        title = "Old files",
+                        supporting = "Older than six months.",
+                        onClick = { onQuickAction(PostScanAction.FIND_OLD) },
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    HomeQuickAction(
+                        title = "Largest files",
+                        supporting = "Top 50 in Downloads.",
+                        onClick = { onQuickAction(PostScanAction.FIND_LARGEST) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    HomeQuickAction(
+                        title = "Old files",
+                        supporting = "Older than six months.",
+                        onClick = { onQuickAction(PostScanAction.FIND_OLD) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
         HomeQuickAction(
             title = "Review uncategorized",

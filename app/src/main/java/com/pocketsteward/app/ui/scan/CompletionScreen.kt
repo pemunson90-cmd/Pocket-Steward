@@ -237,7 +237,7 @@ private fun ExecutionDone(
         )
 
         LazyColumn(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = false),
             verticalArrangement = Arrangement.spacedBy(Spacing.tight),
         ) {
             // M7 item 4. The count was the only thing that left the executor,
@@ -340,7 +340,7 @@ private fun UndoDone(summary: UndoSummary, onDone: () -> Unit, modifier: Modifie
 
         if (summary.messages.isNotEmpty()) {
             LazyColumn(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
                 item { SectionHeader("Blocked") }

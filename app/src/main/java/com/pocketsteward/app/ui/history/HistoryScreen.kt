@@ -5,6 +5,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import com.pocketsteward.app.ui.components.SmoothProgressBar
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -203,7 +204,10 @@ private fun ConfirmUndoCard(
                     "Nothing is deleted either way, but it is a large change to make by accident.",
                 modifier = Modifier.padding(top = 4.dp),
             )
-            Row(modifier = Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Button(
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -264,7 +268,10 @@ private fun ManifestCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (exportedTo != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     onOpen?.let { action ->
                         OutlinedButton(onClick = action) {
                             Text("Open manifest")
@@ -276,7 +283,10 @@ private fun ManifestCard(
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     onShare?.let { action ->
                         OutlinedButton(onClick = action) {
                             Text("Share")
@@ -290,7 +300,10 @@ private fun ManifestCard(
                     }
                 }
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     OutlinedButton(onClick = { onExport(ManifestFormat.MARKDOWN) }) {
                         Text("Export Markdown")
                     }
@@ -356,7 +369,10 @@ private fun TaskCard(
                 )
             }
 
-            Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (task.isResumable()) {
                     Card(onClick = onResume) {
                         Text(
