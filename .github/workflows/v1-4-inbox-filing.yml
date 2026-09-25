@@ -1,0 +1,141 @@
+name: Gate V1.4 Inbox Filing
+
+on:
+  push:
+    branches:
+      - build/v1.4-inbox-filing
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v1-4-inbox-filing
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      applied: ${{ steps.materialize.outputs.applied }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: materialize
+        name: Materialize integrated source batch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .github/inbox-filing-bootstrap.patch ]; then
+            git apply --index .github/inbox-filing-bootstrap.patch
+            git rm .github/inbox-filing-bootstrap.patch
+            git config user.name "Pocket Steward Builder"
+            git config user.email "builder@local.invalid"
+            git commit -m "Build inbox project filing and review workflow"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  gate:
+    needs: prepare
+    if: needs.prepare.outputs.applied != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Enforce offline-core manifest invariant
+        run: |
+          if grep -q 'android.permission.INTERNET' app/src/main/AndroidManifest.xml; then
+            echo "Pocket Steward core must not require INTERNET permission."
+            exit 1
+          fi
+      - name: Clean build, instrumentation compile, full unit suite, and lint
+        run: ./gradlew clean assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - name: Release build
+        run: ./gradlew assembleRelease --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-inbox-filing-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-inbox-filing-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-inbox-filing-androidtest
+          path: app/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-inbox-filing-lint
+          path: |
+            app/build/reports/lint-results-debug.html
+            app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+          if-no-files-found: warn
+      - name: Package APK signer tooling
+        if: always()
+        run: |
+          APK_SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          TOOL_DIR="$(dirname "$APK_SIGNER")"
+          mkdir -p "$RUNNER_TEMP/apksigner-tool/lib"
+          cp "$APK_SIGNER" "$RUNNER_TEMP/apksigner-tool/apksigner"
+          cp "$TOOL_DIR/lib/apksigner.jar" "$RUNNER_TEMP/apksigner-tool/lib/apksigner.jar"
+          chmod +x "$RUNNER_TEMP/apksigner-tool/apksigner"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-apksigner-tool
+          path: ${{ runner.temp }}/apksigner-tool
+          if-no-files-found: warn
+
+  device-tests:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run connected instrumentation suite
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ./gradlew connectedDebugAndroidTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pocket-steward-v1-4-device-test-results
+          path: |
+            app/build/reports/androidTests/connected/**
+            app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: warn
