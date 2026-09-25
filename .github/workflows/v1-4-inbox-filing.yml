@@ -52,16 +52,32 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - name: Enforce offline-core manifest invariant
-        run: |
-          if grep -q 'android.permission.INTERNET' app/src/main/AndroidManifest.xml; then
-            echo "Pocket Steward core must not require INTERNET permission."
-            exit 1
-          fi
       - name: Clean build, instrumentation compile, full unit suite, and lint
         run: ./gradlew clean assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
       - name: Release build
         run: ./gradlew assembleRelease --stacktrace
+      - name: Enforce offline-core APK invariant
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT2="$(find "$ANDROID_HOME/build-tools" -type f -name aapt2 | sort -V | tail -1)"
+          if [ ! -x "$AAPT2" ]; then
+            echo "Could not locate aapt2 to inspect built APK permissions."
+            exit 1
+          fi
+          checked=0
+          for apk in app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk; do
+            [ -f "$apk" ] || continue
+            checked=1
+            if "$AAPT2" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
+              echo "Pocket Steward core APK must not request INTERNET permission: $apk"
+              exit 1
+            fi
+          done
+          if [ "$checked" -ne 1 ]; then
+            echo "No built APK was found for the offline-permission gate."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -130,7 +146,10 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: ./gradlew connectedDebugAndroidTest --stacktrace
+          script: |
+            ./gradlew installDebug --stacktrace
+            adb shell appops set com.pocketsteward.app MANAGE_EXTERNAL_STORAGE allow
+            ./gradlew connectedDebugAndroidTest --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
         with:

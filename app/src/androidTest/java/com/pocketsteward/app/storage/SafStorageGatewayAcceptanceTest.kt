@@ -5,7 +5,6 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -24,9 +23,6 @@ class SafStorageGatewayAcceptanceTest {
 
     @Before
     fun setUp() = runBlocking {
-        InstrumentationRegistry.getInstrumentation().uiAutomation.adoptShellPermissionIdentity(
-            "android.permission.MANAGE_DOCUMENTS",
-        )
         context = ApplicationProvider.getApplicationContext()
         context.contentResolver.call(
             Uri.parse("content://${TestSafDocumentsProvider.AUTHORITY}"),
@@ -49,7 +45,6 @@ class SafStorageGatewayAcceptanceTest {
 
     @After
     fun tearDownPermissions() {
-        InstrumentationRegistry.getInstrumentation().uiAutomation.dropShellPermissionIdentity()
     }
 
     @Test

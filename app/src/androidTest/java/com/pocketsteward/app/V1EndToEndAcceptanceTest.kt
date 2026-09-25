@@ -23,6 +23,7 @@ import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.service.BootRecoveryReceiver
 import com.pocketsteward.app.storage.DirectStorageGateway
+import com.pocketsteward.app.storage.DirectStorageTestFixture
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import java.io.File
@@ -42,10 +43,7 @@ class V1EndToEndAcceptanceTest {
 
     @Before
     fun setUp() {
-        root = File(context.cacheDir, "v1-e2e-acceptance").apply {
-            deleteRecursively()
-            check(mkdirs())
-        }
+        root = DirectStorageTestFixture.freshRoot(context, "v1-e2e-acceptance")
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -55,7 +53,7 @@ class V1EndToEndAcceptanceTest {
     @After
     fun tearDown() {
         runCatching { db.close() }
-        root.deleteRecursively()
+        DirectStorageTestFixture.clean(root)
     }
 
     @Test

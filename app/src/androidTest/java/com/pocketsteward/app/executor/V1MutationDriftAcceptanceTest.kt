@@ -13,6 +13,7 @@ import com.pocketsteward.app.plan.PlanValidator
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.scan.FileScanner
 import com.pocketsteward.app.storage.DirectStorageGateway
+import com.pocketsteward.app.storage.DirectStorageTestFixture
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import java.io.File
@@ -32,14 +33,9 @@ class V1MutationDriftAcceptanceTest {
 
     @Before
     fun setUp() {
-        root = File(context.cacheDir, "mutation-drift-source").apply {
-            deleteRecursively()
-            check(mkdirs())
-        }
-        destinationDir = File(context.cacheDir, "mutation-drift-destination").apply {
-            deleteRecursively()
-            check(mkdirs())
-        }
+        val fixtureRoot = DirectStorageTestFixture.freshRoot(context, "mutation-drift")
+        root = File(fixtureRoot, "source").apply { check(mkdirs()) }
+        destinationDir = File(fixtureRoot, "destination").apply { check(mkdirs()) }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -49,8 +45,7 @@ class V1MutationDriftAcceptanceTest {
     @After
     fun tearDown() {
         runCatching { db.close() }
-        root.deleteRecursively()
-        destinationDir.deleteRecursively()
+        DirectStorageTestFixture.clean(requireNotNull(root.parentFile))
     }
 
     @Test

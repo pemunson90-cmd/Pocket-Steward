@@ -16,19 +16,18 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class DirectStorageGatewayCopyTest {
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-    private val root = File(context.cacheDir, "copy-test")
+    private lateinit var root: File
     private lateinit var gateway: DirectStorageGateway
 
     @Before
     fun setUp() {
-        root.deleteRecursively()
-        check(root.mkdirs())
+        root = DirectStorageTestFixture.freshRoot(context, "copy-test")
         gateway = DirectStorageGateway(context)
     }
 
     @After
     fun tearDown() {
-        root.deleteRecursively()
+        DirectStorageTestFixture.clean(root)
     }
 
     @Test

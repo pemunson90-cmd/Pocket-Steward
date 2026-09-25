@@ -11,6 +11,7 @@ import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.plan.AgentPlan
 import com.pocketsteward.app.plan.PlannedOperation
 import com.pocketsteward.app.storage.DirectStorageGateway
+import com.pocketsteward.app.storage.DirectStorageTestFixture
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import java.io.File
@@ -29,8 +30,8 @@ import org.junit.runner.RunWith
  * real file -> validated typed plan -> executor -> write-ahead journal ->
  * actual filesystem mutation -> reverse-order undo -> original structure.
  *
- * Uses the test app's own external-files directory, so it needs no fixture
- * outside the APK and never touches the user's real documents.
+ * Uses a dedicated shared-storage instrumentation sandbox so the real Direct
+ * mode protection boundary is exercised without touching user documents.
  */
 @RunWith(AndroidJUnit4::class)
 class V1FilesystemRoundTripTest {
@@ -46,15 +47,13 @@ class V1FilesystemRoundTripTest {
             .allowMainThreadQueries()
             .build()
         gateway = DirectStorageGateway(context)
-        root = File(requireNotNull(context.getExternalFilesDir(null)), "v1-roundtrip")
-        root.deleteRecursively()
-        check(root.mkdirs())
+        root = DirectStorageTestFixture.freshRoot(context, "v1-roundtrip")
     }
 
     @After
     fun tearDown() {
         runCatching { database.close() }
-        root.deleteRecursively()
+        DirectStorageTestFixture.clean(root)
     }
 
     @Test
