@@ -203,6 +203,32 @@ class SemanticPlanAdapterTest {
     }
 
     @Test
+    fun largeSemanticProposalUsesTheSameIndexedProtectionGraph() {
+        val count = 4_000
+        val records = (0 until count).map { index ->
+            record(
+                "/storage/emulated/0/Download/doc-${index}.txt",
+                "doc-${index}.txt",
+                downloads.absolutePath,
+            )
+        }
+        val suggestions = records.mapIndexed { index, file ->
+            suggestion(file, "Group ${index % 20}")
+        }
+
+        val result = SemanticPlanAdapter.build(
+            scopeRoots = listOf(downloads),
+            records = records,
+            suggestions = suggestions,
+            includeSubfolders = true,
+        )
+
+        assertThat(result.plannedFileCount).isEqualTo(count)
+        assertThat(result.operations.filterIsInstance<PlannedOperation.Move>()).hasSize(count)
+        assertThat(result.operations.filterIsInstance<PlannedOperation.CreateDirectory>()).hasSize(20)
+    }
+
+    @Test
     fun safExistingSuggestedGroupIsReusedAndCurrentMemberIsSkipped() {
         val root = FileRef.Saf("content://example/tree/root/document/root")
         val groupRef = "content://example/tree/root/document/root%2FNotes"
