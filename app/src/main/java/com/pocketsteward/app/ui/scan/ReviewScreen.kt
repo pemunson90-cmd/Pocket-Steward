@@ -40,6 +40,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.ui.Alignment
 import kotlin.math.abs
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -1607,7 +1608,10 @@ private fun ArtifactExportReview(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(top = Spacing.tight),
                         horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
                     ) {
                         TextButton(onClick = { ManifestFileActions.open(context, path) }) {

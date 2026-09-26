@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -490,35 +491,43 @@ private fun BrowserHome(
         item { Text("Categories", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
         val stats = home?.stats.orEmpty()
         val tiles = BrowserCategory.entries
-        tiles.chunked(2).forEach { pair ->
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    pair.forEach { cat ->
-                        val stat = stats.firstOrNull { it.category == cat }
-                        Card(onClick = { onCategory(cat) }, modifier = Modifier.weight(1f)) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                FileVisual(
-                                    name = categorySample(cat),
-                                    location = null,
-                                    isDirectory = cat == BrowserCategory.RECENT,
-                                    size = 36.dp,
-                                )
-                                Column(Modifier.padding(start = 12.dp)) {
-                                    Text(cat.label, style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        when {
-                                            cat == BrowserCategory.RECENT -> "Newest first"
-                                            stat == null -> "…"
-                                            else -> "${"%,d".format(stat.files)} · ${formatBytes(stat.bytes)}"
-                                        },
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+        item {
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val columns = if (maxWidth >= 720.dp) 3 else 2
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    tiles.chunked(columns).forEach { rowTiles ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            rowTiles.forEach { cat ->
+                                val stat = stats.firstOrNull { it.category == cat }
+                                Card(onClick = { onCategory(cat) }, modifier = Modifier.weight(1f)) {
+                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        FileVisual(
+                                            name = categorySample(cat),
+                                            location = null,
+                                            isDirectory = cat == BrowserCategory.RECENT,
+                                            size = 36.dp,
+                                        )
+                                        Column(Modifier.padding(start = 12.dp)) {
+                                            Text(cat.label, style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                when {
+                                                    cat == BrowserCategory.RECENT -> "Newest first"
+                                                    stat == null -> "…"
+                                                    else -> "${"%,d".format(stat.files)} · ${formatBytes(stat.bytes)}"
+                                                },
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
                                 }
                             }
+                            repeat(columns - rowTiles.size) { Box(Modifier.weight(1f)) }
                         }
                     }
-                    if (pair.size == 1) Box(Modifier.weight(1f))
                 }
             }
         }
@@ -891,7 +900,10 @@ private fun ConfirmSheet(pending: PendingPlan, onRun: () -> Unit, onCancel: () -
             }
             item {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(top = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                 ) {
                     OutlinedButton(onClick = onCancel) { Text("Cancel") }
