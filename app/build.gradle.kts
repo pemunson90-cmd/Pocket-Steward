@@ -22,8 +22,8 @@ android {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 44
-        versionName = "1.4.0-dev4"
+        versionCode = 45
+        versionName = "1.4.0-dev5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -48,10 +48,9 @@ android {
         release {
             canonicalDevelopmentSigning?.let { signingConfig = it }
 
-            // Dev2 is the real-device acceptance build. Keep release behavior
-            // unminified so the hardware test exercises the same code paths as
-            // the green debug/instrumentation suite, and package only the ABI
-            // used by the canonical phone build rather than a 100+ MB universal APK.
+            // Real-device acceptance builds stay unminified so hardware tests
+            // exercise the same code paths as the green debug/instrumentation
+            // suite, and package only the canonical phone ABI.
             isMinifyEnabled = false
             isShrinkResources = false
             ndk {
