@@ -60,7 +60,18 @@ object SemanticPlanAdapter {
                 isDirectory = record.isDirectory,
             )
         }
-        val protectedFolders = SortScope.protectedFolders(candidates)
+        val candidateByRef = candidates.associateBy { it.stableRef }
+        val protection = SortScope.protectionIndex(candidates)
+        val existingDirectories = linkedMapOf<Pair<String, String>, FileRecord>()
+        records.asSequence()
+            .filter { it.isDirectory }
+            .forEach { directory ->
+                val parent = directory.parentRef?.trimEnd('/') ?: return@forEach
+                existingDirectories.putIfAbsent(
+                    parent to directory.displayName.lowercase(),
+                    directory,
+                )
+            }
         val operations = mutableListOf<PlannedOperation>()
         val createdDirectories = mutableSetOf<String>()
         val skipped = mutableListOf<SemanticSkip>()
@@ -94,8 +105,12 @@ object SemanticPlanAdapter {
                 continue
             }
 
-            val candidate = candidates.first { it.stableRef == stableRef }
-            if (SortScope.isProtected(candidate, protectedFolders, candidates)) {
+            val candidate = candidateByRef[stableRef]
+            if (candidate == null) {
+                skipped += SemanticSkip(stableRef, "File is no longer present in the current scan index.")
+                continue
+            }
+            if (SortScope.isProtected(candidate, protection)) {
                 skipped += SemanticSkip(stableRef, "File is inside a protected folder.")
                 continue
             }
@@ -132,11 +147,9 @@ object SemanticPlanAdapter {
 
             // Prefer the provider-assigned/concrete reference when the group
             // already exists. A symbolic Child is used only before creation.
-            val existingDirectory = records.firstOrNull { existing ->
-                existing.isDirectory &&
-                    existing.parentRef?.trimEnd('/') == destinationRoot.rawValue().trimEnd('/') &&
-                    existing.displayName.equals(group, ignoreCase = true)
-            }
+            val existingDirectory = existingDirectories[
+                destinationRoot.rawValue().trimEnd('/') to group.lowercase()
+            ]
             val destinationDirectory = existingDirectory
                 ?.stableRef
                 ?.let(::parseFileRef)
