@@ -13,7 +13,24 @@ data class LastScanSession(
     val mode: StorageAccessMode,
     val roots: List<LastScanRoot>,
     val savedAtEpochMs: Long,
-)
+) {
+    /**
+     * A completed scan snapshot is reusable only for the exact same storage
+     * mode and root set. Root order is presentation detail; trailing slashes
+     * are not identity.
+     */
+    fun matchesScopeSet(mode: StorageAccessMode, rawRoots: Collection<String>): Boolean {
+        if (this.mode != mode) return false
+        val cached = roots.mapTo(linkedSetOf()) { normalizeRoot(it.rawRef) }
+        val requested = rawRoots.mapTo(linkedSetOf())(::normalizeRoot)
+        return cached.size == roots.size &&
+            requested.size == rawRoots.size &&
+            cached == requested
+    }
+
+    private fun normalizeRoot(value: String): String =
+        value.trim().let { if (it.endsWith("/") && it.length > 1) it.trimEnd('/') else it }
+}
 
 object LastScanSessionCodec {
     fun encode(value: LastScanSession): String = buildString {
