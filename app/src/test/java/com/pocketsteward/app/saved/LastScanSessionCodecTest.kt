@@ -38,6 +38,37 @@ class LastScanSessionCodecTest {
     }
 
     @Test
+    fun completedSnapshotMatchesExactRootsRegardlessOfOrderOrTrailingSlash() {
+        val session = LastScanSession(
+            mode = StorageAccessMode.DIRECT,
+            roots = listOf(
+                LastScanRoot("Downloads", "/storage/emulated/0/Download"),
+                LastScanRoot("Documents", "/storage/emulated/0/Documents/"),
+            ),
+            savedAtEpochMs = 789L,
+        )
+
+        assertThat(
+            session.matchesScopeSet(
+                StorageAccessMode.DIRECT,
+                listOf("/storage/emulated/0/Documents", "/storage/emulated/0/Download/"),
+            ),
+        ).isTrue()
+        assertThat(
+            session.matchesScopeSet(
+                StorageAccessMode.DIRECT,
+                listOf("/storage/emulated/0/Download"),
+            ),
+        ).isFalse()
+        assertThat(
+            session.matchesScopeSet(
+                StorageAccessMode.SAF,
+                listOf("/storage/emulated/0/Download", "/storage/emulated/0/Documents"),
+            ),
+        ).isFalse()
+    }
+
+    @Test
     fun malformedValueFailsClosed() {
         assertThat(LastScanSessionCodec.decode("garbage")).isNull()
     }
