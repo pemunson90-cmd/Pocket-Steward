@@ -536,6 +536,8 @@ class ScanViewModel(
 
     /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
     internal var autoStarted = false
+    /** Normal Explore entry restores the durable completed snapshot once. */
+    private var entryCacheRestoreAttempted = false
 
     private var scanJob: Job? = null
     internal var indexSearchWatchJob: Job? = null
@@ -731,6 +733,13 @@ class ScanViewModel(
                 _error.value = t.message ?: "Could not restore the previous scan."
             }
         }
+    }
+
+    /** Restore the durable completed scan when Explore is opened normally. */
+    fun restoreCachedScanOnEntry() {
+        if (entryCacheRestoreAttempted || autoStarted) return
+        entryCacheRestoreAttempted = true
+        restoreLastScanSummaryIfAvailable(navigateToResults = true)
     }
 
     fun startLastScanSession() {
@@ -1497,6 +1506,7 @@ class ScanViewModel(
      */
     fun reset() {
         autoStarted = false
+        entryCacheRestoreAttempted = true
         _summary.value = null
         _scanning.value = null
         _busy.value = null
