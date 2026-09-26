@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -188,7 +189,9 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Button(onClick = onScheduledReview) {
@@ -341,8 +344,11 @@ fun HomeScreen(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Button(onClick = { onSavedWorkflow(workflow.id) }) {
                                 Text("Run")
@@ -386,8 +392,11 @@ fun HomeScreen(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Button(onClick = { onSavedSearch(saved.id) }) {
                                 Text("Open")
