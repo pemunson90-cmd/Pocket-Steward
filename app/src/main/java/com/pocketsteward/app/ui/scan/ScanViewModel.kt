@@ -686,48 +686,15 @@ class ScanViewModel(
                         root = parseFileRef(saved.rawRef),
                     )
                 }
-                val allRootsStillIndexed = scopes.all { scope ->
-                    container.database.fileRecordDao()
-                        .getByStableRef(scope.root.rawValue()) != null
-                }
-                if (!allRootsStillIndexed) {
+                val restored = cachedSummaryForScopes(scopes, session.mode)
+                if (restored == null) {
                     settingsRepository.clearLastScanSession()
                     return@launch
                 }
 
-                val records = filesForScopes(scopes)
-                val projectKeywords = settingsRepository.projectKeywords.first()
-                val byCategory = records
-                    .groupBy { classifyByExtension(it.extension) }
-                    .mapValues { (_, files) ->
-                        CategoryStat(
-                            fileCount = files.size,
-                            totalBytes = files.sumOf { it.sizeBytes },
-                        )
-                    }
-
-                val restored = ScanUiState.Summary(
-                    scopes = scopes,
-                    mode = session.mode,
-                    totalFiles = records.size,
-                    totalBytes = records.sumOf { it.sizeBytes },
-                    byCategory = byCategory,
-                    largeFileCount = records.count {
-                        !it.isDirectory && it.sizeBytes >= LARGE_FILE_SUMMARY_BYTES
-                    },
-                    uncategorizedCount = records.count {
-                        !it.isDirectory &&
-                            RuleEngine.classify(
-                                it.displayName,
-                                it.extension,
-                                projectKeywords,
-                            ).isUncategorized()
-                    },
-                )
+                _summary.value = restored
                 if (navigateToResults) {
                     _uiState.value = restored
-                } else {
-                    _summary.value = restored
                 }
             } catch (t: Throwable) {
                 _error.value = t.message ?: "Could not restore the previous scan."
