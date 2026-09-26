@@ -1070,6 +1070,52 @@ class ScanViewModel(
         job.cancel(CancellationException("User paused scan"))
     }
 
+    private suspend fun cachedSummaryForScopes(
+        scopes: List<ScanScope>,
+        mode: StorageAccessMode,
+    ): ScanUiState.Summary? {
+        val session = settingsRepository.lastScanSession.first() ?: return null
+        if (!session.matchesScopeSet(mode, scopes.map { it.root.rawValue() })) return null
+
+        val allRootsStillIndexed = scopes.all { scope ->
+            container.database.fileRecordDao().getByStableRef(scope.root.rawValue()) != null
+        }
+        if (!allRootsStillIndexed) return null
+        return buildSummary(scopes, mode)
+    }
+
+    private suspend fun buildSummary(
+        scopes: List<ScanScope>,
+        mode: StorageAccessMode,
+    ): ScanUiState.Summary {
+        val records = filesForScopes(scopes)
+        val projectKeywords = settingsRepository.projectKeywords.first()
+        val byCategory = records
+            .groupBy { classifyByExtension(it.extension) }
+            .mapValues { (_, files) ->
+                CategoryStat(fileCount = files.size, totalBytes = files.sumOf { it.sizeBytes })
+            }
+
+        return ScanUiState.Summary(
+            scopes = scopes,
+            mode = mode,
+            totalFiles = records.size,
+            totalBytes = records.sumOf { it.sizeBytes },
+            byCategory = byCategory,
+            largeFileCount = records.count {
+                !it.isDirectory && it.sizeBytes >= LARGE_FILE_SUMMARY_BYTES
+            },
+            uncategorizedCount = records.count {
+                !it.isDirectory &&
+                    RuleEngine.classify(
+                        it.displayName,
+                        it.extension,
+                        projectKeywords,
+                    ).isUncategorized()
+            },
+        )
+    }
+
     fun refreshScan(summary: ScanUiState.Summary) {
         val targets = when (summary.mode) {
             StorageAccessMode.DIRECT -> summary.scopes.mapNotNull { scope ->
