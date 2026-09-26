@@ -22,7 +22,7 @@ data class LastScanSession(
     fun matchesScopeSet(mode: StorageAccessMode, rawRoots: Collection<String>): Boolean {
         if (this.mode != mode) return false
         val cached = roots.mapTo(linkedSetOf()) { normalizeRoot(it.rawRef) }
-        val requested = rawRoots.mapTo(linkedSetOf())(::normalizeRoot)
+        val requested = rawRoots.mapTo(linkedSetOf()) { normalizeRoot(it) }
         return cached.size == roots.size &&
             requested.size == rawRoots.size &&
             cached == requested
