@@ -921,32 +921,7 @@ class ScanViewModel(
                     }
                 }
 
-                val records = filesForScopes(scopes)
-                val byCategory = records
-                    .groupBy { classifyByExtension(it.extension) }
-                    .mapValues { (_, files) ->
-                        CategoryStat(fileCount = files.size, totalBytes = files.sumOf { it.sizeBytes })
-                    }
-
-                val projectKeywords = settingsRepository.projectKeywords.first()
-                val summary = ScanUiState.Summary(
-                    scopes = scopes,
-                    mode = mode,
-                    totalFiles = records.size,
-                    totalBytes = records.sumOf { it.sizeBytes },
-                    byCategory = byCategory,
-                    largeFileCount = records.count {
-                        !it.isDirectory && it.sizeBytes >= LARGE_FILE_SUMMARY_BYTES
-                    },
-                    uncategorizedCount = records.count {
-                        !it.isDirectory &&
-                            RuleEngine.classify(
-                                it.displayName,
-                                it.extension,
-                                projectKeywords,
-                            ).isUncategorized()
-                    },
-                )
+                val summary = buildSummary(scopes, mode)
                 settingsRepository.setLastScanSession(
                     LastScanSession(
                         mode = mode,
@@ -959,76 +934,15 @@ class ScanViewModel(
                         savedAtEpochMs = System.currentTimeMillis(),
                     ),
                 )
-                _uiState.value = summary
-
-                targets.forEach { target ->
-                    when (target) {
-                        is ScanTarget.CustomFolder ->
-                            settingsRepository.rememberRecentFolder(target.absolutePath)
-                        is ScanTarget.GrantedSubfolder ->
-                            settingsRepository.rememberRecentFolder(target.documentUri)
-                        else -> Unit
-                    }
-                }
-
-                if (thenScheduledSuggestion != null) {
-                    if (thenScheduledSuggestion.newFileRefs.isNotEmpty()) {
-                        proposeScheduledCleanup(
-                            summary = summary,
-                            suggestion = thenScheduledSuggestion,
-                        )
-                    } else {
-                        // Backward-compatible fallback for v1 pending
-                        // suggestions that predate exact new-file refs.
-                        proposeSmartCleanup(summary)
-                    }
-                } else {
-                    when (thenRun) {
-                        null -> Unit
-                        PostScanAction.INBOX_FILING -> proposeInboxFiling(summary)
-                        PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
-                        PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
-                        PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
-                        PostScanAction.FIND_OLD -> findOldFiles(summary)
-                        PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
-                    }                }
-
-                thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
-                    handleNaturalLanguage(summary, request)
-                }
-
-                thenSavedSearch?.let { saved ->
-                    val categories = saved.filters.categories.mapNotNullTo(linkedSetOf()) { name ->
-                        FileCategory.entries.firstOrNull { it.name == name }
-                    }
-                    runIndexedContentSearch(
-                        summary = summary,
-                        query = saved.query,
-                        requestedCategories = categories,
-                        sort = saved.sort,
-                        filters = saved.filters,
-                        savedSearchId = saved.id,
-                    )
-                }
-
-                thenImportedPlan?.let { imported ->
-                    val sourceRoots = summary.scopes
-                        .mapNotNull { (it.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') }
-                    val destinationRoots = authorizedRootsForImportedPlan(
-                        operations = imported.operations,
-                        sourceRoots = sourceRoots,
-                    )
-
-                    showPlanPreview(
-                        goal = "Imported reviewed plan · ${imported.goal}",
-                        operations = imported.operations,
-                        scopes = summary.scopes,
-                        scopeNotes = listOf(
-                            "Imported plans are never executed directly. Every operation was rescanned and revalidated against current storage.",
-                        ),
-                        authorizedDestinationRoots = destinationRoots,
-                    )
-                }
+                continueFromSummary(
+                    summary = summary,
+                    targets = targets,
+                    thenRun = thenRun,
+                    thenRequest = thenRequest,
+                    thenSavedSearch = thenSavedSearch,
+                    thenImportedPlan = thenImportedPlan,
+                    thenScheduledSuggestion = thenScheduledSuggestion,
+                )
             } catch (cancel: CancellationException) {
                 if (userScanCancellationRequested) {
                     _uiState.value = ScanUiState.Error(
