@@ -70,6 +70,7 @@ fun ScanScreen(
                 !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
                 autoAction == PostScanAction.INBOX_FILING -> viewModel.startConfiguredInboxFiling()
                 autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
+                else -> viewModel.restoreCachedScanOnEntry()
             }
         }
     }
