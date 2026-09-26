@@ -135,7 +135,7 @@ object SortScope {
         isProtected(
             candidate,
             SortProtectionIndex(
-                protectedFolders = protection.protectedFolders,
+                protectedFolders = protectedFolders,
                 parentByRef = candidates
                     .asSequence()
                     .filter { it.isDirectory }
@@ -179,7 +179,7 @@ object SortScope {
 
         return SortPartition(
             sortable = sortable,
-            protectedFolders = protectedFolders,
+            protectedFolders = protection.protectedFolders,
             skippedByProtection = skippedByProtection,
             skippedByDepth = skippedByDepth,
         )
