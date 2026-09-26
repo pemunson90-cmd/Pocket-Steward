@@ -834,16 +834,15 @@ class ScanViewModel(
         userScanCancellationRequested = false
 
         val job = viewModelScope.launch {
-            // A new scan invalidates everything derived from the old one.
-            // Doing it here rather than in reset() is what lets back keep the
-            // results while "Scan again" still clears them.
-            _summary.value = null
+            // Reviews are transient; the last completed inventory is not.
+            // Keep it until a replacement walk actually finishes so a
+            // cancelled refresh or a navigation change never destroys the
+            // snapshot the user already paid to build.
             _review.value = null
             _preview.value = null
             _completion.value = null
             _picker.value = null
             _error.value = null
-            _uiState.value = ScanUiState.Scanning(ScanProgress(0, null, ScanPhase.SCANNING))
 
             try {
                 val accessState = settingsRepository.storageAccessState.first()
@@ -860,6 +859,25 @@ class ScanViewModel(
                     return@launch
                 }
 
+                if (!forceWalk) {
+                    val cached = cachedSummaryForScopes(scopes, mode)
+                    if (cached != null) {
+                        _summary.value = cached
+                        _scanning.value = null
+                        continueFromSummary(
+                            summary = cached,
+                            targets = targets,
+                            thenRun = thenRun,
+                            thenRequest = thenRequest,
+                            thenSavedSearch = thenSavedSearch,
+                            thenImportedPlan = thenImportedPlan,
+                            thenScheduledSuggestion = thenScheduledSuggestion,
+                        )
+                        return@launch
+                    }
+                }
+
+                _uiState.value = ScanUiState.Scanning(ScanProgress(0, null, ScanPhase.SCANNING))
                 val scanner = container.fileScanner(mode)
                 var completedBeforeThisRoot = 0
 
