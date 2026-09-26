@@ -46,6 +46,18 @@ data class SortCandidate(
 )
 
 /**
+ * Precomputed protection ancestry for a candidate set.
+ *
+ * Building the directory-parent map is O(n), so callers that inspect many
+ * files in the same scan must build this once and reuse it rather than
+ * reconstructing it for every candidate.
+ */
+data class SortProtectionIndex internal constructor(
+    val protectedFolders: Set<String>,
+    internal val parentByRef: Map<String, String?>,
+)
+
+/**
  * Decides what Smart cleanup is allowed to touch. Two independent mechanisms,
  * and they are not substitutes for each other:
  *
@@ -74,6 +86,15 @@ object SortScope {
             .mapNotNull { it.parentRef }
             .toSet()
 
+    fun protectionIndex(candidates: List<SortCandidate>): SortProtectionIndex =
+        SortProtectionIndex(
+            protectedFolders = protectedFolders(candidates),
+            parentByRef = candidates
+                .asSequence()
+                .filter { it.isDirectory }
+                .associate { it.stableRef to it.parentRef },
+        )
+
     /**
      * True when [candidate] sits inside [protectedFolders] or inside anything
      * beneath one. Recursive by default, which is the conservative reading:
@@ -94,22 +115,33 @@ object SortScope {
      */
     fun isProtected(
         candidate: SortCandidate,
-        protectedFolders: Set<String>,
-        candidates: List<SortCandidate>,
+        protection: SortProtectionIndex,
     ): Boolean {
         var parent = candidate.parentRef ?: return false
-        val parentByRef = candidates
-            .asSequence()
-            .filter { it.isDirectory }
-            .associate { it.stableRef to it.parentRef }
         val visited = mutableSetOf<String>()
 
         while (visited.add(parent)) {
-            if (parent in protectedFolders) return true
-            parent = parentByRef[parent] ?: break
+            if (parent in protection.protectedFolders) return true
+            parent = protection.parentByRef[parent] ?: break
         }
-        return isProtected(candidate, protectedFolders)
+        return isProtected(candidate, protection.protectedFolders)
     }
+
+    fun isProtected(
+        candidate: SortCandidate,
+        protectedFolders: Set<String>,
+        candidates: List<SortCandidate>,
+    ): Boolean =
+        isProtected(
+            candidate,
+            SortProtectionIndex(
+                protectedFolders = protection.protectedFolders,
+                parentByRef = candidates
+                    .asSequence()
+                    .filter { it.isDirectory }
+                    .associate { it.stableRef to it.parentRef },
+            ),
+        )
 
     /** True when [candidate] is loose directly in [scopeRoot] rather than inside a subfolder. */
     fun isDirectlyInRoot(candidate: SortCandidate, scopeRoot: String): Boolean =
@@ -125,7 +157,7 @@ object SortScope {
         scopeRoot: String,
         includeSubfolders: Boolean,
     ): SortPartition {
-        val protectedFolders = protectedFolders(candidates)
+        val protection = protectionIndex(candidates)
         val sortable = mutableListOf<SortCandidate>()
         var skippedByProtection = 0
         var skippedByDepth = 0
@@ -134,7 +166,7 @@ object SortScope {
             if (candidate.isDirectory) continue
             if (candidate.displayName == DO_NOT_SORT_MARKER) continue
 
-            if (isProtected(candidate, protectedFolders, candidates)) {
+            if (isProtected(candidate, protection)) {
                 skippedByProtection++
                 continue
             }
