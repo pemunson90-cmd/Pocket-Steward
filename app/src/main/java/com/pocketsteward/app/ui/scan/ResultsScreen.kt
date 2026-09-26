@@ -327,13 +327,19 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 }
 
                 item {
+                    Text(
+                        "Pocket Steward tasks update this inventory directly. Check storage only when another app or file manager may have changed these folders.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = Spacing.base),
+                    )
                     Button(
                         onClick = { viewModel.refreshScan(state) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = Spacing.base),
+                            .padding(top = Spacing.tight),
                     ) {
-                        Text("Refresh this scan")
+                        Text("Check storage for outside changes")
                     }
                 }
                 item {
