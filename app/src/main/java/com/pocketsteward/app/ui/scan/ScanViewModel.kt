@@ -946,7 +946,7 @@ class ScanViewModel(
             } catch (cancel: CancellationException) {
                 if (userScanCancellationRequested) {
                     _uiState.value = ScanUiState.Error(
-                        "Scan paused. Progress was saved; run the same selected folders again to resume.",
+                        "Scan paused. Progress was saved. Your last completed snapshot is still available; resuming this scope continues from its checkpoint.",
                     )
                 } else {
                     throw cancel
@@ -969,6 +969,85 @@ class ScanViewModel(
         job.cancel(CancellationException("User paused scan"))
     }
 
+    private suspend fun continueFromSummary(
+        summary: ScanUiState.Summary,
+        targets: Collection<ScanTarget>,
+        thenRun: PostScanAction?,
+        thenRequest: String?,
+        thenSavedSearch: SavedSearch?,
+        thenImportedPlan: DurablePlan?,
+        thenScheduledSuggestion: PendingCleanupSuggestion?,
+    ) {
+        _uiState.value = summary
+
+        targets.forEach { target ->
+            when (target) {
+                is ScanTarget.CustomFolder ->
+                    settingsRepository.rememberRecentFolder(target.absolutePath)
+                is ScanTarget.GrantedSubfolder ->
+                    settingsRepository.rememberRecentFolder(target.documentUri)
+                else -> Unit
+            }
+        }
+
+        if (thenScheduledSuggestion != null) {
+            if (thenScheduledSuggestion.newFileRefs.isNotEmpty()) {
+                proposeScheduledCleanup(
+                    summary = summary,
+                    suggestion = thenScheduledSuggestion,
+                )
+            } else {
+                proposeSmartCleanup(summary)
+            }
+        } else {
+            when (thenRun) {
+                null -> Unit
+                PostScanAction.INBOX_FILING -> proposeInboxFiling(summary)
+                PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
+                PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
+                PostScanAction.FIND_LARGEST -> findLargestFiles(summary)
+                PostScanAction.FIND_OLD -> findOldFiles(summary)
+                PostScanAction.REVIEW_UNCATEGORIZED -> findUncategorized(summary)
+            }
+        }
+
+        thenRequest?.takeIf { it.isNotBlank() }?.let { request ->
+            handleNaturalLanguage(summary, request)
+        }
+
+        thenSavedSearch?.let { saved ->
+            val categories = saved.filters.categories.mapNotNullTo(linkedSetOf()) { name ->
+                FileCategory.entries.firstOrNull { it.name == name }
+            }
+            runIndexedContentSearch(
+                summary = summary,
+                query = saved.query,
+                requestedCategories = categories,
+                sort = saved.sort,
+                filters = saved.filters,
+                savedSearchId = saved.id,
+            )
+        }
+
+        thenImportedPlan?.let { imported ->
+            val sourceRoots = summary.scopes
+                .mapNotNull { (it.root as? FileRef.Direct)?.absolutePath?.trimEnd('/') }
+            val destinationRoots = authorizedRootsForImportedPlan(
+                operations = imported.operations,
+                sourceRoots = sourceRoots,
+            )
+
+            showPlanPreview(
+                goal = "Imported reviewed plan · ${imported.goal}",
+                operations = imported.operations,
+                scopes = summary.scopes,
+                scopeNotes = listOf(
+                    "Imported plans are never executed directly. Every operation is revalidated against the cached inventory and live source preconditions before approval.",
+                ),
+                authorizedDestinationRoots = destinationRoots,
+            )
+        }
+    }
     private suspend fun cachedSummaryForScopes(
         scopes: List<ScanScope>,
         mode: StorageAccessMode,
