@@ -53,7 +53,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             }
 
             val sourceRootKeys = summary.scopes.map { it.root.rawValue().trimEnd('/') }.toSet()
-            val records = allRecordsForScopes(summary.scopes)
+            val scannedRecords = allRecordsForScopes(summary.scopes)
+            val records = scannedRecords
                 .filter { record ->
                     !record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys
                 }
@@ -190,6 +191,9 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
 
             val existingDirectories = linkedSetOf<String>()
             existingDirectories += topLevelDirectories
+            existingDirectories += scannedRecords.filter { record ->
+                record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys
+            }.map { it.stableRef.trimEnd('/') }
             existingDirectories += documentProjects.map { it.path }
             existingDirectories += savedHomes.map { it.path }
             existingDirectories += favorites.map { it.path }

@@ -87,6 +87,68 @@ class InboxFilingPlanAdapterTest {
     }
 
     @Test
+    fun unresolvedLooseFileMovesIntoDownloadsUncertainCheckpoint() {
+        val artifact = FilingArtifact(
+            stableRef = "/storage/emulated/0/Download/mystery.txt",
+            displayName = "mystery.txt",
+            extension = "txt",
+            sizeBytes = 10,
+            modifiedAt = 1,
+            parentRef = "/storage/emulated/0/Download",
+        )
+        val unresolved = FilingDecision(
+            artifact = artifact,
+            projectName = null,
+            projectHome = null,
+            release = null,
+            destinationDirectory = null,
+            confidence = FilingConfidence.UNRESOLVED,
+            evidence = emptyList(),
+        )
+        val plan = InboxFilingPlanAdapter.build(
+            result = InboxFilingResult(listOf(unresolved)),
+            storageRoot = FileRef.Direct("/storage/emulated/0"),
+            existingDirectories = setOf("/storage/emulated/0/Download"),
+        )
+        assertThat((plan.operations[0] as PlannedOperation.CreateDirectory).name).isEqualTo("Uncertain")
+        assertThat((plan.operations[1] as PlannedOperation.Move).destination.rawValue())
+            .isEqualTo("/storage/emulated/0/Download/Uncertain/mystery.txt")
+        assertThat(plan.defaultSelectedSourceRefs).containsExactly(artifact.stableRef)
+        assertThat(plan.presentation.checkpointCount).isEqualTo(1)
+        assertThat(plan.presentation.checkpointGroups.single().isUncertainCheckpoint).isTrue()
+    }
+
+    @Test
+    fun existingUncertainCheckpointIsReused() {
+        val unresolved = FilingDecision(
+            artifact = FilingArtifact(
+                stableRef = "/storage/emulated/0/Download/mystery.txt",
+                displayName = "mystery.txt",
+                extension = "txt",
+                sizeBytes = 10,
+                modifiedAt = 1,
+                parentRef = "/storage/emulated/0/Download",
+            ),
+            projectName = null,
+            projectHome = null,
+            release = null,
+            destinationDirectory = null,
+            confidence = FilingConfidence.UNRESOLVED,
+            evidence = emptyList(),
+        )
+        val plan = InboxFilingPlanAdapter.build(
+            result = InboxFilingResult(listOf(unresolved)),
+            storageRoot = FileRef.Direct("/storage/emulated/0"),
+            existingDirectories = setOf(
+                "/storage/emulated/0/Download",
+                "/storage/emulated/0/Download/Uncertain",
+            ),
+        )
+        assertThat(plan.operations).hasSize(1)
+        assertThat(plan.operations.single()).isInstanceOf(PlannedOperation.Move::class.java)
+    }
+
+    @Test
     fun safPlanUsesTypedChildrenRatherThanInventingUris() {
         val root = FileRef.Saf("content://provider/tree/root")
         val home = ProjectHomeCandidate(
@@ -108,6 +170,38 @@ class InboxFilingPlanAdapterTest {
         assertThat(releaseCreate.parent).isInstanceOf(FileRef.Child::class.java)
         assertThat(move.destination).isInstanceOf(FileRef.Child::class.java)
         assertThat(plan.presentation.groups.single().editableDirectDestination).isFalse()
+    }
+
+    @Test
+    fun safUnresolvedFileUsesTypedUncertainChild() {
+        val root = FileRef.Saf("content://provider/tree/root")
+        val unresolved = FilingDecision(
+            artifact = FilingArtifact(
+                stableRef = "content://provider/tree/root/document/mystery.txt",
+                displayName = "mystery.txt",
+                extension = "txt",
+                sizeBytes = 10,
+                modifiedAt = 1,
+                parentRef = root.rawValue(),
+            ),
+            projectName = null,
+            projectHome = null,
+            release = null,
+            destinationDirectory = null,
+            confidence = FilingConfidence.UNRESOLVED,
+            evidence = emptyList(),
+        )
+        val plan = InboxFilingSafPlanAdapter.build(
+            result = InboxFilingResult(listOf(unresolved)),
+            scopeRoot = root,
+            existingHomes = emptyMap(),
+            scopeLabel = "Granted inbox",
+        )
+        val create = plan.operations[0] as PlannedOperation.CreateDirectory
+        val move = plan.operations[1] as PlannedOperation.Move
+        assertThat(create.name).isEqualTo("Uncertain")
+        assertThat(move.destination).isInstanceOf(FileRef.Child::class.java)
+        assertThat(plan.defaultSelectedSourceRefs).containsExactly(unresolved.artifact.stableRef)
     }
 
     private fun decision(home: ProjectHomeCandidate, release: String) = FilingDecision(

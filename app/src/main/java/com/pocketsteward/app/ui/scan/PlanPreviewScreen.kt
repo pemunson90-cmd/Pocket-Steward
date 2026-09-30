@@ -104,8 +104,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             }
                         }
                         if (preview.filingPresentation != null) {
-                            append("$selectedFiles selected · ${preview.filingPresentation.proposedCount} proposed")
-                            if (preview.filingPresentation.unresolvedCount > 0) append(" · ${preview.filingPresentation.unresolvedCount} stays")
+                            append("$selectedFiles selected · ${preview.filingPresentation.proposedCount} project proposals")
+                            if (preview.filingPresentation.checkpointCount > 0) {
+                                append(" · ${preview.filingPresentation.checkpointCount} to Uncertain")
+                            }
                         } else {
                             append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
                         }
@@ -244,9 +246,23 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             )
                         }
                     }
-                    if (filing.unresolved.isNotEmpty()) {
-                        item { SectionHeader("Needs your choice · stays in Downloads") }
-                        items(filing.unresolved, key = { it.sourceRef }) { item ->
+                    if (filing.checkpointGroups.isNotEmpty()) {
+                        item { SectionHeader("Uncertain checkpoint") }
+                        items(filing.checkpointGroups, key = { "checkpoint:${it.destinationPath}" }) { group ->
+                            FilingDestinationCard(
+                                group = group,
+                                preview = preview,
+                                onSetSelected = viewModel::setPlanOperationSelected,
+                                onApplyDestination = { _, _ -> },
+                            )
+                        }
+                    }
+                    val withoutCheckpoint = filing.unresolved.filter { item ->
+                        filing.checkpointGroups.none { group -> group.items.any { it.sourceRef == item.sourceRef } }
+                    }
+                    if (withoutCheckpoint.isNotEmpty()) {
+                        item { SectionHeader("Cannot move to Uncertain") }
+                        items(withoutCheckpoint, key = { it.sourceRef }) { item ->
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Row(
                                     modifier = Modifier.padding(Spacing.base),
@@ -588,13 +604,13 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
                 buildString {
                     append(strong).append(" ready to file")
                     if (probable > 0) append(" · ").append(probable).append(" need review")
-                    if (filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" stay in Downloads")
+                    if (filing.checkpointCount > 0) append(" · ").append(filing.checkpointCount).append(" to Uncertain")
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
             Text(
-                "Files are grouped by project. Check each destination before moving; uncertain files stay in Downloads.",
+                "Files are grouped by project. Unmatched files go to the inbox's Uncertain folder for later review.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Spacing.hairline),
@@ -632,12 +648,14 @@ private fun FilingDestinationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
-                            .ifBlank { "Project root" },
+                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else {
+                            group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
+                                .ifBlank { "Project root" }
+                        },
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        "Downloads → ${friendlyPath(group.destinationPath)}",
+                        "${preview.scopes.firstOrNull()?.label ?: "Inbox"} → ${friendlyPath(group.destinationPath)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -645,7 +663,7 @@ private fun FilingDestinationCard(
                     )
                     Text(
                         buildString {
-                            append(if (group.existingProjectHome) "Existing project" else "New project home")
+                            append(if (group.isUncertainCheckpoint) "Review later" else if (group.existingProjectHome) "Existing project" else "New project home")
                             group.release?.let { append(" · release ").append(it) }
                             append(" · ").append(selectedFiles).append("/").append(group.items.size).append(" selected")
                             append(" · ").append(formatBytes(totalBytes))
@@ -679,7 +697,7 @@ private fun FilingDestinationCard(
                             Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                             Text(
                                 buildString {
-                                    append(if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
+                                    append(if (group.isUncertainCheckpoint) "Uncertain · review later" else if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
                                     append(" · ").append(formatBytes(item.sizeBytes))
                                 },
                                 style = MaterialTheme.typography.labelSmall,

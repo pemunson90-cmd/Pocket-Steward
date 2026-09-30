@@ -25,14 +25,17 @@ data class FilingReviewGroup(
     val items: List<FilingReviewItem>,
     val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
     val editableDirectDestination: Boolean = true,
+    val isUncertainCheckpoint: Boolean = false,
 )
 
 data class FilingReviewPresentation(
     val groups: List<FilingReviewGroup>,
     val unresolved: List<FilingReviewItem>,
+    val checkpointGroups: List<FilingReviewGroup> = emptyList(),
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size
+    val checkpointCount: Int get() = checkpointGroups.sumOf { it.items.size }
 }
 
 data class InboxFilingPlan(
@@ -144,12 +147,40 @@ object InboxFilingPlanAdapter {
             .sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() })
 
         val unresolved = result.unresolved.map(::reviewItem)
+        val checkpointGroups = result.unresolved
+            .groupBy { it.artifact.parentRef?.trimEnd('/') }
+            .mapNotNull { (inboxPath, decisions) ->
+                if (inboxPath == null || !inboxPath.startsWith("$rootPath/", ignoreCase = true)) {
+                    return@mapNotNull null
+                }
+                val checkpointPath = "$inboxPath/Uncertain"
+                ensureDirectory(checkpointPath, "Uncertain checkpoint")
+                authorization += inboxPath
+                decisions.forEach { decision ->
+                    operations += PlannedOperation.Move(
+                        source = parseFileRef(decision.artifact.stableRef),
+                        destination = FileRef.Direct(checkpointPath).child(decision.artifact.displayName),
+                        reason = "Keep this unresolved file in the Downloads uncertain checkpoint for review.",
+                    )
+                    selectedRefs += decision.artifact.stableRef
+                }
+                FilingReviewGroup(
+                    projectName = "Uncertain",
+                    projectHomePath = inboxPath,
+                    destinationPath = checkpointPath,
+                    existingProjectHome = true,
+                    release = null,
+                    items = decisions.map { reviewItem(it).copy(destinationPath = checkpointPath) },
+                    editableDirectDestination = false,
+                    isUncertainCheckpoint = true,
+                )
+            }
 
         return InboxFilingPlan(
             operations = operations,
             authorizedDestinationRoots = authorization.map { FileRef.Direct(it) },
             defaultSelectedSourceRefs = selectedRefs,
-            presentation = FilingReviewPresentation(groups, unresolved),
+            presentation = FilingReviewPresentation(groups, unresolved, checkpointGroups),
         )
     }
 
@@ -261,6 +292,46 @@ object InboxFilingSafPlanAdapter {
             )
         }
 
+        val checkpointGroups = if (result.unresolved.isEmpty()) {
+            emptyList()
+        } else {
+            val checkpointRef = scopeRoot.child("Uncertain")
+            operations += PlannedOperation.CreateDirectory(
+                parent = scopeRoot,
+                name = "Uncertain",
+                reason = "Create or reuse the uncertain checkpoint inside the granted inbox.",
+            )
+            result.unresolved.forEach { decision ->
+                operations += PlannedOperation.Move(
+                    source = parseFileRef(decision.artifact.stableRef),
+                    destination = checkpointRef.child(decision.artifact.displayName),
+                    reason = "Keep this unresolved file in the uncertain checkpoint for review.",
+                )
+                selectedRefs += decision.artifact.stableRef
+            }
+            listOf(
+                FilingReviewGroup(
+                    projectName = "Uncertain",
+                    projectHomePath = scopeLabel,
+                    destinationPath = "$scopeLabel › Uncertain",
+                    existingProjectHome = true,
+                    release = null,
+                    items = result.unresolved.map { decision ->
+                        FilingReviewItem(
+                            sourceRef = decision.artifact.stableRef,
+                            displayName = decision.artifact.displayName,
+                            sizeBytes = decision.artifact.sizeBytes,
+                            confidence = decision.confidence,
+                            evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
+                            destinationPath = "$scopeLabel › Uncertain",
+                        )
+                    },
+                    editableDirectDestination = false,
+                    isUncertainCheckpoint = true,
+                ),
+            )
+        }
+
         return InboxFilingPlan(
             operations = operations,
             authorizedDestinationRoots = emptyList(),
@@ -277,6 +348,7 @@ object InboxFilingSafPlanAdapter {
                         destinationPath = null,
                     )
                 },
+                checkpointGroups = checkpointGroups,
             ),
         )
     }
