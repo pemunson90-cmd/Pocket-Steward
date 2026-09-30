@@ -32,6 +32,7 @@ data class FilingReviewPresentation(
     val groups: List<FilingReviewGroup>,
     val unresolved: List<FilingReviewItem>,
     val checkpointGroups: List<FilingReviewGroup> = emptyList(),
+    val skippedInboxFolders: Int = 0,
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size

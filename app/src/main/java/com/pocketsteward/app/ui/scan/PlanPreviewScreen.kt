@@ -108,6 +108,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             if (preview.filingPresentation.checkpointCount > 0) {
                                 append(" · ${preview.filingPresentation.checkpointCount} to Uncertain")
                             }
+                            if (preview.filingPresentation.skippedInboxFolders > 0) {
+                                append(" · ${preview.filingPresentation.skippedInboxFolders} folders left")
+                            }
                         } else {
                             append("${preview.selectedIndices.size} selected · ${preview.accepted.size} available")
                         }
@@ -605,12 +608,17 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
                     append(strong).append(" ready to file")
                     if (probable > 0) append(" · ").append(probable).append(" need review")
                     if (filing.checkpointCount > 0) append(" · ").append(filing.checkpointCount).append(" to Uncertain")
+                    if (filing.skippedInboxFolders > 0) append(" · ").append(filing.skippedInboxFolders).append(" existing folders left")
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
             Text(
-                "Files are grouped by project. Unmatched files go to the inbox's Uncertain folder for later review.",
+                if (filing.skippedInboxFolders > 0) {
+                    "Loose files are grouped by project or moved to Uncertain. Existing folders stay put until they can be reviewed safely."
+                } else {
+                    "Files are grouped by project. Unmatched files go to the inbox's Uncertain folder for later review."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Spacing.hairline),
