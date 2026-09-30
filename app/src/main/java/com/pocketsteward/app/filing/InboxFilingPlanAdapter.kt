@@ -5,7 +5,7 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.child
 import com.pocketsteward.app.storage.parseFileRef
 import com.pocketsteward.app.storage.rawValue
-import java.io.File
+import com.pocketsteward.app.saved.ProjectHierarchyStrategy
 
 data class FilingReviewItem(
     val sourceRef: String,
@@ -23,6 +23,7 @@ data class FilingReviewGroup(
     val existingProjectHome: Boolean,
     val release: String?,
     val items: List<FilingReviewItem>,
+    val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
     val editableDirectDestination: Boolean = true,
 )
 
@@ -53,6 +54,30 @@ object InboxFilingPlanAdapter {
         val plannedDirectories = linkedSetOf<String>()
         val authorization = linkedSetOf<String>()
         val selectedRefs = linkedSetOf<String>()
+        val rootPath = storageRoot.absolutePath.trimEnd('/')
+
+        fun ensureDirectory(path: String, projectName: String) {
+            val normalized = path.trimEnd('/')
+            require(normalized.startsWith("$rootPath/", ignoreCase = true)) {
+                "A filing destination must be below the authorized storage root."
+            }
+            val parts = normalized.removePrefix("$rootPath/").split('/')
+            require(parts.all { InboxFilingEngine.sanitizeSegment(it) == it }) {
+                "A filing destination contains an unsafe folder name."
+            }
+            var parentPath = rootPath
+            for (part in parts) {
+                val childPath = "$parentPath/$part"
+                if (childPath.lowercase() !in existing && plannedDirectories.add(childPath.lowercase())) {
+                    operations += PlannedOperation.CreateDirectory(
+                        parent = FileRef.Direct(parentPath),
+                        name = part,
+                        reason = "Create the reviewed folder for $projectName.",
+                    )
+                }
+                parentPath = childPath
+            }
+        }
 
         val proposed = result.proposed.filter { decision ->
             decision.projectHome != null && decision.destinationDirectory != null
@@ -70,31 +95,14 @@ object InboxFilingPlanAdapter {
             val homeExists = homePath.lowercase() in existing
 
             if (!homeExists) {
-                val parent = File(homePath).parentFile?.absolutePath?.trimEnd('/')
-                require(parent != null && parent.equals(storageRoot.absolutePath.trimEnd('/'), ignoreCase = true)) {
-                    "A new project home may only be created directly under the authorized storage root."
-                }
-                if (plannedDirectories.add(homePath.lowercase())) {
-                    operations += PlannedOperation.CreateDirectory(
-                        parent = storageRoot,
-                        name = File(homePath).name,
-                        reason = "Create the reviewed project home for $projectName.",
-                    )
-                }
-                authorization += storageRoot.absolutePath.trimEnd('/')
+                ensureDirectory(homePath, projectName)
+                authorization += rootPath
             } else {
                 authorization += homePath
             }
 
             if (!destinationPath.equals(homePath, ignoreCase = true)) {
-                val releaseName = File(destinationPath).name
-                if (plannedDirectories.add(destinationPath.lowercase())) {
-                    operations += PlannedOperation.CreateDirectory(
-                        parent = homeRef,
-                        name = releaseName,
-                        reason = "Create/use the reviewed release folder for $projectName.",
-                    )
-                }
+                ensureDirectory(destinationPath, projectName)
             }
 
             decisions.forEach { decision ->
@@ -129,6 +137,7 @@ object InboxFilingPlanAdapter {
                     existingProjectHome = home.path.trimEnd('/').lowercase() in existing,
                     release = first.release,
                     items = decisions.map(::reviewItem),
+                    hierarchy = home.hierarchy,
                     editableDirectDestination = home.path.trimEnd('/').lowercase() in existing,
                 )
             }
@@ -247,6 +256,7 @@ object InboxFilingSafPlanAdapter {
                         destinationPath = displayDestination,
                     )
                 },
+                hierarchy = home.hierarchy,
                 editableDirectDestination = false,
             )
         }

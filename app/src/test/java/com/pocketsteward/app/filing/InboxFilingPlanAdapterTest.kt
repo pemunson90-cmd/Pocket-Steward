@@ -51,6 +51,42 @@ class InboxFilingPlanAdapterTest {
     }
 
     @Test
+    fun newDocumentProjectCreatesEachFolderBeforeMovingFile() {
+        val home = ProjectHomeCandidate(
+            name = "NSTL",
+            path = "/storage/emulated/0/Documents/NSTL",
+            hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
+        )
+        val artifact = FilingArtifact(
+            stableRef = "/storage/emulated/0/Download/NSTL-draft.txt",
+            displayName = "NSTL-draft.txt",
+            extension = "txt",
+            sizeBytes = 10,
+            modifiedAt = 1,
+            parentRef = "/storage/emulated/0/Download",
+        )
+        val decision = FilingDecision(
+            artifact = artifact,
+            projectName = "NSTL",
+            projectHome = home,
+            release = null,
+            destinationDirectory = "${home.path}/Drafts",
+            confidence = FilingConfidence.STRONG,
+            evidence = emptyList(),
+        )
+        val plan = InboxFilingPlanAdapter.build(
+            result = InboxFilingResult(listOf(decision)),
+            storageRoot = FileRef.Direct("/storage/emulated/0"),
+            existingDirectories = setOf("/storage/emulated/0/Documents"),
+        )
+        val directories = plan.operations.filterIsInstance<PlannedOperation.CreateDirectory>()
+        assertThat(directories.map { it.name }).containsExactly("NSTL", "Drafts").inOrder()
+        assertThat(plan.operations.last()).isInstanceOf(PlannedOperation.Move::class.java)
+        assertThat(plan.authorizedDestinationRoots.map { it.absolutePath })
+            .containsExactly("/storage/emulated/0")
+    }
+
+    @Test
     fun safPlanUsesTypedChildrenRatherThanInventingUris() {
         val root = FileRef.Saf("content://provider/tree/root")
         val home = ProjectHomeCandidate(

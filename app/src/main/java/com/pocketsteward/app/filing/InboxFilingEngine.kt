@@ -17,8 +17,12 @@ import kotlin.math.abs
 object InboxFilingEngine {
     private const val STRONG_SCORE = 82
     private const val PROBABLE_SCORE = 62
+    private const val AMBIGUOUS_PROJECT_MARGIN = 15
     private const val COHORT_WINDOW_MS = 6L * 60L * 60L * 1000L
     private const val SUPPORTING_COHORT_WINDOW_MS = 45L * 60L * 1000L
+    private val manuscriptRole = Regex("(^|[^a-z])(manuscript|novel|chapters?)([^a-z]|$)")
+    private val draftRole = Regex("(^|[^a-z])(drafts?|revisions?)([^a-z]|$)")
+    private val notesRole = Regex("(^|[^a-z])(notes?|research|outline)([^a-z]|$)")
 
     private val genericTokens = setOf(
         "app", "application", "apk", "source", "src", "build", "release", "debug",
@@ -77,6 +81,7 @@ object InboxFilingEngine {
                         destinationDirectory = destinationFor(
                             requireNotNull(decision.projectHome),
                             release,
+                            decision.artifact,
                         ),
                         confidence = if (decision.confidence == FilingConfidence.STRONG) FilingConfidence.STRONG else FilingConfidence.PROBABLE,
                         evidence = decision.evidence + FilingEvidence(
@@ -119,7 +124,7 @@ object InboxFilingEngine {
                         projectName = home.name,
                         projectHome = home,
                         release = release,
-                        destinationDirectory = destinationFor(home, release),
+                        destinationDirectory = destinationFor(home, release, decision.artifact),
                         confidence = FilingConfidence.PROBABLE,
                         evidence = listOf(
                             FilingEvidence(
@@ -231,7 +236,8 @@ object InboxFilingEngine {
             }
         }
 
-        val best = evidenceByHome.entries.maxByOrNull { (_, evidence) -> evidence.sumOf { it.weight } }
+        val ranked = evidenceByHome.entries.sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
+        val best = ranked.firstOrNull()
         if (best == null) {
             return FilingDecision(
                 artifact = artifact,
@@ -247,9 +253,26 @@ object InboxFilingEngine {
         val home = best.key
         val evidence = best.value.distinctBy { it.kind to it.detail }
         val score = evidence.sumOf { it.weight }
+        val runnerUp = ranked.getOrNull(1)
+        val runnerUpScore = runnerUp?.value?.sumOf { it.weight } ?: 0
+        if (runnerUp != null && runnerUpScore >= PROBABLE_SCORE && score - runnerUpScore < AMBIGUOUS_PROJECT_MARGIN) {
+            return FilingDecision(
+                artifact = artifact,
+                projectName = null,
+                projectHome = null,
+                release = releaseOf(artifact),
+                destinationDirectory = null,
+                confidence = FilingConfidence.UNRESOLVED,
+                evidence = evidence + FilingEvidence(
+                    FilingEvidenceKind.PROJECT_AMBIGUITY,
+                    "matches both ${home.name} and ${runnerUp.key.name}; choose a project home",
+                    200,
+                ),
+            )
+        }
         val release = releaseOf(artifact)
         val confidence = when {
-            score >= STRONG_SCORE && (release != null || home.hierarchy == ProjectHierarchyStrategy.FLAT) -> FilingConfidence.STRONG
+            score >= STRONG_SCORE && (release != null || home.hierarchy != ProjectHierarchyStrategy.VERSIONED) -> FilingConfidence.STRONG
             score >= STRONG_SCORE -> FilingConfidence.PROBABLE
             score >= PROBABLE_SCORE -> FilingConfidence.PROBABLE
             else -> FilingConfidence.UNRESOLVED
@@ -260,7 +283,7 @@ object InboxFilingEngine {
             projectName = home.name,
             projectHome = home,
             release = release,
-            destinationDirectory = if (confidence == FilingConfidence.UNRESOLVED) null else destinationFor(home, release),
+            destinationDirectory = if (confidence == FilingConfidence.UNRESOLVED) null else destinationFor(home, release, artifact),
             confidence = confidence,
             evidence = evidence,
             createsProjectHome = !home.persisted && homes.none { normalize(it.path) == normalize(home.path) },
@@ -284,20 +307,37 @@ object InboxFilingEngine {
         return clean
     }
 
-    private fun destinationFor(home: ProjectHomeCandidate, release: String?): String {
+    private fun destinationFor(home: ProjectHomeCandidate, release: String?, artifact: FilingArtifact): String {
         val base = home.path.trimEnd('/')
         return when (home.hierarchy) {
             ProjectHierarchyStrategy.FLAT -> base
             ProjectHierarchyStrategy.VERSIONED -> sanitizeSegment(release)?.let { "$base/$it" } ?: base
+            ProjectHierarchyStrategy.PROJECT_ROLES -> roleFor(artifact, release)?.let { "$base/$it" } ?: base
+        }
+    }
+
+    private fun roleFor(artifact: FilingArtifact, release: String?): String? {
+        val name = artifact.displayName.lowercase(Locale.ROOT)
+        val extension = artifact.extension.lowercase(Locale.ROOT)
+        return when {
+            manuscriptRole.containsMatchIn(name) -> "Manuscript"
+            draftRole.containsMatchIn(name) -> "Drafts"
+            notesRole.containsMatchIn(name) -> "Notes"
+            extension in setOf("png", "jpg", "jpeg", "webp", "gif", "heic") -> "Images"
+            extension in setOf("zip", "7z", "rar", "tar", "gz") -> "Archive"
+            release != null -> "Versions"
+            else -> null
         }
     }
 
     private fun syntheticHome(name: String, storageRoot: String): ProjectHomeCandidate {
         val safe = sanitizeSegment(name) ?: "Unsorted project"
+        val directStorage = !storageRoot.startsWith("content://")
         return ProjectHomeCandidate(
             name = safe,
-            path = storageRoot.trimEnd('/') + "/" + safe,
+            path = storageRoot.trimEnd('/') + if (directStorage) "/Documents/$safe" else "/$safe",
             aliases = listOf(safe),
+            hierarchy = if (directStorage) ProjectHierarchyStrategy.PROJECT_ROLES else ProjectHierarchyStrategy.VERSIONED,
             persisted = false,
         )
     }

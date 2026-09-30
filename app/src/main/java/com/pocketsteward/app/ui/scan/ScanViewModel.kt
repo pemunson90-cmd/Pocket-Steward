@@ -1486,11 +1486,7 @@ class ScanViewModel(
                 path = normalizedHome,
                 aliases = listOf(group.projectName),
                 packageIds = packageIds,
-                hierarchy = if (group.release != null) {
-                    ProjectHierarchyStrategy.VERSIONED
-                } else {
-                    ProjectHierarchyStrategy.FLAT
-                },
+                hierarchy = group.hierarchy,
             )
         }
     }

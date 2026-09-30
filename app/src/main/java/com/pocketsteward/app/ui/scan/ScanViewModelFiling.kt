@@ -140,6 +140,21 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
                     persisted = false,
                 )
             }
+            val documentProjects = topLevel.firstOrNull { it.displayName.equals("Documents", ignoreCase = true) }
+                ?.let { documents ->
+                    withContext(Dispatchers.IO) {
+                        runCatching { gateway.listChildren(documents.ref) }.getOrDefault(emptyList())
+                    }.filter { it.isDirectory && !it.displayName.startsWith('.') }
+                        .map { entry ->
+                            ProjectHomeCandidate(
+                                name = entry.displayName,
+                                path = entry.ref.rawValue().trimEnd('/'),
+                                aliases = listOf(entry.displayName),
+                                hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
+                                persisted = false,
+                            )
+                        }
+                }.orEmpty()
 
             val artifacts = records.map { record ->
                 val metadata = enriched.getValue(record.stableRef)
@@ -165,7 +180,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
                 InboxFilingEngine.resolve(
                     artifacts = artifacts,
                     persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
-                    discoveredHomes = discovered,
+                    discoveredHomes = discovered + documentProjects,
                     projectKeywords = settingsRepository.projectKeywords.first(),
                     correctionRules = settingsRepository.correctionRules.first(),
                     storageRoot = storageRoot.absolutePath,
@@ -175,11 +190,12 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
 
             val existingDirectories = linkedSetOf<String>()
             existingDirectories += topLevelDirectories
+            existingDirectories += documentProjects.map { it.path }
             existingDirectories += savedHomes.map { it.path }
             existingDirectories += favorites.map { it.path }
             // Known release children matter for friendly "existing" UI;
             // plan validation independently snapshots them live.
-            for (home in (savedHomes + favorites + discovered).distinctBy { it.path.lowercase() }.take(100)) {
+            for (home in (savedHomes + favorites + discovered + documentProjects).distinctBy { it.path.lowercase() }.take(100)) {
                 val children = withContext(Dispatchers.IO) {
                     runCatching { gateway.listChildren(FileRef.Direct(home.path)) }.getOrDefault(emptyList())
                 }

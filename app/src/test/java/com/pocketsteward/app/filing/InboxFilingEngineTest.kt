@@ -86,6 +86,35 @@ class InboxFilingEngineTest {
     }
 
     @Test
+    fun overlappingProjectNamesRequireReviewInsteadOfChoosingByListOrder() {
+        val stories = ProjectHomeCandidate(
+            name = "Stories",
+            path = "/storage/emulated/0/Documents/Stories",
+            persisted = true,
+        )
+        val nstlStories = ProjectHomeCandidate(
+            name = "NSTL Stories",
+            path = "/storage/emulated/0/Documents/NSTL Stories",
+            persisted = true,
+        )
+        val result = InboxFilingEngine.resolve(
+            artifacts = listOf(
+                artifact("draft.zip", "zip", 1_000).copy(
+                    archiveSample = listOf("NSTL Stories/chapter.txt", "Stories/notes.txt"),
+                ),
+            ),
+            persistedHomes = listOf(stories, nstlStories),
+            discoveredHomes = emptyList(),
+            projectKeywords = emptyList(),
+            correctionRules = emptyList(),
+            storageRoot = "/storage/emulated/0",
+        )
+
+        assertThat(result.proposed).isEmpty()
+        assertThat(result.unresolved.single().evidenceSummary).contains("matches both")
+    }
+
+    @Test
     fun supportingImageNearUniqueStrongReleaseIsOnlyProbable() {
         val result = InboxFilingEngine.resolve(
             artifacts = listOf(
@@ -175,8 +204,41 @@ class InboxFilingEngineTest {
         )
 
         assertThat(result.proposed).hasSize(2)
-        assertThat(result.proposed.first().projectHome?.path).isEqualTo("/storage/emulated/0/Pocket Widget")
+        assertThat(result.proposed.first().projectHome?.path).isEqualTo("/storage/emulated/0/Documents/Pocket Widget")
         assertThat(result.proposed.first().createsProjectHome).isTrue()
+    }
+
+    @Test
+    fun projectDocumentsAndArtworkStayUnderOneHomeWithClearRoles() {
+        val nstl = ProjectHomeCandidate(
+            name = "NSTL",
+            path = "/storage/emulated/0/Documents/NSTL",
+            hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
+            persisted = true,
+        )
+        val result = InboxFilingEngine.resolve(
+            artifacts = listOf(
+                artifact("NSTL-manuscript.pdf", "pdf", 1_000),
+                artifact("NSTL-draft.txt", "txt", 1_100),
+                artifact("NSTL-notes.md", "md", 1_200),
+                artifact("NSTL-cover.png", "png", 1_300),
+                artifact("NSTL-0.2.0.apk", "apk", 1_400),
+                artifact("NSTL-sources.zip", "zip", 1_500),
+            ),
+            persistedHomes = listOf(nstl),
+            discoveredHomes = emptyList(),
+            projectKeywords = emptyList(),
+            correctionRules = emptyList(),
+            storageRoot = "/storage/emulated/0",
+        )
+        assertThat(result.proposed.mapNotNull { it.destinationDirectory }).containsExactly(
+            "/storage/emulated/0/Documents/NSTL/Manuscript",
+            "/storage/emulated/0/Documents/NSTL/Drafts",
+            "/storage/emulated/0/Documents/NSTL/Notes",
+            "/storage/emulated/0/Documents/NSTL/Images",
+            "/storage/emulated/0/Documents/NSTL/Versions",
+            "/storage/emulated/0/Documents/NSTL/Archive",
+        )
     }
 
     @Test

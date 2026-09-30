@@ -18,6 +18,7 @@ data class CorrectionRule(
 enum class ProjectHierarchyStrategy {
     FLAT,
     VERSIONED,
+    PROJECT_ROLES,
 }
 
 data class ProjectHome(

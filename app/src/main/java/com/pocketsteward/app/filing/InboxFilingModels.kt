@@ -22,6 +22,7 @@ enum class FilingEvidenceKind {
     DESTINATION_DUPLICATE,
     DESTINATION_CONFLICT,
     DESTINATION_PROTECTED,
+    PROJECT_AMBIGUITY,
 }
 
 data class FilingEvidence(

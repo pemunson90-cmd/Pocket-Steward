@@ -217,23 +217,35 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     item {
                         FilingOverviewCard(filing)
                     }
-                    items(filing.groups, key = { it.destinationPath }) { group ->
-                        FilingDestinationCard(
-                            group = group,
-                            preview = preview,
-                            onSetSelected = viewModel::setPlanOperationSelected,
-                            onApplyDestination = { root, name ->
-                                viewModel.editPlanDestinationGroup(
-                                    groupDirectory = group.destinationPath,
-                                    newDestinationRootPath = root,
-                                    newGroupName = name,
-                                    rememberForSimilarFiles = false,
-                                )
-                            },
-                        )
+                    if (filing.groups.isNotEmpty()) {
+                        item { SectionHeader("Proposed project folders") }
+                    }
+                    filing.groups.groupBy { it.projectHomePath }.forEach { (_, projectGroups) ->
+                        item(key = "project:${projectGroups.first().projectHomePath}") {
+                            Text(
+                                "${projectGroups.first().projectName} · ${projectGroups.sumOf { it.items.size }} files",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(top = Spacing.tight),
+                            )
+                        }
+                        items(projectGroups, key = { it.destinationPath }) { group ->
+                            FilingDestinationCard(
+                                group = group,
+                                preview = preview,
+                                onSetSelected = viewModel::setPlanOperationSelected,
+                                onApplyDestination = { root, name ->
+                                    viewModel.editPlanDestinationGroup(
+                                        groupDirectory = group.destinationPath,
+                                        newDestinationRootPath = root,
+                                        newGroupName = name,
+                                        rememberForSimilarFiles = false,
+                                    )
+                                },
+                            )
+                        }
                     }
                     if (filing.unresolved.isNotEmpty()) {
-                        item { SectionHeader("Stays in inbox") }
+                        item { SectionHeader("Needs your choice · stays in Downloads") }
                         items(filing.unresolved, key = { it.sourceRef }) { item ->
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Row(
@@ -571,18 +583,18 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
     val probable = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.PROBABLE }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
-            Text("Inbox filing", style = MaterialTheme.typography.titleMedium)
+            Text("Organize Downloads", style = MaterialTheme.typography.titleMedium)
             Text(
                 buildString {
-                    append(strong).append(" strong")
-                    if (probable > 0) append(" · ").append(probable).append(" probable")
-                    if (filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" staying put")
+                    append(strong).append(" ready to file")
+                    if (probable > 0) append(" · ").append(probable).append(" need review")
+                    if (filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" stay in Downloads")
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
             Text(
-                "Strong matches are checked. Probable matches wait for you. File type never outranks project ownership.",
+                "Files are grouped by project. Check each destination before moving; uncertain files stay in Downloads.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Spacing.hairline),
@@ -619,9 +631,13 @@ private fun FilingDestinationCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(group.projectName, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        friendlyPath(group.destinationPath),
+                        group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
+                            .ifBlank { "Project root" },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        "Downloads → ${friendlyPath(group.destinationPath)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
