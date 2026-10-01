@@ -43,7 +43,11 @@ class ShareIntakeViewModel(application: Application) : AndroidViewModel(applicat
             require(uris.isNotEmpty() && uris.size <= 1000) { "Share between 1 and 1,000 files at a time." }
             val files = uris.distinct().map { uri ->
                 require(uri.startsWith("content://")) { "The source app must share a readable content URI." }
-                gateway.stat(FileRef.Saf(uri)).also { require(!it.isDirectory) { "Share files rather than folders." } }.record(uri)
+                gateway.stat(FileRef.Saf(uri)).also {
+                    require(!it.isDirectory) { "Share files rather than folders." }
+                    require(it.sizeBytes >= 0) { "The source app did not report a verifiable file size. Save it locally and share again." }
+                    if (it.sizeBytes == 0L) require(gateway.openRead(FileRef.Saf(uri)).use { input -> input.read() == -1 }) { "The source app reported an empty file but supplied content. Save it locally and share again." }
+                }.record(uri)
             }
             mutableState.value = ShareIntakeState(files = files)
         }
@@ -59,7 +63,11 @@ class ShareIntakeViewModel(application: Application) : AndroidViewModel(applicat
         val operations = ShareCopyPlanner.build(artifacts, root, project, template.roleFolders, index)
         val validated = PlanValidator.validate(operations, index)
         require(validated.rejected.isEmpty() && validated.accepted.size == operations.size) { "The destination changed or contains conflicting names. Choose another destination and rebuild." }
-        val reviewed = files.associate { it.stableRef to SourcePreconditions.capture(gateway, FileRef.Saf(it.stableRef)) }
+        val reviewed = files.associate { file ->
+            val current = SourcePreconditions.capture(gateway, FileRef.Saf(file.stableRef))
+            require(SourcePreconditions.matches(requireNotNull(SourcePreconditions.from(file)), current)) { "A shared source changed while preparing the review. Share it again." }
+            file.stableRef to current
+        }
         mutableState.value = mutableState.value.copy(preview = SharedPreview(root, project, files, operations, reviewed), error = null)
     }
 

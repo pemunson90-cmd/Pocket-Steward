@@ -24,7 +24,7 @@ Updated 2026-10-01. This is an implementation checkpoint, not a declaration that
 
 ## Verification of this checkpoint
 
-473 unit tests passed with no failures or errors. lintDebug and assembleDebug passed on the final dev7 source. The canonical signed release build passed, its certificate matches the installed dev6 signer, and its version is 1.4.0-dev7 (47). INTERNET permission remains absent.
+477 unit tests passed with no failures or errors. lintDebug and assembleDebug passed on the final dev7 source. The canonical signed release build passed, its certificate matches the installed dev6 signer, and its version is 1.4.0-dev7 (47). INTERNET permission remains absent.
 
 The synthetic 16,000-file test covers project ownership, probable supporting assets and selection. Separate cases cover competing cohorts, checkpoint retention, scanner resume, metadata freshness, templates, sharing, protection and collisions beyond the old destination cutoff. This is not a measurement of all indexing/IO/UI stages on the user's phone.
 

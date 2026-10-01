@@ -2,6 +2,7 @@ package com.pocketsteward.app.storage
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import java.io.InputStream
@@ -47,6 +48,10 @@ class SafStorageGateway(
     }
 
     override suspend fun stat(ref: FileRef): FileMetadata {
+        if (ref is FileRef.Saf) {
+            val uri = Uri.parse(ref.documentUri)
+            if (!DocumentsContract.isTreeUri(uri) && !DocumentsContract.isDocumentUri(context, uri)) return sharedMetadata(ref, uri)
+        }
         val doc = resolve(ref)
         val name = doc.name ?: "unknown"
         val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
@@ -63,8 +68,37 @@ class SafStorageGateway(
         )
     }
 
-    override suspend fun exists(ref: FileRef): Boolean =
-        runCatching { resolve(ref).exists() }.getOrDefault(false)
+    override suspend fun exists(ref: FileRef): Boolean = runCatching {
+        if (ref is FileRef.Saf) {
+            val uri = Uri.parse(ref.documentUri)
+            if (!DocumentsContract.isTreeUri(uri) && !DocumentsContract.isDocumentUri(context, uri)) {
+                return@runCatching context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true } ?: false
+            }
+        }
+        resolve(ref).exists()
+    }.getOrDefault(false)
+
+    private fun sharedMetadata(ref: FileRef.Saf, uri: Uri): FileMetadata {
+        var name: String? = null
+        var size: Long? = null
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (nameColumn >= 0 && !cursor.isNull(nameColumn)) name = cursor.getString(nameColumn)
+                if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn)
+            }
+        }
+        val descriptorSize = if (size == null || requireNotNull(size) < 0) {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it >= 0 } ?: descriptor.parcelFileDescriptor.statSize.takeIf { it >= 0 }
+            }
+        } else null
+        val mime = context.contentResolver.getType(uri)
+        val extension = mime?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+        val fallback = "shared-file" + extension?.let { ".$it" }.orEmpty()
+        return com.pocketsteward.app.share.SharedContentMetadata.build(ref, name, size, descriptorSize, mime, fallback)
+    }
 
     override suspend fun openRead(ref: FileRef): InputStream {
         val doc = resolve(ref)
@@ -145,7 +179,7 @@ class SafStorageGateway(
     override suspend fun copy(source: FileRef, destination: FileRef): MutationResult {
         val sourceDoc = resolveOrFailure(source, "source")
             ?: return MutationResult.Failure("Could not resolve SAF source.")
-        if (!sourceDoc.exists() || sourceDoc.isDirectory) {
+        if (!exists(source) || sourceDoc.isDirectory) {
             return MutationResult.Failure("SAF copy currently supports existing files only.")
         }
 
@@ -164,7 +198,7 @@ class SafStorageGateway(
         destinationProtectionFailure(destinationDir, name)?.let { return it }
 
         val created = runCatching {
-            destinationDir.createFile(sourceDoc.type ?: "application/octet-stream", name)
+            destinationDir.createFile(sourceDoc.type ?: context.contentResolver.getType(sourceDoc.uri) ?: "application/octet-stream", name)
         }.getOrNull() ?: return MutationResult.Failure("Could not create destination document: $name")
 
         return try {
