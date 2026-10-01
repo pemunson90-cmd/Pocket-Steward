@@ -45,6 +45,7 @@ fun ScanScreen(
 ) {
     val accessState by viewModel.storageAccessState.collectAsState(initial = null)
     val scanning by viewModel.scanning.collectAsState()
+    val retainedPreview by viewModel.preview.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val recents by viewModel.recentFolders.collectAsState()
@@ -135,6 +136,9 @@ fun ScanScreen(
                 supporting = "Pick one or more folders. Pocket Steward keeps each root local unless you explicitly ask otherwise.",
             )
 
+            if (retainedPreview != null) {
+                Button(onClick = viewModel::resumePlanPreview, enabled = busy == null) { Text("Resume saved review") }
+            }
             if (selectedTargets.isNotEmpty()) {
                 Text(
                     text = "Selected",

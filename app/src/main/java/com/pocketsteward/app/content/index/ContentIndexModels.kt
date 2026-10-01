@@ -1,7 +1,9 @@
 package com.pocketsteward.app.content.index
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Fts4
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -36,7 +38,17 @@ data class IndexedDocument(
     val extractorVersion: Int,
     val indexedAt: Long,
     val segmentCount: Int,
+    @ColumnInfo(defaultValue = "'FULL'") val extractionProfile: String = "FULL",
+    @ColumnInfo(defaultValue = "0") val coverageComplete: Boolean = false,
 )
+
+@Entity(
+    tableName = "indexed_document_scopes",
+    primaryKeys = ["stableRef", "sourceRoot"],
+    indices = [Index("sourceRoot")],
+    foreignKeys = [ForeignKey(entity = IndexedDocument::class, parentColumns = ["stableRef"], childColumns = ["stableRef"], onDelete = ForeignKey.CASCADE)],
+)
+data class IndexedDocumentScope(val stableRef: String, val sourceRoot: String)
 
 @Entity(
     tableName = "indexed_segments",
@@ -125,6 +137,9 @@ data class IndexedSearchRow(
     val pageNumber: Int?,
     val ocr: Boolean,
     val snippet: String,
+    val matchingSourceRoots: String = "",
+    val coverageComplete: Boolean = false,
+    val extractionProfile: String = "FULL",
 )
 
 

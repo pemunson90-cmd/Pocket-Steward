@@ -5,20 +5,36 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 
 @Dao
 interface ContentIndexDao {
     @Query("SELECT * FROM indexed_documents WHERE stableRef = :stableRef")
     suspend fun getDocument(stableRef: String): IndexedDocument?
 
-    @Query("SELECT * FROM indexed_documents WHERE sourceRoot IN (:sourceRoots) AND extractionStatus = 'INDEXED'")
+    @Query("SELECT * FROM indexed_documents WHERE extractionStatus = 'INDEXED' AND EXISTS (SELECT 1 FROM indexed_document_scopes scope WHERE scope.stableRef = indexed_documents.stableRef AND scope.sourceRoot IN (:sourceRoots))")
     suspend fun getIndexedDocumentsForRoots(sourceRoots: List<String>): List<IndexedDocument>
 
-    @Query("SELECT stableRef FROM indexed_documents WHERE sourceRoot = :sourceRoot")
+    @Query("SELECT stableRef FROM indexed_document_scopes WHERE sourceRoot = :sourceRoot")
     suspend fun getStableRefsForRoot(sourceRoot: String): List<String>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun putDocument(document: IndexedDocument)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun putScope(scope: IndexedDocumentScope)
+
+    @Query("DELETE FROM indexed_document_scopes WHERE stableRef = :stableRef AND sourceRoot = :sourceRoot")
+    suspend fun deleteScope(stableRef: String, sourceRoot: String)
+
+    @Query("SELECT COUNT(*) FROM indexed_document_scopes WHERE stableRef = :stableRef")
+    suspend fun countScopes(stableRef: String): Int
+
+    @Transaction
+    suspend fun removeFromRoot(stableRef: String, sourceRoot: String) {
+        deleteScope(stableRef, sourceRoot)
+        if (countScopes(stableRef) == 0) removeDocument(stableRef)
+    }
 
     @Query("DELETE FROM indexed_segments_fts WHERE rowid IN (SELECT id FROM indexed_segments WHERE stableRef = :stableRef)")
     suspend fun deleteFtsForDocument(stableRef: String)
@@ -50,10 +66,13 @@ interface ContentIndexDao {
     @Query("SELECT COUNT(*) FROM indexed_documents")
     suspend fun countDocuments(): Int
 
+    @Query("SELECT * FROM indexed_documents WHERE stableRef IN (:stableRefs)")
+    suspend fun getDocuments(stableRefs: List<String>): List<IndexedDocument>
+
     @Query("SELECT COUNT(*) FROM indexed_segments")
     suspend fun countSegments(): Int
 
-    @Query("SELECT COUNT(DISTINCT sourceRoot) FROM indexed_documents")
+    @Query("SELECT COUNT(DISTINCT sourceRoot) FROM indexed_document_scopes")
     suspend fun countRoots(): Int
 
 
@@ -110,6 +129,7 @@ interface ContentIndexDao {
     @Transaction
     suspend fun replaceDocument(document: IndexedDocument, segments: List<IndexedSegment>) {
         putDocument(document)
+        putScope(IndexedDocumentScope(document.stableRef, document.sourceRoot))
         replaceSegments(document.stableRef, segments)
     }
 
@@ -133,7 +153,8 @@ interface ContentIndexDao {
         """
         SELECT s.id AS segmentId,
                s.stableRef AS stableRef,
-               d.sourceRoot AS sourceRoot,
+               (SELECT MIN(scope.sourceRoot) FROM indexed_document_scopes scope WHERE scope.stableRef = d.stableRef AND scope.sourceRoot IN (:sourceRoots)) AS sourceRoot,
+               (SELECT group_concat(scope.sourceRoot, char(10)) FROM indexed_document_scopes scope WHERE scope.stableRef = d.stableRef AND scope.sourceRoot IN (:sourceRoots)) AS matchingSourceRoots,
                d.displayName AS displayName,
                d.parentRef AS parentRef,
                d.extension AS extension,
@@ -141,6 +162,8 @@ interface ContentIndexDao {
                d.sizeBytes AS sizeBytes,
                d.modifiedAt AS modifiedAt,
                d.contentKind AS contentKind,
+               d.coverageComplete AS coverageComplete,
+               d.extractionProfile AS extractionProfile,
                s.pageNumber AS pageNumber,
                s.ocr AS ocr,
                snippet(indexed_segments_fts, '⟦', '⟧', ' … ', 0, 28) AS snippet
@@ -148,7 +171,7 @@ interface ContentIndexDao {
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
         INNER JOIN indexed_documents d ON d.stableRef = s.stableRef
         WHERE indexed_segments_fts MATCH :matchQuery
-          AND d.sourceRoot IN (:sourceRoots)
+          AND EXISTS (SELECT 1 FROM indexed_document_scopes scope WHERE scope.stableRef = d.stableRef AND scope.sourceRoot IN (:sourceRoots))
         LIMIT :limit
         """,
     )

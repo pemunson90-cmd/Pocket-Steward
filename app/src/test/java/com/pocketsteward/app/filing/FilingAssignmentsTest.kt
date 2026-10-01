@@ -33,5 +33,27 @@ class FilingAssignmentsTest {
     @Test(expected = IllegalArgumentException::class) fun unsafeProjectTitleRejected() {
         FilingAssignments.assign(InboxFilingResult(listOf(unknown("a.txt"))), setOf("/inbox/a.txt"), ProjectHomeCandidate("../Lilith", "/Documents/Lilith"), FilingRole.AUTO)
     }
+    @Test fun explicitReleaseKeepsMixedRolesInOneBucketAndSplitsOnlySelectedSources() {
+        val home = ProjectHomeCandidate("Lilith", "/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val input = InboxFilingResult(listOf(unknown("notes.txt"), unknown("cover.png"), unknown("bundle.zip"), unknown("other.txt")))
+        val edited = FilingAssignments.assign(input, input.decisions.take(3).mapTo(hashSetOf()) { it.artifact.stableRef }, home, FilingRole.AUTO, "Draft 3")
+        assertThat(edited.proposed.map { it.destinationDirectory }).containsExactly("/Documents/Lilith/Versions/Draft 3/Notes", "/Documents/Lilith/Versions/Draft 3/Images", "/Documents/Lilith/Versions/Draft 3/Archive")
+        assertThat(edited.unresolved.single().artifact.displayName).isEqualTo("other.txt")
+    }
+    @Test fun explicitReleaseRespectsCustomRoleFoldersAndPreservesExactVersionPrefix() {
+        val home = ProjectHomeCandidate("Lilith", "/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES, roleFolders = mapOf("Versions" to "Releases", "Notes" to "Research/Notes"))
+        val edited = FilingAssignments.assign(InboxFilingResult(listOf(unknown("a.txt"))), setOf("/inbox/a.txt"), home, FilingRole.NOTES, "v1.2.3")
+        assertThat(edited.proposed.single().destinationDirectory).isEqualTo("/Documents/Lilith/Releases/v1.2.3/Research/Notes")
+    }
+    @Test fun versionRoleDoesNotRepeatVersionsAndFoldersStayIntact() {
+        val home = ProjectHomeCandidate("Lilith", "/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val folder = unknown("Assets").let { it.copy(artifact = it.artifact.copy(isDirectory = true)) }
+        val edited = FilingAssignments.assign(InboxFilingResult(listOf(folder)), setOf(folder.artifact.stableRef), home, FilingRole.VERSIONS, "v2")
+        assertThat(edited.proposed.single().destinationDirectory).isEqualTo("/Documents/Lilith/Versions/v2")
+    }
+    @Test(expected = IllegalArgumentException::class) fun releaseCannotEscapeItsProject() {
+        FilingAssignments.assign(InboxFilingResult(listOf(unknown("a.txt"))), setOf("/inbox/a.txt"), ProjectHomeCandidate("Lilith", "/Documents/Lilith"), FilingRole.AUTO, "../Other")
+    }
+
     private fun unknown(name: String) = FilingDecision(FilingArtifact("/inbox/$name", name, name.substringAfterLast('.'), 10, modifiedAt = 1, parentRef = "/inbox"), null, null, null, null, FilingConfidence.UNRESOLVED, emptyList())
 }

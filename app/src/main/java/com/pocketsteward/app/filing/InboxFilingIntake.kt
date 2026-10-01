@@ -14,6 +14,7 @@ object InboxFilingIntake {
         inboxRootRefs: Set<String>,
         checkpointOnly: Boolean,
         includeDirectories: Boolean,
+        checkpointRootRefs: Set<String> = emptySet(),
     ): Selection {
         val roots = inboxRootRefs.mapTo(hashSetOf()) { it.trimEnd('/') }
         val checkpointRoots = records.asSequence()
@@ -21,6 +22,8 @@ object InboxFilingIntake {
             .filter { it.parentRef?.trimEnd('/') in roots }
             .map { it.stableRef.trimEnd('/') }
             .toHashSet()
+        checkpointRoots += checkpointRootRefs.map { it.trimEnd('/') }.filter { it in roots }
+        checkpointRoots += records.filter { it.isDirectory && it.displayName.equals("Uncertain", true) && it.stableRef.trimEnd('/') in roots }.map { it.stableRef.trimEnd('/') }
         val sourceRoots = if (checkpointOnly) checkpointRoots else roots
         val selected = records.filter { record ->
             record.parentRef?.trimEnd('/') in sourceRoots &&

@@ -27,7 +27,7 @@ internal data class FilingSession(
     val existingSafHomes: Map<String, FileRef> = emptyMap(),
 )
 
-internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null) {
+internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null, releaseFolder: String? = null) {
     if (filingEditJob?.isActive == true || busy.value != null) return
     val session = filingSession ?: return
     val current = _preview.value ?: return
@@ -48,7 +48,7 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                 hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
                 roleFolders = settingsRepository.hierarchyTemplate.first().roleFolders,
             )
-            val result = withContext(Dispatchers.Default) { FilingAssignments.assign(session.result, sourceRefs, home, role) }
+            val result = withContext(Dispatchers.Default) { FilingAssignments.assign(session.result, sourceRefs, home, role, releaseFolder) }
             val plan = withContext(Dispatchers.Default) {
                 if (session.root is FileRef.Direct) InboxFilingPlanAdapter.build(result, session.root, session.existingDirectories, session.retainedUncertainSourceRefs)
                 else InboxFilingSafPlanAdapter.build(result, session.root, session.existingSafHomes, current.scopes.first().label, session.retainedUncertainSourceRefs)

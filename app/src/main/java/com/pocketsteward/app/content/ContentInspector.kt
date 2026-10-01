@@ -12,7 +12,7 @@ class ContentInspector(
     private val gateway: StorageGateway,
     private val pdfExtractor: PdfContentExtractor? = null,
 ) {
-    suspend fun extract(record: FileRecord): ContentExtraction {
+    suspend fun extract(record: FileRecord, budget: ContentInspectionBudget = ContentInspectionBudget.FULL): ContentExtraction {
         if (record.isDirectory) return ContentExtraction.Unsupported("Directories do not have inspectable content.")
         if (!ContentExtractor.supports(record.extension)) {
             return ContentExtraction.Unsupported("This file type is not text-readable.")
@@ -23,10 +23,10 @@ class ContentInspector(
         return try {
             gateway.openRead(parseFileRef(record.stableRef)).use { input ->
                 if (record.extension.equals("pdf", ignoreCase = true)) {
-                    pdfExtractor?.extract(input)
+                    pdfExtractor?.extract(input, budget)
                         ?: ContentExtraction.Unsupported("PDF extraction is unavailable on this device.")
                 } else {
-                    ContentExtractor.extract(record.extension, input)
+                    ContentExtractor.extract(record.extension, input, budget)
                 }
             }
         } catch (cancel: CancellationException) {

@@ -143,7 +143,7 @@ dependencies {
     // JVM, and read the committed app/schemas/*.json files to compare the
     // migrated tables with what Room expects. Neither ships in the APK.
     testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")
-    testImplementation("com.google.code.gson:gson:2.11.0")
+    implementation("com.google.code.gson:gson:2.11.0")
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.room:room-testing:2.8.4")

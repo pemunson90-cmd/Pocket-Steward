@@ -910,6 +910,7 @@ private fun IndexedContentResultCard(
                         append(result.extension.ifBlank { "file" }.uppercase())
                         append(" · ")
                         append(formatBytes(result.sizeBytes))
+                        if (!result.coverageComplete) append(" · partial content coverage")
                         result.modifiedAt?.let {
                             append(" · ")
                             append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))
@@ -968,6 +969,7 @@ private fun SearchResultPreview(
                 append(result.extension.ifBlank { "file" }.uppercase())
                 append(" · ")
                 append(formatBytes(result.sizeBytes))
+                        if (!result.coverageComplete) append(" · partial content coverage")
                 result.modifiedAt?.let {
                     append(" · ")
                     append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)))

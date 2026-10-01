@@ -64,8 +64,14 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             val scannedRecords = allRecordsForScopes(summary.scopes)
             val intake = InboxFilingIntake.select(
                 scannedRecords, sourceRootKeys, checkpointOnly, includeDirectories = true,
+                checkpointRootRefs = withContext(Dispatchers.IO) {
+                    summary.scopes.mapNotNull { scope ->
+                        val info = container.gatewayFor(mode).stat(scope.root)
+                        scope.root.rawValue().takeIf { info.isDirectory && info.displayName.equals("Uncertain", true) }
+                    }.toSet()
+                },
             )
-            val records = intake.records.filter { allowlist == null || (!it.isDirectory && it.stableRef in allowlist) }.filter { allowlist == null || (!it.isDirectory && it.stableRef in allowlist) }
+            val records = intake.records.filter { allowlist == null || (!it.isDirectory && it.stableRef in allowlist) }
             val skippedFolders = 0
 
             if (records.isEmpty()) {
@@ -191,8 +197,6 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 )
             }
             // Folder contents stay together; their internal layout is never split by role.
-            val result = resolveDirectDestinationCollisions(inferred, gateway, storageRoot.absolutePath)
-
             val existingDirectories = linkedSetOf<String>()
             existingDirectories += topLevelDirectories
             existingDirectories += scannedRecords.filter { record ->
@@ -210,6 +214,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 existingDirectories += children.filter { it.isDirectory }.map { it.ref.rawValue().trimEnd('/') }
             }
 
+            val conventional = com.pocketsteward.app.filing.FilingReleaseConvention.reconcile(inferred, existingDirectories)
+            val result = resolveDirectDestinationCollisions(conventional, gateway, storageRoot.absolutePath)
             val plan = withContext(Dispatchers.Default) {
                 InboxFilingPlanAdapter.build(
                     result = result,
@@ -247,6 +253,9 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 authorizedDestinationRoots = plan.authorizedDestinationRoots,
                 defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
                 filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
+                previousReviewedSources = enriched.values.mapNotNull { item ->
+                    com.pocketsteward.app.plan.SourcePreconditions.from(item.record)?.let { item.record.stableRef to it }
+                }.toMap(),
             )
             if (scheduled != null && _uiState.value is ScanUiState.PlanPreview) settingsRepository.clearPendingCleanupSuggestion()
         } catch (cancel: CancellationException) {
@@ -264,6 +273,10 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             "Selected-folder filing currently needs one granted tree at a time.",
         )
         return
+    }
+    val grantedRoot = withContext(Dispatchers.IO) { container.gatewayFor(StorageAccessMode.SAF).stat(scope.root) }
+    require(!grantedRoot.displayName.equals("Uncertain", true)) {
+        "This grant covers only Uncertain, so files cannot leave that checkpoint. Use full file access or grant an accessible parent folder, then rebuild the review."
     }
     val rootKey = scope.root.rawValue().trimEnd('/')
     val scannedRecords = allRecordsForScopes(summary.scopes)
@@ -373,6 +386,9 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         ),
         defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
         filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
+        previousReviewedSources = enriched.values.mapNotNull { item ->
+            com.pocketsteward.app.plan.SourcePreconditions.from(item.record)?.let { item.record.stableRef to it }
+        }.toMap(),
     )
 }
 
@@ -440,18 +456,31 @@ private suspend fun resolveDirectDestinationCollisions(
     )
 }
 
-private data class FilingContent(val text: Map<String, String>, val reused: Int, val extracted: Int, val unavailable: Int, val enabled: Boolean = true) {
-    val summary: String get() = if (!enabled) "Content inspection is off. Enable it in Settings for content-based filing; this review uses names and metadata." else "Local document evidence: $reused cached, $extracted freshly inspected, $unavailable unreadable or unsupported."
+private data class FilingContent(val text: Map<String, String>, val reused: Int, val extracted: Int, val unavailable: Int, val enabled: Boolean = true, val deferredPdf: Int = 0, val partial: Int = 0) {
+    val summary: String get() = if (!enabled) "Content inspection is off. Enable it in Settings for content-based filing; this review uses names and metadata." else "Local document evidence: $reused cached, $extracted freshly inspected, $unavailable unreadable or unsupported. $partial documents have partial or unverified coverage. $deferredPdf fresh PDFs were deferred by the 40-PDF review budget; rebuild to continue or run the full content index."
 }
 
 private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>, summary: ScanUiState.Summary): FilingContent {
     if (!settingsRepository.privacySettings.first().contentInspectionEnabled) return FilingContent(emptyMap(), 0, 0, 0, enabled = false)
-    val candidates = records.filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
     val repository = container.contentIndexRepository(summary.mode)
+    val readable = records.filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
+    val cachedPdfs = withContext(Dispatchers.IO) { repository.cachedDocuments(readable.filter { it.extension.equals("pdf", true) }.map { it.stableRef }) }
+    // New PDFs precede previously failed ones so repeated failures cannot starve unseen evidence.
+    val candidates = readable.sortedBy { record ->
+        when {
+            !record.extension.equals("pdf", true) -> 0
+            cachedPdfs[record.stableRef] == null -> 1
+            cachedPdfs[record.stableRef]?.extractionStatus == IndexedExtractionStatus.FAILED.name -> 3
+            else -> 2
+        }
+    }
     val text = linkedMapOf<String, String>()
     var reused = 0
     var extracted = 0
     var unavailable = 0
+    var freshPdf = 0
+    var deferredPdf = 0
+    var partial = 0
     for ((index, record) in candidates.withIndex()) {
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         _uiState.value = ScanUiState.Working(
@@ -459,15 +488,21 @@ private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>
             detail = "${index + 1} of ${candidates.size} · ${record.displayName}",
             processed = index, total = candidates.size,
         )
-        val inspection = withContext(Dispatchers.IO) {
-            repository.ensureDocument(ContentIndexCandidate(record, sourceRootFor(record.stableRef, summary.scopes) ?: summary.scopes.first().root.rawValue()))
+        val candidate = ContentIndexCandidate(record, sourceRootFor(record.stableRef, summary.scopes) ?: summary.scopes.first().root.rawValue())
+        val budget = com.pocketsteward.app.content.ContentInspectionBudget.FILING
+        val reusable = !record.extension.equals("pdf", true) || com.pocketsteward.app.content.index.ContentIndexPolicy.canReuse(cachedPdfs[record.stableRef], record, budget.profile)
+        if (record.extension.equals("pdf", true) && !reusable) {
+            if (freshPdf >= 40) { deferredPdf++; continue }
+            freshPdf++
         }
+        val inspection = withContext(Dispatchers.IO) { repository.ensureDocument(candidate, budget) }
+        if (!inspection.document.coverageComplete) partial++
         if (inspection.document.extractionStatus == IndexedExtractionStatus.INDEXED.name) {
             text[record.stableRef] = withContext(Dispatchers.IO) { repository.excerpt(record.stableRef, maxChars = 2_000) }
             if (inspection.reused) reused++ else extracted++
         } else unavailable++
     }
-    return FilingContent(text, reused, extracted, unavailable)
+    return FilingContent(text, reused, extracted, unavailable, deferredPdf = deferredPdf, partial = partial)
 }
 
 private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>): Map<String, List<String>> {

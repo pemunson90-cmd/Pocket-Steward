@@ -28,10 +28,20 @@ Updated 2026-10-01. This is an implementation checkpoint, not a declaration that
 
 The synthetic 16,000-file test covers project ownership, probable supporting assets and selection. Separate cases cover competing cohorts, checkpoint retention, scanner resume, metadata freshness, templates, sharing, protection and collisions beyond the old destination cutoff. This is not a measurement of all indexing/IO/UI stages on the user's phone.
 
+## Next update implementation (not yet released)
+
+- Private, atomic review drafts restore selections, original source baselines, rich filing presentation and project assignments after process death. No draft is automatically approved or executed. Exact-selection task matching closes the enqueue/delete crash window; stale asynchronous writes cannot recreate cleared drafts. Saving streams JSON to avoid duplicating a large draft in memory. Storage-mode changes invalidate restoration.
+- Baselines now cover unresolved loose files too. A later assignment cannot silently recapture changed evidence as its initial review baseline. Selecting an Uncertain root directly works in direct mode; a SAF grant limited to Uncertain explains why it cannot move files out of the checkpoint.
+- Group assignments can apply to selected files only and explicitly choose a release folder. Mixed roles stay beneath one release bucket, custom role templates remain effective, intact folders stay intact, unsafe release paths are rejected. Automatic VERSIONED filing preserves an existing release folder's exact v-prefix/spelling; competing conventions stay uncertain.
+- Derived content database migration 2→3 adds multiple root memberships without changing the authoritative mutation database. Reuse attaches each observed root; pruning one root retains other memberships and text. Root-filtered search returns a file once and keeps every matching membership.
+- Bulk filing uses a bounded extraction profile: 12,000 text characters, eight PDF pages, at most two OCR pages per PDF, and at most 40 fresh PDFs per review. New PDFs precede failed cached PDFs. Full indexing expands filing caches separately. Partial/unverified coverage is recorded and shown. Office archive draining has decoded-byte/entry budgets; PDF source copying enforces a real byte limit and cancellation propagates. OCR bitmap recycling waits for the ML task to complete.
+
+505 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for this checkpoint. Instrumentation was compiled, not run. The actual derived migration/search SQL passed SQLite tests for overlapping roots, scope removal, legacy coverage flags and FK cascade. Signed release and target-phone acceptance for these changes remain pending.
+
 ## Remaining completion work
 
-- Durable preview/edit restoration after process death; incremental content coverage across overlapping roots; smaller bulk PDF/OCR budgets and evidence coverage reporting.
-- Unified evidence/correction learning across semantic and deterministic workflows; explicit release-folder conventions and release/group split editing.
+- Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
+- Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
 - Expanded archive formats where safe; richer grounded image descriptions and project/topic template coverage.
 - Persistent storage-wide project knowledge and responsive inbox observation with permission-aware background fallback.
 - Backup/restore of app configuration and safe history; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.

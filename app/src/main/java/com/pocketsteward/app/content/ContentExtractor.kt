@@ -28,34 +28,36 @@ object ContentExtractor {
         return ext in plainTextExtensions || ext in ooxmlExtensions || ext == "pdf"
     }
 
-    fun extract(extension: String, input: InputStream): ContentExtraction {
+    fun extract(extension: String, input: InputStream, budget: ContentInspectionBudget = ContentInspectionBudget.FULL): ContentExtraction {
         val ext = extension.lowercase()
         return try {
             when {
-                ext in plainTextExtensions -> extractPlainText(input)
-                ext in ooxmlExtensions -> extractOoxml(ext, input)
+                ext in plainTextExtensions -> extractPlainText(input, budget)
+                ext in ooxmlExtensions -> extractOoxml(ext, input, budget)
                 ext == "pdf" -> ContentExtraction.Unsupported(
                     "PDF requires the Android PDF extractor.",
                 )
                 else -> ContentExtraction.Unsupported("This file type is not text-readable.")
             }
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             ContentExtraction.Failed(t.message ?: t.javaClass.simpleName)
         }
     }
 
-    private fun extractPlainText(input: InputStream): ContentExtraction.Text {
-        val bytes = readBounded(input, MAX_TEXT_BYTES + 1)
-        val truncated = bytes.size > MAX_TEXT_BYTES
-        val payload = if (truncated) bytes.copyOf(MAX_TEXT_BYTES) else bytes
+    private fun extractPlainText(input: InputStream, budget: ContentInspectionBudget): ContentExtraction.Text {
+        val bytes = readBounded(input, budget.maxTextBytes + 1)
+        val truncated = bytes.size > budget.maxTextBytes
+        val payload = if (truncated) bytes.copyOf(budget.maxTextBytes) else bytes
 
         // UTF-8 is the project default. Replacement characters are preferable
         // to throwing away an otherwise searchable file because of one bad byte.
         val text = payload.toString(Charsets.UTF_8)
-        return ContentExtraction.Text(text, truncated, ContentKind.PLAIN_TEXT)
+        return ContentExtraction.Text(text.take(budget.maxTextChars), truncated || text.length > budget.maxTextChars, ContentKind.PLAIN_TEXT)
     }
 
-    private fun extractOoxml(extension: String, input: InputStream): ContentExtraction {
+    private fun extractOoxml(extension: String, input: InputStream, budget: ContentInspectionBudget): ContentExtraction {
         val accepted = when (extension) {
             "docx" -> { name: String -> name == "word/document.xml" || name.startsWith("word/header") || name.startsWith("word/footer") }
             "xlsx" -> { name: String -> name == "xl/sharedStrings.xml" || name.startsWith("xl/worksheets/") }
@@ -65,16 +67,22 @@ object ContentExtractor {
 
         val text = StringBuilder()
         var truncated = false
+        var decodedBytes = 0
+        var entries = 0
         ZipInputStream(input.buffered()).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
+                if (++entries > budget.maxArchiveEntries) { truncated = true; break }
+                val remainingBytes = budget.maxDecodedArchiveBytes - decodedBytes
+                if (remainingBytes <= 0) { truncated = true; break }
                 if (!entry.isDirectory && accepted(entry.name)) {
-                    val remaining = MAX_OOXML_TEXT_CHARS - text.length
+                    val remaining = budget.maxTextChars - text.length
                     if (remaining <= 0) {
                         truncated = true
                         break
                     }
-                    val xmlBytes = readBounded(zip, minOf(MAX_TEXT_BYTES, remaining * 4) + 1)
+                    val xmlBytes = readBounded(zip, minOf(budget.maxTextBytes, remaining * 4, remainingBytes) + 1)
+                    decodedBytes += xmlBytes.size
                     val xml = xmlBytes.toString(Charsets.UTF_8)
                     val extracted = xmlToText(xml)
                     if (extracted.length > remaining) {
@@ -85,8 +93,12 @@ object ContentExtractor {
                         if (text.isNotEmpty() && extracted.isNotBlank()) text.append('\n')
                         text.append(extracted)
                     }
-                    if (xmlBytes.size > minOf(MAX_TEXT_BYTES, remaining * 4)) truncated = true
+                    if (xmlBytes.size > minOf(budget.maxTextBytes, remaining * 4, remainingBytes)) { truncated = true; break }
                 }
+                // Explicitly drain within the decoded-byte budget. closeEntry alone can decompress a bomb.
+                val drained = readBounded(zip, budget.maxDecodedArchiveBytes - decodedBytes + 1)
+                decodedBytes += drained.size
+                if (decodedBytes > budget.maxDecodedArchiveBytes) { truncated = true; break }
                 zip.closeEntry()
             }
         }

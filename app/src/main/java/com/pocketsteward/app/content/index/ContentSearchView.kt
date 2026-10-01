@@ -61,6 +61,9 @@ data class IndexedFileSearchResult(
     val contentKind: String?,
     val snippets: List<IndexedSearchSnippet>,
     val relevanceScore: Int,
+    val sourceRoots: Set<String> = setOf(sourceRoot),
+    val coverageComplete: Boolean = false,
+    val extractionProfile: String = "FULL",
 ) {
     val extraSnippetCount: Int get() = (snippets.size - 1).coerceAtLeast(0)
 }
@@ -98,6 +101,9 @@ object ContentSearchView {
             IndexedFileSearchResult(
                 stableRef = first.stableRef,
                 sourceRoot = first.sourceRoot,
+                coverageComplete = first.coverageComplete,
+                extractionProfile = first.extractionProfile,
+                sourceRoots = group.flatMap { row -> row.matchingSourceRoots.lineSequence().filter { it.isNotBlank() }.toList().ifEmpty { listOf(row.sourceRoot) } }.toSet(),
                 displayName = first.displayName,
                 parentRef = first.parentRef,
                 extension = first.extension,
@@ -118,7 +124,7 @@ object ContentSearchView {
     ): List<IndexedFileSearchResult> {
         val pathNeedle = filters.pathContains.trim().lowercase()
         val filtered = results.asSequence().filter { result ->
-            if (filters.sourceRoots.isNotEmpty() && result.sourceRoot !in filters.sourceRoots) return@filter false
+            if (filters.sourceRoots.isNotEmpty() && result.sourceRoots.none { it in filters.sourceRoots }) return@filter false
             if (filters.categories.isNotEmpty() && result.category !in filters.categories) return@filter false
             if (filters.extensions.isNotEmpty() && result.extension.lowercase() !in filters.extensions.map { it.lowercase() }) {
                 return@filter false

@@ -72,6 +72,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val state by viewModel.preview.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val draftSaveStatus by viewModel.draftSaveStatus.collectAsState()
 
     val preview = state
     var confirmBulkRed by rememberSaveable { mutableStateOf(false) }
@@ -113,6 +114,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                     text = preview.goal,
                     style = MaterialTheme.typography.titleMedium,
                 )
+                if (draftSaveStatus.isNotBlank()) Text(draftSaveStatus, style = MaterialTheme.typography.bodySmall)
                 Text(
                     text = buildString {
                         val selectedFiles = preview.selectedIndices.count { index ->
@@ -263,7 +265,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
-                                onAssign = { title, role, homePath -> viewModel.assignFilingFiles(group.items.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                                onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { root, name ->
                                     viewModel.editPlanDestinationGroup(
@@ -284,7 +286,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
-                                onAssign = { title, role, homePath -> viewModel.assignFilingFiles(group.items.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                                onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { _, _ -> },
                             )
@@ -307,7 +309,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 count = matches.size,
                                 examples = matches.take(3).joinToString(" · ") { it.displayName },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
-                                onApply = { title, role, homePath -> viewModel.assignFilingFiles(matches.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                                onApply = { title, role, homePath, release -> viewModel.assignFilingFiles(matches.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath, release) },
                             )
                         }
                     }
@@ -691,7 +693,7 @@ private fun FilingDestinationCard(
     preview: ScanUiState.PlanPreview,
     sourceOperationIndices: Map<String, Int>,
     onSetSelected: (Int, Boolean) -> Unit,
-    onAssign: (String, com.pocketsteward.app.filing.FilingRole, String?) -> Unit,
+    onAssign: (Set<String>, String, com.pocketsteward.app.filing.FilingRole, String?, String?) -> Unit,
     knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
     onApplyDestination: (String, String) -> Unit,
 ) {
@@ -792,7 +794,18 @@ private fun FilingDestinationCard(
 
             var assigning by remember(group.destinationPath) { mutableStateOf(false) }
             TextButton(onClick = { assigning = !assigning }) { Text(if (assigning) "Hide project assignment" else "Assign project / role") }
-            if (assigning) FilingAssignmentEditor(group.items.size, group.items.take(3).joinToString(" · ") { it.displayName }, knownProjects, onAssign)
+            var assignSelectedOnly by remember(group.destinationPath) { mutableStateOf(false) }
+            if (assigning) {
+                TextButton(onClick = { assignSelectedOnly = !assignSelectedOnly }) {
+                    Text(if (assignSelectedOnly) "Scope: selected files only · switch to entire group" else "Scope: entire group · switch to selected files")
+                }
+                val assignmentItems = if (assignSelectedOnly) group.items.filter { item ->
+                    sourceOperationIndices[item.sourceRef]?.let { it in preview.selectedIndices } == true
+                } else group.items
+                FilingAssignmentEditor(assignmentItems.size, assignmentItems.take(3).joinToString(" · ") { it.displayName }, knownProjects) { title, role, home, release ->
+                    onAssign(assignmentItems.mapTo(hashSetOf()) { it.sourceRef }, title, role, home, release)
+                }
+            }
 
             if (group.editableDirectDestination) {
                 TextButton(onClick = { editing = !editing }) {
@@ -1164,9 +1177,10 @@ private fun FilingAssignmentEditor(
     count: Int,
     examples: String,
     knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
-    onApply: (String, com.pocketsteward.app.filing.FilingRole, String?) -> Unit,
+    onApply: (String, com.pocketsteward.app.filing.FilingRole, String?, String?) -> Unit,
 ) {
     var title by rememberSaveable { mutableStateOf("") }
+    var releaseFolder by rememberSaveable { mutableStateOf("") }
     var role by rememberSaveable { mutableStateOf(com.pocketsteward.app.filing.FilingRole.AUTO) }
     var chosenHomePath by rememberSaveable { mutableStateOf<String?>(null) }
     var showChoices by remember { mutableStateOf(false) }
@@ -1175,6 +1189,7 @@ private fun FilingAssignmentEditor(
             Text("Assign $count files together", style = MaterialTheme.typography.titleMedium)
             Text(examples.ifBlank { "No files match this search." }, maxLines = 2, overflow = TextOverflow.Ellipsis)
             OutlinedTextField(title, { title = it; chosenHomePath = null }, label = { Text("Project title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(releaseFolder, { releaseFolder = it }, label = { Text("Release folder (optional)") }, supportingText = { Text("Keeps this batch together, for example v1.4.0 or Draft 3. Blank uses normal filing.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { showChoices = !showChoices }) { Text(if (showChoices) "Hide project choices" else "Choose a known project / role") }
             if (showChoices) {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
@@ -1190,7 +1205,7 @@ private fun FilingAssignmentEditor(
             }
             Text("Role: ${role.label}. Existing folders remain intact. This changes the preview; files move only after approval.", style = MaterialTheme.typography.bodySmall)
             chosenHomePath?.let { Text("Selected home: $it", style = MaterialTheme.typography.bodySmall) }
-            Button(onClick = { onApply(title, role, chosenHomePath) }, enabled = count > 0 && title.isNotBlank()) { Text("Apply assignment to preview") }
+            Button(onClick = { onApply(title, role, chosenHomePath, releaseFolder.trim().takeIf { it.isNotEmpty() }) }, enabled = count > 0 && title.isNotBlank()) { Text("Apply assignment to preview") }
         }
     }
 }

@@ -5,8 +5,10 @@ import com.pocketsteward.app.data.db.FileRecord
 object ContentIndexPolicy {
     const val EXTRACTOR_VERSION: Int = 1
 
-    fun canReuse(existing: IndexedDocument?, record: FileRecord): Boolean {
+    fun canReuse(existing: IndexedDocument?, record: FileRecord, requestedProfile: String = "FULL"): Boolean {
         if (existing == null) return false
+        if (existing.extractionProfile !in setOf("FULL", "FILING") || requestedProfile !in setOf("FULL", "FILING")) return false
+        if (requestedProfile == "FULL" && existing.extractionProfile != "FULL") return false
         if (existing.extractorVersion != EXTRACTOR_VERSION) return false
         if (record.modifiedAt == null) return false
         if (existing.quickFingerprint != record.quickFingerprint) return false

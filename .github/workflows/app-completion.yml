@@ -23,6 +23,8 @@ jobs:
       - run: chmod +x gradlew
       - name: Clean build, instrumentation compile, full unit suite, and lint
         run: ./gradlew clean assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug --stacktrace
+      - name: Verify derived index migration and overlapping scopes in SQLite
+        run: python tools/verify_content_scope_sql.py
       - name: Release build
         run: ./gradlew assembleRelease --stacktrace
       - name: Enforce offline-core APK invariant

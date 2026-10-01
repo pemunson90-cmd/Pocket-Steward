@@ -21,6 +21,7 @@ class ContentIndexInspectionTest {
         }
         val dao = proxy<ContentIndexDao> { name, args ->
             when (name) {
+                "putScope" -> Unit
                 "getDocument" -> documents[args[0]]
                 "replaceDocument" -> {
                     val doc = args[0] as IndexedDocument
@@ -53,6 +54,7 @@ class ContentIndexInspectionTest {
         var stored: IndexedDocument? = null
         val dao = proxy<ContentIndexDao> { name, args ->
             when (name) {
+                "putScope" -> Unit
                 "getDocument" -> stored
                 "replaceDocument" -> { stored = args[0] as IndexedDocument; assertThat(args[1] as List<*>).isEmpty(); Unit }
                 else -> error(name)

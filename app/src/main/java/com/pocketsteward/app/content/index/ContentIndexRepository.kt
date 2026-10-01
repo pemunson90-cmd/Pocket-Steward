@@ -33,26 +33,39 @@ class ContentIndexRepository(
     }
 
     /** Enrich one observed document without pruning unrelated rows or claiming a whole root is indexed. */
-    suspend fun ensureDocument(candidate: ContentIndexCandidate): ContentIndexInspection {
+    suspend fun ensureDocument(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget = com.pocketsteward.app.content.ContentInspectionBudget.FULL): ContentIndexInspection {
         currentCoroutineContext().ensureActive()
         val record = candidate.record
         val root = candidate.sourceRoot.trimEnd('/')
         require(root.isNotBlank() && !record.isDirectory)
         val existing = dao.getDocument(record.stableRef)
-        if (ContentIndexPolicy.canReuse(existing, record)) {
+        if (ContentIndexPolicy.canReuse(existing, record, budget.profile)) {
+            dao.putScope(IndexedDocumentScope(record.stableRef, root))
             return ContentIndexInspection(requireNotNull(existing), reused = true)
         }
-        val extraction = inspector.extract(record)
+        val extraction = inspector.extract(record, budget)
         val segments = if (extraction is ContentExtraction.Text) extraction.toSegments(record.stableRef) else emptyList()
         val document = when (extraction) {
             is ContentExtraction.Text -> record.toIndexedDocument(root, extraction.kind, IndexedExtractionStatus.INDEXED, null, segments.size)
             is ContentExtraction.Unsupported -> record.toIndexedDocument(root, null, IndexedExtractionStatus.UNSUPPORTED, extraction.reason, 0)
             is ContentExtraction.Failed -> record.toIndexedDocument(root, null, IndexedExtractionStatus.FAILED, extraction.reason, 0)
-        }
+        }.copy(extractionProfile = budget.profile, coverageComplete = extraction is ContentExtraction.Text && !extraction.truncated)
         currentCoroutineContext().ensureActive()
         dao.replaceDocument(document, segments)
         return ContentIndexInspection(document, reused = false)
     }
+
+    suspend fun cachedDocuments(stableRefs: List<String>): Map<String, IndexedDocument> {
+        val documents = linkedMapOf<String, IndexedDocument>()
+        for (chunk in stableRefs.distinct().chunked(400)) {
+            currentCoroutineContext().ensureActive()
+            dao.getDocuments(chunk).forEach { documents[it.stableRef] = it }
+        }
+        return documents
+    }
+
+    suspend fun canReuse(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget): Boolean =
+        ContentIndexPolicy.canReuse(dao.getDocument(candidate.record.stableRef), candidate.record, budget.profile)
 
     suspend fun excerpt(stableRef: String, maxChars: Int = 8_000): String =
         dao.getExcerptSegments(stableRef, 4).joinToString(" ") { it.body.take(maxChars.coerceIn(1, 8_000)) }
@@ -69,7 +82,7 @@ class ContentIndexRepository(
         val now = System.currentTimeMillis()
         val byRoot = candidates
             .filter { !it.record.isDirectory }
-            .distinctBy { it.record.stableRef }
+            .distinctBy { it.sourceRoot.trimEnd('/') to it.record.stableRef }
             .groupBy { it.sourceRoot.trimEnd('/') }
 
         var removedStale = 0
@@ -78,7 +91,7 @@ class ContentIndexRepository(
             val indexedRefs = dao.getStableRefsForRoot(root)
             for (stale in indexedRefs) {
                 if (stale !in currentRefs) {
-                    dao.removeDocument(stale)
+                    dao.removeFromRoot(stale, root)
                     removedStale++
                 }
             }
@@ -262,7 +275,7 @@ class ContentIndexRepository(
             var removed = 0
             for (stale in indexedRefs) {
                 if (stale !in currentRefs) {
-                    dao.removeDocument(stale)
+                    dao.removeFromRoot(stale, root)
                     removed++
                 }
             }

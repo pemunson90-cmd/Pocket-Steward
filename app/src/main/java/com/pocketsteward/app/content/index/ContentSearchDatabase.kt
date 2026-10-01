@@ -17,12 +17,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         IndexedDocument::class,
+        IndexedDocumentScope::class,
         IndexedSegment::class,
         IndexedSegmentFts::class,
         ContentIndexState::class,
         ContentIndexJob::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class ContentSearchDatabase : RoomDatabase() {
@@ -57,6 +58,16 @@ abstract class ContentSearchDatabase : RoomDatabase() {
         }
 
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE indexed_documents ADD COLUMN extractionProfile TEXT NOT NULL DEFAULT 'FULL'")
+                db.execSQL("ALTER TABLE indexed_documents ADD COLUMN coverageComplete INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE TABLE IF NOT EXISTS indexed_document_scopes (stableRef TEXT NOT NULL, sourceRoot TEXT NOT NULL, PRIMARY KEY(stableRef, sourceRoot), FOREIGN KEY(stableRef) REFERENCES indexed_documents(stableRef) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_indexed_document_scopes_sourceRoot ON indexed_document_scopes(sourceRoot)")
+                db.execSQL("INSERT OR IGNORE INTO indexed_document_scopes(stableRef, sourceRoot) SELECT stableRef, sourceRoot FROM indexed_documents")
+            }
+        }
+
         @Volatile
         private var instance: ContentSearchDatabase? = null
 
@@ -67,7 +78,7 @@ abstract class ContentSearchDatabase : RoomDatabase() {
                     ContentSearchDatabase::class.java,
                     DATABASE_NAME,
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }

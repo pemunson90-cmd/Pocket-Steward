@@ -222,6 +222,8 @@ sealed interface ScanUiState {
         val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
         /** Optional richer explanation for Inbox Filing plans. */
         val filingPresentation: FilingReviewPresentation? = null,
+        val storageMode: StorageAccessMode? = null,
+        val taskHistoryWatermark: Long = 0,
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
@@ -486,7 +488,13 @@ class ScanViewModel(
     internal val _review = MutableStateFlow<ScanUiState?>(null)
     val review: StateFlow<ScanUiState?> = _review
 
+    internal val filingSessionRevision = MutableStateFlow(0L)
     internal var filingSession: FilingSession? = null
+        set(value) { field = value; filingSessionRevision.value += 1 }
+    @Volatile internal var draftGeneration = 0L
+    internal val _draftSaveStatus = MutableStateFlow("Restoring saved review…")
+    val draftSaveStatus: StateFlow<String> = _draftSaveStatus
+    internal val reviewDraftStore = ReviewDraftStore(File(container.appContextForUi.noBackupFilesDir, "review/last-draft.psreview"))
     internal var filingEditJob: Job? = null
     internal var filingPlanningJob: Job? = null
     val hasActiveFilingWork: Boolean get() = filingPlanningJob?.isActive == true || filingEditJob?.isActive == true
@@ -553,6 +561,7 @@ class ScanViewModel(
     private var userScanCancellationRequested: Boolean = false
 
     init {
+        initializeReviewDraftPersistence()
         viewModelScope.launch {
             _uiState.collect { routeToDestination(it) }
         }
@@ -850,6 +859,7 @@ class ScanViewModel(
     ) {
         scanJob?.cancel()
         cancelFilingWork()
+        draftGeneration += 1
         _preview.value = null
         _review.value = null
         filingSession = null
@@ -1242,6 +1252,8 @@ class ScanViewModel(
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
+            storageMode = mode,
+            taskHistoryWatermark = container.database.taskRunDao().observeAll().first().maxOfOrNull { it.id } ?: 0,
             rejected = validated.rejected,
             scopes = scopes,
             acceptedScopeLabels = validated.accepted.map { operation ->
@@ -1250,7 +1262,7 @@ class ScanViewModel(
             selectedIndices = selectedIndices,
             scopeNotes = scopeNotes,
             authorizedDestinationRoots = authorizedDestinationRoots,
-            reviewedSources = reviewedSources + previousReviewedSources,
+            reviewedSources = com.pocketsteward.app.plan.ReviewBaselinePolicy.merge(validated.accepted, reviewedSources, previousReviewedSources),
             filingPresentation = filingPresentation,
         )
     }
@@ -1346,6 +1358,8 @@ class ScanViewModel(
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
+            storageMode = mode,
+            taskHistoryWatermark = container.database.taskRunDao().observeAll().first().maxOfOrNull { it.id } ?: 0,
             rejected = validated.rejected,
             scopes = listOf(scope),
             acceptedScopeLabels = List(validated.accepted.size) { scope.label },
@@ -1379,6 +1393,8 @@ class ScanViewModel(
                     _uiState.value = ScanUiState.Error("No storage access granted yet.")
                     return@launch
                 }
+                require(preview == _preview.value) { "This review was replaced. Open the current review before approving." }
+                require(preview.storageMode == mode) { "Storage access changed. Rebuild this review with the current access." }
                 val executor = container.planExecutor(mode)
 
                 val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)
@@ -1399,7 +1415,10 @@ class ScanViewModel(
                     )
                 }
 
+                require(preview == _preview.value) { "Review changed during approval. Check the current selections and approve again." }
                 val taskRunId = withContext(Dispatchers.IO) {
+                    // Persist the exact approved selection before enqueue, closing the save-lag/crash window.
+                    reviewDraftStore.save(ReviewDraft(mode = mode, preview = preview, filingSession = filingSession.takeIf { preview.filingPresentation != null }))
                     executor.enqueueApproved(
                         plan = plan,
                         scopeRootRef = preview.scopeRoot.rawValue(),
@@ -1408,6 +1427,10 @@ class ScanViewModel(
                     )
                 }
                 queuedTaskRunId = taskRunId
+                draftGeneration += 1
+                _preview.value = null
+                filingSession = null
+                withContext(Dispatchers.IO) { reviewDraftStore.save(null) }
 
                 // The service receives only the durable task id. It cannot
                 // alter the approved plan or bypass the validator/preview.
@@ -1522,6 +1545,7 @@ class ScanViewModel(
      * review threw the scan away.
      */
     fun reset() {
+        draftGeneration += 1
         cancelFilingWork()
         scanJob?.cancel()
         filingSession = null

@@ -88,6 +88,20 @@ class InboxFilingIntakeTest {
         assertThat(result.retainedUncertainSourceRefs).hasSize(16_000)
     }
 
+    @Test fun selectedCheckpointRootDoesNotRequireItsParentToBeIndexed() {
+        val checkpoint = "/Download/Uncertain"
+        val file = record("$checkpoint/a.txt", checkpoint)
+        val selected = InboxFilingIntake.select(listOf(file), setOf(checkpoint), true, true, setOf(checkpoint))
+        assertThat(selected.records).containsExactly(file)
+        assertThat(selected.retainedUncertainSourceRefs).containsExactly(file.stableRef)
+    }
+
+    @Test fun foreignCheckpointRootCannotExpandTheSelectedScope() {
+        val file = record("/other/Uncertain/a.txt", "/other/Uncertain")
+        val selected = InboxFilingIntake.select(listOf(file), setOf("/Download"), true, true, setOf("/other/Uncertain"))
+        assertThat(selected.records).isEmpty()
+    }
+
     private fun unresolved(source: String, parent: String) = FilingDecision(
         FilingArtifact(source, source.substringAfterLast('/'), "txt", 10, modifiedAt = 1, parentRef = parent),
         null, null, null, null, FilingConfidence.UNRESOLVED, emptyList(),
