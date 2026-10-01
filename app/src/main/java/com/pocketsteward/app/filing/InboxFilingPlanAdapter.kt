@@ -38,6 +38,8 @@ data class FilingReviewPresentation(
     val checkpointGroups: List<FilingReviewGroup> = emptyList(),
     val skippedInboxFolders: Int = 0,
     val reviewingUncertain: Boolean = false,
+    val imageCoverage: com.pocketsteward.app.image.ImageReviewCoverage? = null,
+    val reviewSessionId: String? = null,
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size

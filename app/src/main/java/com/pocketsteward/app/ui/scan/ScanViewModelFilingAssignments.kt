@@ -25,6 +25,9 @@ internal data class FilingSession(
     val retainedUncertainSourceRefs: Set<String>,
     val homes: List<ProjectHomeCandidate>,
     val existingSafHomes: Map<String, FileRef> = emptyMap(),
+    val manualAssignments: Map<String, com.pocketsteward.app.filing.FilingDecision>? = null,
+    val reviewId: String? = null,
+    val originalSources: Map<String, com.pocketsteward.app.plan.SourcePrecondition>? = null,
 )
 
 internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null, releaseFolder: String? = null) {
@@ -53,10 +56,13 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                 if (session.root is FileRef.Direct) InboxFilingPlanAdapter.build(result, session.root, session.existingDirectories, session.retainedUncertainSourceRefs)
                 else InboxFilingSafPlanAdapter.build(result, session.root, session.existingSafHomes, current.scopes.first().label, session.retainedUncertainSourceRefs)
             }
+            val nextSession = session.copy(result = result, homes = (session.homes + home).distinctBy { it.path },
+                manualAssignments = session.manualAssignments.orEmpty() + result.decisions.filter { it.artifact.stableRef in sourceRefs }.associateBy { it.artifact.stableRef },
+                reviewId = java.util.UUID.randomUUID().toString())
             showPlanPreview(
                 current.goal, plan.operations, current.scopes, current.scopeNotes,
                 plan.authorizedDestinationRoots, plan.defaultSelectedSourceRefs,
-                plan.presentation.copy(reviewingUncertain = current.filingPresentation.reviewingUncertain),
+                plan.presentation.copy(reviewingUncertain = current.filingPresentation.reviewingUncertain, imageCoverage = current.filingPresentation.imageCoverage, reviewSessionId = nextSession.reviewId),
                 previousReviewedSources = current.reviewedSources,
             )
             val edited = _uiState.value as? ScanUiState.PlanPreview ?: return@launch
@@ -65,7 +71,8 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                 current.accepted.getOrNull(index)?.let(com.pocketsteward.app.plan.ReviewedSources::sourceOf)?.rawValue()
             }
             _uiState.value = edited.copy(selectedIndices = defaultSelectionForSources(edited.accepted, formerlySelectedRefs + sourceRefs))
-            filingSession = session.copy(result = result, homes = (session.homes + home).distinctBy { it.path })
+            filingSession = nextSession
+
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (t: Throwable) {

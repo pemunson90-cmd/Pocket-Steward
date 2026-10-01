@@ -102,4 +102,20 @@ class ReviewDraftStoreTest {
         assertThat(ReviewDraftPolicy.hasCurrentAccess(preview, StorageAccessMode.DIRECT, null)).isFalse()
     }
 
+    @Test fun crossedPreviewAndSessionRevisionsCannotBePersisted() {
+        val original = draft()
+        val session = original.filingSession!!.copy(reviewId = "next")
+        assertThat(ReviewDraftPolicy.matchesFilingSession(original.preview, session)).isFalse()
+        assertThat(runCatching { ReviewDraftCodec.encode(original.copy(filingSession = session)) }.isFailure).isTrue()
+    }
+    @Test fun continuationCoverageAssignmentsAndOriginalUnresolvedBaselinesSurviveRestart() {
+        val original = draft()
+        val session = original.filingSession!!.copy(reviewId = "same", manualAssignments = original.filingSession.result.decisions.associateBy { it.artifact.stableRef },
+            originalSources = mapOf("unresolved" to SourcePrecondition(10, 100)))
+        val preview = original.preview.copy(filingPresentation = original.preview.filingPresentation!!.copy(reviewSessionId = "same",
+            imageCoverage = com.pocketsteward.app.image.ImageReviewCoverage(16_000, 500, 200, 40, 15_300, 15_960, 0, 0, textEnabled = true)))
+        val current = original.copy(preview = preview, filingSession = session)
+        assertThat(ReviewDraftCodec.decode(ReviewDraftCodec.encode(current))).isEqualTo(current)
+    }
+
 }

@@ -14,10 +14,17 @@ class ContentIndexInspectionTest {
         val segments = mutableMapOf<String, List<IndexedSegment>>()
         var bytes = "Lilith manuscript chapter one".toByteArray()
         var reads = 0
-        val gateway = proxy<StorageGateway> { name, _ ->
-            check(name == "openRead") { "Unexpected storage call: $name" }
-            reads++
-            bytes.inputStream()
+        var liveModified = 1L
+        val gateway = proxy<StorageGateway> { name, args ->
+            when (name) {
+                "stat" -> {
+                    val ref = args[0] as com.pocketsteward.app.storage.FileRef.Direct
+                    com.pocketsteward.app.storage.FileMetadata(ref, ref.absolutePath.substringAfterLast('/'), "txt", "text/plain",
+                        bytes.size.toLong(), null, liveModified, false, false)
+                }
+                "openRead" -> { reads++; bytes.inputStream() }
+                else -> error("Unexpected storage call: $name")
+            }
         }
         val dao = proxy<ContentIndexDao> { name, args ->
             when (name) {
@@ -44,6 +51,7 @@ class ContentIndexInspectionTest {
         val other = record("/inbox/other.txt", bytes.size.toLong(), 1)
         repository.ensureDocument(ContentIndexCandidate(other, "/inbox"))
         bytes = "NSTL research outline".toByteArray()
+        liveModified = 2
         repository.ensureDocument(ContentIndexCandidate(record.copy(sizeBytes = bytes.size.toLong(), modifiedAt = 2), "/inbox"))
         assertThat(repository.excerpt(record.stableRef)).contains("NSTL")
         assertThat(repository.excerpt(record.stableRef)).doesNotContain("Lilith")

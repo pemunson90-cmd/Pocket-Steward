@@ -412,8 +412,10 @@ internal fun ScanViewModel.editPlanDestinationGroup(
     newGroupName: String? = null,
     rememberForSimilarFiles: Boolean = false,
 ) {
+    if (busy.value != null || hasActiveFilingWork) return
     val current = _preview.value ?: return
-    viewModelScope.launch {
+    val session = filingSession
+    filingEditJob = viewModelScope.launch {
         try {
             val oldDirectory = groupDirectory.trimEnd('/')
             val oldGroup = oldDirectory.substringAfterLast('/')
@@ -570,6 +572,21 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 )
             }
 
+            val nextSession = if (session != null && updatedFilingPresentation != null) {
+                val choices = updatedFilingPresentation.groups.flatMap { group -> group.items.map { it.sourceRef to group } }.toMap()
+                val changed = session.result.decisions.filter { it.destinationDirectory?.trimEnd('/') == oldDirectory }.map { decision ->
+                    val group = requireNotNull(choices[decision.artifact.stableRef])
+                    val home = requireNotNull(decision.projectHome).copy(name = group.projectName, path = group.projectHomePath, persisted = true)
+                    decision.copy(projectName = group.projectName, projectHome = home, release = group.release,
+                        destinationDirectory = group.destinationPath,
+                        evidence = listOf(com.pocketsteward.app.filing.FilingEvidence(com.pocketsteward.app.filing.FilingEvidenceKind.USER_MAPPING,
+                            "You chose destination ${group.destinationPath}", 100)) + decision.evidence)
+                }.associateBy { it.artifact.stableRef }
+                session.copy(result = com.pocketsteward.app.filing.InboxFilingResult(session.result.decisions.map { changed[it.artifact.stableRef] ?: it }),
+                    manualAssignments = session.manualAssignments.orEmpty() + changed,
+                    homes = (session.homes + changed.values.mapNotNull { it.projectHome }).distinctBy { it.path },
+                    reviewId = java.util.UUID.randomUUID().toString())
+            } else null
             _preview.value = current.copy(
                 accepted = validated.accepted,
                 acceptedScopeLabels = validated.accepted.map { operation ->
@@ -581,13 +598,16 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 selectedIndices = current.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
-                filingPresentation = updatedFilingPresentation,
+                filingPresentation = updatedFilingPresentation?.copy(reviewSessionId = nextSession?.reviewId),
             )
+            if (nextSession != null) filingSession = nextSession
             if (rememberForSimilarFiles) {
                 learnableFilenameTerm(affectedSourceNames)?.let { term ->
                     settingsRepository.addCorrectionRule(term, targetGroup)
                 }
             }
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             _error.value = t.message ?: t.javaClass.simpleName
         }

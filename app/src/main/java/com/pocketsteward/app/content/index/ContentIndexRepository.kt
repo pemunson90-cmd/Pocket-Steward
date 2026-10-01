@@ -5,6 +5,8 @@ import com.pocketsteward.app.content.ContentInspector
 import com.pocketsteward.app.content.ContentKind
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.scan.classifyByExtension
+import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -39,11 +41,17 @@ class ContentIndexRepository(
         val root = candidate.sourceRoot.trimEnd('/')
         require(root.isNotBlank() && !record.isDirectory)
         val existing = dao.getDocument(record.stableRef)
-        if (ContentIndexPolicy.canReuse(existing, record, budget.profile)) {
+        val freshnessFailure = observedFailure(record)
+        if (freshnessFailure == null && ContentIndexPolicy.canReuse(existing, record, budget.profile)) {
             dao.putScope(IndexedDocumentScope(record.stableRef, root))
             return ContentIndexInspection(requireNotNull(existing), reused = true)
         }
-        val extraction = inspector.extract(record, budget)
+        val extraction = if (freshnessFailure != null) ContentExtraction.Failed(freshnessFailure) else {
+            val observed = inspector.extract(record, budget)
+            currentCoroutineContext().ensureActive()
+            val changedDuringRead = observedFailure(record)
+            if (changedDuringRead == null) observed else ContentExtraction.Failed(changedDuringRead)
+        }
         val segments = if (extraction is ContentExtraction.Text) extraction.toSegments(record.stableRef) else emptyList()
         val document = when (extraction) {
             is ContentExtraction.Text -> record.toIndexedDocument(root, extraction.kind, IndexedExtractionStatus.INDEXED, null, segments.size)
@@ -54,6 +62,19 @@ class ContentIndexRepository(
         dao.replaceDocument(document, segments)
         return ContentIndexInspection(document, reused = false)
     }
+
+    private suspend fun observedFailure(record: FileRecord): String? = try {
+        val live = inspector.observeMetadata(record.stableRef)
+        currentCoroutineContext().ensureActive()
+        when {
+            live.isDirectory -> "Source is now a directory; rescan before reading document evidence."
+            live.ref.rawValue() != record.stableRef || live.displayName != record.displayName ||
+                live.sizeBytes != record.sizeBytes || live.modifiedAtEpochMs != record.modifiedAt ->
+                "Source changed during document inspection; rescan and rebuild the review."
+            else -> null
+        }
+    } catch (cancel: CancellationException) { throw cancel }
+    catch (failure: Exception) { "Source could not be verified: ${failure.message ?: failure.javaClass.simpleName}" }
 
     suspend fun cachedDocuments(stableRefs: List<String>): Map<String, IndexedDocument> {
         val documents = linkedMapOf<String, IndexedDocument>()

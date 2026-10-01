@@ -241,8 +241,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 preview.filingPresentation?.let { filing ->
                     item {
                         FilingOverviewCard(filing)
+                        filing.imageCoverage?.takeIf { it.enabled }?.let { coverage ->
+                            Text(coverage.summary)
+                            if (coverage.hasDeferred) {
+                                OutlinedButton(onClick = { viewModel.continueFilingImageEvidence() }) {
+                                    Text("Continue image evidence")
+                                }
+                            }
+                            if (coverage.unavailable > 0 || coverage.unavailableOcr > 0) {
+                                OutlinedButton(onClick = { viewModel.continueFilingImageEvidence(retryUnavailable = true) }) {
+                                    Text("Retry unavailable image evidence")
+                                }
+                            }
+                        }
                         if (preview.scopeNotes.any { it.contains("Content inspection is off") }) {
-                            Text("Read documents locally to improve project matching. Rebuilding replaces edits in this preview.")
+                            Text("Read documents locally to improve project matching. Your assignments and selections are retained.")
                             OutlinedButton(onClick = { viewModel.enableContentAndReplanFiling() }) {
                                 Text("Enable local content and rebuild")
                             }

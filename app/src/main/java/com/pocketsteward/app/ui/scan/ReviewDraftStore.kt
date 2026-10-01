@@ -115,6 +115,7 @@ internal object ReviewDraftCodec {
         // A draft must not lose the original review baseline and recapture changed files later.
         require(preview.accepted.mapNotNull(ReviewedSources::sourceOf).all { it.rawValue() in preview.reviewedSources })
         preview.reviewedSources.values.forEach { require(it.sizeBytes >= 0 && it.directoryEntryCount >= 0) }
+        require(ReviewDraftPolicy.matchesFilingSession(preview, draft.filingSession))
         draft.filingSession?.let { session ->
             require(preview.filingPresentation != null)
             require(session.result.decisions.size <= 100_000)
@@ -154,6 +155,11 @@ internal class ReviewDraftStore(private val file: File) {
 }
 
 internal object ReviewDraftPolicy {
+    fun matchesFilingSession(preview: ScanUiState.PlanPreview?, session: FilingSession?): Boolean {
+        val filing = preview?.filingPresentation ?: return true
+        return session != null && filing.reviewSessionId == session.reviewId
+    }
+
     fun hasCurrentAccess(preview: ScanUiState.PlanPreview, mode: StorageAccessMode?, grant: String?): Boolean =
         preview.storageMode == mode && mode != null && (mode != StorageAccessMode.SAF || (grant != null && preview.storageGrantIdentity == grant))
 

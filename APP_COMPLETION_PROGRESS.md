@@ -1,6 +1,6 @@
 # App completion implementation progress
 
-Updated 2026-10-01. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md remain the full requirement inventory.
+Updated 2026-10-01. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. GOAL_APP_COMPLETION_SPEC.md and APP_COMPLETION_REGISTER.md track the accepted remaining build path. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md retain historical/master traceability.
 
 ## Implemented in dev7
 
@@ -70,7 +70,19 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 
 578 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev11 (51). Instrumentation was compiled, not run. The reusable signing helper completed the canonical signed release and verified signer continuity, version 1.4.0-dev11 (51), arm64 ABI and absent INTERNET permission. Six publication safety checks passed for changed APKs, forged receipts, duplicate ZIP entries, signing identity and remote app-tree drift. The tracked build/publication helpers and BUILD_AND_RELEASE.md make this process repeatable. Actual Android ML execution and the full phone workflow remain unverified.
 
-Dev11 is published as a GitHub prerelease. The complete published app tree at `793d6a70dde1b3e07c0455732a7c366609fe6920` matches the tested local tree. The public ZIP was retrieved and its ZIP and embedded APK hashes verified. APK SHA-256: `59cf87e4c30b5d2c05485117a9fd8febfdca858133ae94635e0c46ebfae4af4d`. Download: https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/cc7e0427830707f836e1451b9c7f984f69a8c66c/PocketSteward-1.4.0-dev11.zip . The independent GitHub run for this source remains in progress at this handoff: https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36916549104 . Dev10's independent run passed; neither run establishes physical-phone acceptance.
+Dev11 is published as a GitHub prerelease. The complete published app tree at `793d6a70dde1b3e07c0455732a7c366609fe6920` matches the tested local tree. The public ZIP was retrieved and its ZIP and embedded APK hashes verified. APK SHA-256: `59cf87e4c30b5d2c05485117a9fd8febfdca858133ae94635e0c46ebfae4af4d`. Download: https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/cc7e0427830707f836e1451b9c7f984f69a8c66c/PocketSteward-1.4.0-dev11.zip . The later docs-only source at `534e0483b3319940249091a3bc5b696e2fb29fa4` preserves the identical app tree and passed independent GitHub validation: https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36917072270 . The earlier run was cancelled by that docs update. Neither establishes physical-phone acceptance.
+
+## Implemented for dev12
+
+- Large filing reviews admit at most 200 fresh image analyses and 40 image OCR attempts per batch. Valid cached evidence across the complete intake remains usable. Coverage distinguishes cached/fresh/deferred/unavailable work and disabled image text inspection.
+- Continue/retry actions rebuild and validate the normal typed review. They retain its original intake, explicit project/home/role/release and destination assignments, existing source selections and original file/folder baselines. Newly justified sources can gain proposals; changed sources cannot silently acquire new baselines. Continuation also works from a restored draft without a transient scan summary.
+- Private attempt progress uses one bounded, checksummed append journal with durable writes and atomic compaction. Interrupted/corrupt tails retain the verified prefix. Unseen work precedes old attempts, completed failures stay unavailable until explicitly retried, and storage failures are reported. These hints do not authorize mutations.
+- Matching review/session revision IDs prevent an old preview from being saved with new assignments during rebuilds. Revised choices, coverage and original unresolved baselines round-trip through private drafts. Legacy optional fields remain readable. Destination changes and assignments update the filing session together with the preview.
+- Visual caches are written separately from OCR evidence. OCR-based screenshot hints/text cannot leak into a visual-only cache, and OCR upgrades can reuse verified labels instead of running the label model again. Cancellation propagates and a late noncancellable result cannot publish or start another inspection.
+- The content repository verifies live identity before cache reuse and after extraction. Changed/revoked/type-changed sources replace old segments with an explicit failure; cancellation preserves the previous cache. Scheduled selected-folder filing now honors its saved source allowlist.
+- Controlled cold/warm 1k/4k/16k matching and plan benchmarks exercise 200 competing numbered homes and assert exact ownership and selections. See REVIEW_SCALE_BENCHMARKS.md. They exclude phone scanning, IO, ML, memory and rendering.
+
+611 app unit tests and six release-tool safety tests passed. Both exact SQLite verification tools passed. lintDebug, assembleDebug and assembleDebugAndroidTest also passed on dev12 (52). Canonical signing and publication receipts are recorded below when completed. Instrumentation has not been executed on a device. CACHE-01, remaining CACHE-02 work and later completion packages remain open in APP_COMPLETION_REGISTER.md.
 
 ## Remaining completion work
 

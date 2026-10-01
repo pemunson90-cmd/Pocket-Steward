@@ -33,13 +33,15 @@ internal fun ScanViewModel.initializeReviewDraftPersistence() {
             _error.value = "Saved review could not be restored. Your files were not changed; rebuild the review."
         }
         combine(_preview, filingSessionRevision) { preview, _ -> preview to filingSession }.collect { (preview, session) ->
+            // A rebuild emits session and preview separately. Never persist a crossed pair.
+            if (!ReviewDraftPolicy.matchesFilingSession(preview, session)) return@collect
             try {
                 val saveGeneration = draftGeneration
                 _draftSaveStatus.value = if (preview == null) "" else "Saving review…"
                 val draft = preview?.let {
                     ReviewDraft(mode = requireNotNull(it.storageMode), preview = it, filingSession = session.takeIf { it != null && preview.filingPresentation != null })
                 }
-                withContext(Dispatchers.IO) { reviewDraftStore.save(draft) { saveGeneration == draftGeneration && preview == _preview.value } }
+                withContext(Dispatchers.IO) { reviewDraftStore.save(draft) { saveGeneration == draftGeneration && preview == _preview.value && session == filingSession } }
                 _draftSaveStatus.value = if (preview == null) "" else "Review saved on this device"
             } catch (cancel: CancellationException) {
                 throw cancel

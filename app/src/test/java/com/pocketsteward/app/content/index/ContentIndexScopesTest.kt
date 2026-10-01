@@ -76,7 +76,14 @@ class ContentIndexScopesTest {
                 else -> error(name)
             }
         }
-        val gateway = proxy<StorageGateway> { name, _ -> require(name == "openRead"); reads++; bytes.inputStream() }
+        val gateway = proxy<StorageGateway> { name, _ ->
+            when (name) {
+                "stat" -> com.pocketsteward.app.storage.FileMetadata(com.pocketsteward.app.storage.FileRef.Direct(record.stableRef), record.displayName,
+                    "txt", "text/plain", record.sizeBytes, null, record.modifiedAt, false, false)
+                "openRead" -> { reads++; bytes.inputStream() }
+                else -> error(name)
+            }
+        }
         val repository = ContentIndexRepository(dao, ContentInspector(gateway))
     }
     companion object {
