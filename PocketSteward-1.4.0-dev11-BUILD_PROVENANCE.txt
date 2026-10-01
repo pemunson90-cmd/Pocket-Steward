@@ -1,0 +1,16 @@
+{
+  "versionName": "1.4.0-dev11",
+  "versionCode": 51,
+  "localSourceCommit": "cbe2dca7f4afc2b8344e10b78f1da18608d5f7f6",
+  "appTreeSHA1": "bfaaddbb72610761fb44f8f68ddacbcfc789db5c",
+  "publishedSourceCommit": "793d6a70dde1b3e07c0455732a7c366609fe6920",
+  "apkSHA256": "59cf87e4c30b5d2c05485117a9fd8febfdca858133ae94635e0c46ebfae4af4d",
+  "signerSHA256": "b9057dd649daea23390337f2c35892d0ef8591e57e9e9a27355e7cd11a841935",
+  "internetPermission": false,
+  "unitTests": {
+    "tests": 578,
+    "failures": 0,
+    "errors": 0
+  },
+  "deviceAcceptance": "Not verified in this environment"
+}
