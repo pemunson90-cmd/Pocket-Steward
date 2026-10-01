@@ -52,6 +52,7 @@ def main():
     provenance = {
         'versionName': version[2], 'versionCode': int(version[1]),
         'localSourceCommit': run('git', 'rev-parse', 'HEAD'),
+        'appTreeSHA1': run('git', 'rev-parse', 'HEAD:app'),
         'publishedSourceCommit': args.published_source,
         'apkSHA256': hashlib.sha256(apk.read_bytes()).hexdigest(),
         'signerSHA256': signer[1], 'internetPermission': False,
