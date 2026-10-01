@@ -4,12 +4,29 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TaskRunDao {
     @Insert
     suspend fun insert(taskRun: TaskRun): Long
+
+    @Transaction
+    suspend fun insertWhenIdle(taskRun: TaskRun): Long {
+        require(getRunsNeedingRecovery().none { it.status == TaskRunStatus.RUNNING || it.status == TaskRunStatus.UNDOING }) {
+            "Another file task is active. Pause or finish it before starting another."
+        }
+        return insert(taskRun)
+    }
+
+    @Transaction
+    suspend fun activateWhenIdle(taskRun: TaskRun) {
+        require(getRunsNeedingRecovery().none { it.id != taskRun.id && (it.status == TaskRunStatus.RUNNING || it.status == TaskRunStatus.UNDOING) }) {
+            "Another file task is active. Pause or finish it before resuming or undoing."
+        }
+        update(taskRun)
+    }
 
     @Update
     suspend fun update(taskRun: TaskRun)

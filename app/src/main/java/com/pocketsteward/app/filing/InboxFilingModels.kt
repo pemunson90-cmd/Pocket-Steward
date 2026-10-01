@@ -23,6 +23,8 @@ enum class FilingEvidenceKind {
     DESTINATION_CONFLICT,
     DESTINATION_PROTECTED,
     PROJECT_AMBIGUITY,
+    MEDIA_METADATA,
+    IMAGE_CONTENT,
 }
 
 data class FilingEvidence(
@@ -46,6 +48,10 @@ data class FilingArtifact(
     val archiveSample: List<String> = emptyList(),
     val indexedText: String = "",
     val isDirectory: Boolean = false,
+    val captureDate: String? = null,
+    val mediaArtist: String? = null,
+    val mediaAlbum: String? = null,
+    val imageLabels: List<String> = emptyList(),
 )
 
 data class ProjectHomeCandidate(
@@ -55,6 +61,7 @@ data class ProjectHomeCandidate(
     val packageIds: List<String> = emptyList(),
     val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
     val persisted: Boolean = false,
+    val roleFolders: Map<String, String> = emptyMap(),
 )
 
 data class FilingDecision(

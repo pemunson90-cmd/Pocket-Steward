@@ -280,7 +280,7 @@ internal fun ScanViewModel.runCoherenceAudit(summary: ScanUiState.Summary) {
                 }
                 if (modelName == null) modelName = audit.modelName
 
-                audit.findings.forEach { finding ->
+                com.pocketsteward.app.ai.CoherenceFindingPolicy.forBatch(audit.findings, batch.mapTo(hashSetOf()) { it.id }).forEach { finding ->
                     val record = recordById[finding.id] ?: return@forEach
                     val actionable = finding.classification in setOf(
                         CoherenceClass.QUESTIONABLE,
@@ -515,71 +515,9 @@ internal fun ScanViewModel.proposeScheduledCleanup(
     summary: ScanUiState.Summary,
     suggestion: PendingCleanupSuggestion,
 ) {
-    viewModelScope.launch {
-        _uiState.value = ScanUiState.Working(
-            "Planning scheduled review",
-            "Considering only files discovered by the scheduled scan",
-        )
-        try {
-            val exactRefs = suggestion.newFileRefs.toHashSet()
-            val projectKeywords = settingsRepository.projectKeywords.first()
-            val generatedByScope = summary.scopes.map { scope ->
-                val records = ScheduledReviewPolicy.selectNewFiles(
-                    records = container.database.fileRecordDao()
-                        .getFilesUnderScopeRoot(scope.root.rawValue()),
-                    suggestion = suggestion,
-                )
-
-                val generated = withContext(Dispatchers.Default) {
-                    RuleBasedPlanSource.proposePlan(
-                        PlanRequest(
-                            scopeRoot = scope.root,
-                            records = records,
-                            projectKeywords = projectKeywords,
-                            includeSubfolders = false,
-                        ),
-                    )
-                }
-                scope to generated
-            }
-
-            val operations = generatedByScope.flatMap { it.second.plan.operations }
-            if (operations.isEmpty()) {
-                _uiState.value = ScanUiState.Error(
-                    "The scheduled scan found ${suggestion.newFileCount} new file(s), " +
-                        "but none of the still-present new files can be organized with full confidence.",
-                )
-                return@launch
-            }
-
-            val tracked = exactRefs.size
-            val notes = buildList {
-                add(
-                    "Scheduled review is limited to the $tracked newly discovered file reference(s) saved with this suggestion; older files are not reconsidered.",
-                )
-                if (suggestion.newFileCount > tracked) {
-                    add(
-                        "${suggestion.newFileCount - tracked} additional new file(s) were counted but omitted from the bounded persisted ref list. Run a normal cleanup if you want to review the whole root.",
-                    )
-                }
-                generatedByScope.forEach { (scope, generated) ->
-                    generated.scopeReport.previewLines().forEach { line ->
-                        add(if (summary.scopes.size == 1) line else "${scope.label}: $line")
-                    }
-                }
-            }
-
-            showPlanPreview(
-                goal = "Scheduled cleanup review · ${suggestion.newFileCount} new file(s)",
-                operations = operations,
-                scopes = summary.scopes,
-                scopeNotes = notes,
-            )
-            // Consume only after a real proposal exists. A failed scan
-            // or an empty/failed proposal must remain reviewable later.
-            settingsRepository.clearPendingCleanupSuggestion()
-        } catch (t: Throwable) {
-            _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
-        }
+    if (suggestion.newFileRefs.isEmpty()) {
+        _uiState.value = ScanUiState.Error("This old suggestion has no saved file identities. Run Organize Inbox to create a fresh reviewed plan.")
+        return
     }
+    proposeInboxFiling(summary, scheduled = suggestion)
 }

@@ -10,3 +10,10 @@
 local.properties
 app/build/
 .kotlin/
+
+# Private signing material and generated installation packages.
+*.jks
+*.keystore
+SIGNING-CREDENTIALS.txt
+*.apk
+.env

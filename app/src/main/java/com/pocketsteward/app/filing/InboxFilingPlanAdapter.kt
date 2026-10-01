@@ -15,6 +15,7 @@ data class FilingReviewItem(
     val evidence: List<String>,
     val destinationPath: String?,
     val isDirectory: Boolean = false,
+    val contentExcerpt: String? = null,
 )
 
 data class FilingReviewGroup(
@@ -28,6 +29,7 @@ data class FilingReviewGroup(
     val editableDirectDestination: Boolean = true,
     val isUncertainCheckpoint: Boolean = false,
     val isTopicDestination: Boolean = false,
+    val roleFolders: Map<String, String> = emptyMap(),
 )
 
 data class FilingReviewPresentation(
@@ -87,7 +89,9 @@ object InboxFilingPlanAdapter {
             }
         }
 
-        val proposed = result.proposed.filter { decision ->
+        val proposedDecisions = result.proposed
+        val countsByHome = proposedDecisions.groupingBy { it.projectHome?.path?.lowercase() }.eachCount()
+        val proposed = proposedDecisions.filter { decision ->
             decision.projectHome != null && decision.destinationDirectory != null
         }.map { decision ->
             val home = requireNotNull(decision.projectHome)
@@ -95,7 +99,7 @@ object InboxFilingPlanAdapter {
             // create that home. Otherwise keep the folder as an intact bundle:
             // merging its children would invalidate the reviewed source unit.
             if (decision.artifact.isDirectory && decision.createsProjectHome &&
-                result.proposed.any { other -> other !== decision && other.projectHome?.path.equals(home.path, ignoreCase = true) }) {
+                (countsByHome[home.path.lowercase()] ?: 0) > 1) {
                 decision.copy(destinationDirectory = home.path)
             } else decision
         }
@@ -160,7 +164,8 @@ object InboxFilingPlanAdapter {
                     release = first.release,
                     items = decisions.map(::reviewItem),
                     hierarchy = home.hierarchy,
-                    isTopicDestination = home.hierarchy == ProjectHierarchyStrategy.FLAT && home.path.startsWith("$rootPath/Images/"),
+                    roleFolders = home.roleFolders,
+                    isTopicDestination = home.hierarchy == ProjectHierarchyStrategy.FLAT && listOf("Images", "Music", "Movies").any { home.path.startsWith("$rootPath/$it/") },
                     editableDirectDestination = home.path.trimEnd('/').lowercase() in existing,
                 )
             }
@@ -213,6 +218,7 @@ object InboxFilingPlanAdapter {
         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
         destinationPath = decision.destinationDirectory,
         isDirectory = decision.artifact.isDirectory,
+        contentExcerpt = decision.artifact.indexedText.take(400).takeIf { it.isNotBlank() },
     )
 }
 
@@ -238,41 +244,37 @@ object InboxFilingSafPlanAdapter {
         val proposed = result.proposed.filter { it.projectHome != null && it.destinationDirectory != null }
         proposed.groupBy { decision ->
             val home = requireNotNull(decision.projectHome)
-            home.path.trimEnd('/') to decision.release
+            home.path.trimEnd('/') to decision.destinationDirectory
         }.forEach { (_, decisions) ->
             val first = decisions.first()
             val home = requireNotNull(first.projectHome)
             val projectName = requireNotNull(first.projectName)
             val existingHomeRef = existingHomes[home.path.trimEnd('/')]
-            val homeRef = existingHomeRef ?: scopeRoot.child(
-                InboxFilingEngine.sanitizeSegment(projectName)
-                    ?: error("Unsafe project folder name: $projectName"),
-            )
+            val homeParts = if (existingHomeRef == null) {
+                require(home.path.startsWith(scopeRoot.rawValue().trimEnd('/') + "/")) { "Project home is outside the selected tree." }
+                home.path.removePrefix(scopeRoot.rawValue().trimEnd('/') + "/").split('/')
+            } else listOf(projectName)
+            require(homeParts.isNotEmpty() && homeParts.all { InboxFilingEngine.sanitizeSegment(it) == it }) { "Unsafe project folder." }
+            var homeRef: FileRef = existingHomeRef ?: scopeRoot
             if (existingHomeRef == null) {
-                val safeProjectName = (homeRef as FileRef.Child).name
-                if (plannedDirectories.add(homeRef.rawValue())) {
-                    operations += PlannedOperation.CreateDirectory(
-                        parent = scopeRoot,
-                        name = safeProjectName,
-                        reason = "Create the reviewed project home for $projectName inside the granted tree.",
-                    )
+                for (part in homeParts) {
+                    val child = homeRef.child(part)
+                    if (plannedDirectories.add(child.rawValue())) operations += PlannedOperation.CreateDirectory(homeRef, part, "Create or reuse the reviewed project/category home inside the granted tree.")
+                    homeRef = child
                 }
             }
 
             val release = first.release
-            val destinationRef = if (home.hierarchy == com.pocketsteward.app.saved.ProjectHierarchyStrategy.VERSIONED && release != null) {
-                val safeRelease = InboxFilingEngine.sanitizeSegment(release) ?: error("Unsafe release folder: $release")
-                val releaseRef = homeRef.child(safeRelease)
-                if (plannedDirectories.add(releaseRef.rawValue())) {
-                    operations += PlannedOperation.CreateDirectory(
-                        parent = homeRef,
-                        name = safeRelease,
-                        reason = "Create/use the reviewed release folder for $projectName.",
-                    )
+            val relativeParts = requireNotNull(first.destinationDirectory).removePrefix(home.path.trimEnd('/'))
+                .trim('/').split('/').filter { it.isNotBlank() }
+            require(relativeParts.all { InboxFilingEngine.sanitizeSegment(it) == it }) { "Unsafe selected-tree destination." }
+            var destinationRef = homeRef
+            for (part in relativeParts) {
+                val child = destinationRef.child(part)
+                if (plannedDirectories.add(child.rawValue())) {
+                    operations += PlannedOperation.CreateDirectory(destinationRef, part, "Create or reuse the reviewed project folder.")
                 }
-                releaseRef
-            } else {
-                homeRef
+                destinationRef = child
             }
 
             decisions.forEach { decision ->
@@ -291,12 +293,12 @@ object InboxFilingSafPlanAdapter {
             }
 
             val displayDestination = buildString {
-                append(scopeLabel).append(" › ").append(projectName)
-                release?.let { append(" › ").append(it) }
+                append(scopeLabel).append(" › ").append(homeParts.joinToString(" › "))
+                relativeParts.forEach { append(" › ").append(it) }
             }
             groups += FilingReviewGroup(
                 projectName = projectName,
-                projectHomePath = if (existingHomeRef != null) home.path else displayDestination.substringBeforeLast(" › ", displayDestination),
+                projectHomePath = if (existingHomeRef != null) home.path else "$scopeLabel › ${homeParts.joinToString(" › ")}",
                 destinationPath = displayDestination,
                 existingProjectHome = existingHomeRef != null,
                 release = release,
@@ -308,9 +310,11 @@ object InboxFilingSafPlanAdapter {
                         confidence = decision.confidence,
                         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
                         destinationPath = displayDestination,
+                        contentExcerpt = decision.artifact.indexedText.take(400).takeIf { it.isNotBlank() },
                     )
                 },
                 hierarchy = home.hierarchy,
+                    roleFolders = home.roleFolders,
                 editableDirectDestination = false,
             )
         }
@@ -370,6 +374,7 @@ object InboxFilingSafPlanAdapter {
                         confidence = decision.confidence,
                         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
                         destinationPath = null,
+                        contentExcerpt = decision.artifact.indexedText.take(400).takeIf { it.isNotBlank() },
                     )
                 },
                 checkpointGroups = checkpointGroups,

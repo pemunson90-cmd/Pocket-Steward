@@ -146,6 +146,7 @@ internal fun ScanViewModel.startScheduledSuggestion() {
             startScan(
                 targets = targets,
                 thenScheduledSuggestion = suggestion,
+                forceWalk = true,
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -356,7 +357,13 @@ internal fun ScanViewModel.startSavedWorkflow(workflowId: String) {
             _selectedTargets.value = targets
             startScan(
                 targets = targets,
-                thenRequest = workflow.request.takeIf { it.isNotBlank() },
+                thenRequest = workflow.request.takeIf { workflow.kind == com.pocketsteward.app.saved.WorkflowKind.REQUEST && it.isNotBlank() },
+                thenRun = when (workflow.kind) {
+                    com.pocketsteward.app.saved.WorkflowKind.INBOX_FILING -> PostScanAction.INBOX_FILING
+                    com.pocketsteward.app.saved.WorkflowKind.UNCERTAIN_FILING -> PostScanAction.UNCERTAIN_FILING
+                    com.pocketsteward.app.saved.WorkflowKind.REQUEST -> null
+                },
+                forceWalk = true,
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -419,6 +426,7 @@ internal fun ScanViewModel.saveWorkflow(
     summary: ScanUiState.Summary,
     name: String,
     request: String,
+    kind: com.pocketsteward.app.saved.WorkflowKind = com.pocketsteward.app.saved.WorkflowKind.REQUEST,
 ) {
     viewModelScope.launch {
         try {
@@ -426,6 +434,7 @@ internal fun ScanViewModel.saveWorkflow(
                 name = name,
                 request = request,
                 roots = summary.scopes.map { it.root.rawValue() },
+                kind = kind,
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)

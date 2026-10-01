@@ -92,6 +92,8 @@ class SettingsRepository(private val context: Context) {
         val STORAGE_MODE = stringPreferencesKey("storage_access_mode")
         val SAF_TREE_URI = stringPreferencesKey("saf_tree_uri")
         val METADATA_INDEXING = booleanPreferencesKey("metadata_indexing_enabled")
+        val HIERARCHY_TEMPLATE = stringPreferencesKey("hierarchy_template")
+        val NAMED_HIERARCHY_TEMPLATES = stringPreferencesKey("named_hierarchy_templates")
         val CONTENT_INSPECTION = booleanPreferencesKey("content_inspection_enabled")
         val IMAGE_ANALYSIS = booleanPreferencesKey("image_analysis_enabled")
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
@@ -283,6 +285,7 @@ class SettingsRepository(private val context: Context) {
         aliases: List<String> = emptyList(),
         packageIds: List<String> = emptyList(),
         hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
+        roleFolders: Map<String, String> = emptyMap(),
     ) {
         val cleanName = name.trim().take(80)
         val cleanPath = path.trim().trimEnd('/')
@@ -299,6 +302,7 @@ class SettingsRepository(private val context: Context) {
                 packageIds = (existing?.packageIds.orEmpty() + packageIds)
                     .map { it.trim().take(160) }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(20),
                 hierarchy = existing?.hierarchy ?: hierarchy,
+                roleFolders = existing?.roleFolders?.takeIf { it.isNotEmpty() } ?: roleFolders,
             )
             val updated = listOf(merged) + current.filterNot { it.path.equals(cleanPath, ignoreCase = true) }
             prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(updated.take(100))
@@ -332,6 +336,7 @@ class SettingsRepository(private val context: Context) {
         name: String,
         request: String,
         roots: List<String>,
+        kind: com.pocketsteward.app.saved.WorkflowKind = com.pocketsteward.app.saved.WorkflowKind.REQUEST,
     ): SavedWorkflow {
         val cleanedName = name.trim().take(60)
         require(cleanedName.isNotBlank()) { "Saved workflow name cannot be blank." }
@@ -346,6 +351,7 @@ class SettingsRepository(private val context: Context) {
             name = cleanedName,
             request = request.trim().take(2_000),
             roots = cleanedRoots,
+            kind = kind,
         )
         context.dataStore.edit { prefs ->
             val current = SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])
@@ -483,6 +489,39 @@ class SettingsRepository(private val context: Context) {
             mode = prefs[Keys.STORAGE_MODE]?.let { StorageAccessMode.valueOf(it) },
             safTreeUri = prefs[Keys.SAF_TREE_URI],
         )
+    }
+
+    val hierarchyTemplate: Flow<com.pocketsteward.app.saved.HierarchyTemplate> = context.dataStore.data.map { prefs ->
+        runCatching { com.pocketsteward.app.saved.HierarchyTemplate.parse(prefs[Keys.HIERARCHY_TEMPLATE].orEmpty()) }
+            .getOrDefault(com.pocketsteward.app.saved.HierarchyTemplate())
+    }
+
+    suspend fun setHierarchyTemplate(text: String) {
+        val template = com.pocketsteward.app.saved.HierarchyTemplate.parse(text)
+        context.dataStore.edit { it[Keys.HIERARCHY_TEMPLATE] = template.encode() }
+    }
+
+    val namedHierarchyTemplates: Flow<List<com.pocketsteward.app.saved.NamedHierarchyTemplate>> = context.dataStore.data.map {
+        com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.decode(it[Keys.NAMED_HIERARCHY_TEMPLATES])
+    }
+
+    suspend fun saveNamedHierarchyTemplate(name: String, text: String) {
+        val title = name.trim()
+        require(title.isNotBlank() && title.length <= 60 && title.none(Char::isISOControl)) { "Use a template name from 1 to 60 characters." }
+        val value = com.pocketsteward.app.saved.NamedHierarchyTemplate(title, com.pocketsteward.app.saved.HierarchyTemplate.parse(text))
+        context.dataStore.edit { prefs ->
+            val existing = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.decode(prefs[Keys.NAMED_HIERARCHY_TEMPLATES])
+            val updated = (listOf(value) + existing.filterNot { it.name.equals(title, true) }).take(20)
+            prefs[Keys.NAMED_HIERARCHY_TEMPLATES] = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.encode(updated)
+            prefs[Keys.HIERARCHY_TEMPLATE] = value.template.encode()
+        }
+    }
+
+    suspend fun deleteNamedHierarchyTemplate(name: String) {
+        context.dataStore.edit { prefs ->
+            val values = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.decode(prefs[Keys.NAMED_HIERARCHY_TEMPLATES])
+            prefs[Keys.NAMED_HIERARCHY_TEMPLATES] = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.encode(values.filterNot { it.name == name })
+        }
     }
 
     val privacySettings: Flow<PrivacySettings> = context.dataStore.data.map { prefs ->

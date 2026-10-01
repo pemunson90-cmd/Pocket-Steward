@@ -186,7 +186,7 @@ class GeminiNanoAgentModel : AgentModel {
         }
 
         return CoherenceAuditResult(
-            findings = attempt.findings,
+            findings = CoherenceFindingPolicy.forBatch(attempt.findings, bounded.mapTo(hashSetOf()) { it.id }),
             modelName = try {
                 model.getBaseModelName()
             } catch (cancel: CancellationException) {

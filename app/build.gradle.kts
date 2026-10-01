@@ -22,8 +22,8 @@ android {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 46
-        versionName = "1.4.0-dev6"
+        versionCode = 47
+        versionName = "1.4.0-dev7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -120,6 +120,7 @@ dependencies {
     // Maintained EXIF reader. The platform android.media.ExifInterface has
     // format bugs fixed only in this library and lint flags it.
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+    implementation("org.apache.commons:commons-compress:1.28.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")

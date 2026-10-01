@@ -27,6 +27,17 @@ class SavedWorkflowCodecTest {
     }
 
     @Test
+    fun legacyRecipesKeepRequestBehaviorAndTypedRecipesRoundTrip() {
+        val request = SavedWorkflow("1", "Old", "find notes", listOf("/a"))
+        val legacy = SavedWorkflowCodec.encode(listOf(request)).substringBeforeLast(';')
+        assertThat(SavedWorkflowCodec.decode(legacy)).containsExactly(request)
+        val inbox = request.copy(kind = WorkflowKind.INBOX_FILING)
+        val uncertain = request.copy(id = "2", kind = WorkflowKind.UNCERTAIN_FILING)
+        assertThat(SavedWorkflowCodec.decode(SavedWorkflowCodec.encode(listOf(inbox, uncertain)))).containsExactly(inbox, uncertain)
+        assertThat(SavedWorkflowCodec.decode(legacy + ";UNSUPPORTED")).isEmpty()
+    }
+
+    @Test
     fun duplicateRootsCollapseDuringDecode() {
         val value = SavedWorkflow("1", "x", "", listOf("/a", "/a"))
 

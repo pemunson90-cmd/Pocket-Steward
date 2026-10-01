@@ -128,7 +128,7 @@ class UndoExecutor(
         }
 
         val gateway = gatewayFor(task.storageAccessMode)
-        taskRunDao.update(task.copy(status = TaskRunStatus.UNDOING))
+        taskRunDao.activateWhenIdle(task.copy(status = TaskRunStatus.UNDOING))
 
         var undone = 0
         var skipped = 0

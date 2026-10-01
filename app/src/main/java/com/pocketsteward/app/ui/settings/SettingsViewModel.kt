@@ -75,6 +75,24 @@ class SettingsViewModel(
     val libraryRefreshing: StateFlow<Boolean> =
         libraryWorkRunning.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val hierarchyTemplate = settingsRepository.hierarchyTemplate.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pocketsteward.app.saved.HierarchyTemplate())
+    val namedHierarchyTemplates = settingsRepository.namedHierarchyTemplates.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    fun saveNamedHierarchyTemplate(name: String, text: String) {
+        viewModelScope.launch {
+            hierarchyTemplateMessage.value = runCatching { settingsRepository.saveNamedHierarchyTemplate(name, text) }.fold({ "Saved and activated template." }, { it.message })
+        }
+    }
+    fun deleteNamedHierarchyTemplate(name: String) {
+        viewModelScope.launch { settingsRepository.deleteNamedHierarchyTemplate(name) }
+    }
+    val hierarchyTemplateMessage = MutableStateFlow<String?>(null)
+    fun saveHierarchyTemplate(text: String) {
+        viewModelScope.launch {
+            hierarchyTemplateMessage.value = runCatching { settingsRepository.setHierarchyTemplate(text) }
+                .fold({ "Template saved. New project homes use these role folders after review." }, { it.message ?: "Invalid template." })
+        }
+    }
+
     init {
         viewModelScope.launch { reloadLibraryStatus() }
         // Reload the count and time whenever a background refresh finishes.
@@ -342,6 +360,7 @@ class SettingsViewModel(
                     aliases = aliases,
                     packageIds = packages,
                     hierarchy = hierarchy,
+                    roleFolders = projectHomes.value.firstOrNull { it.path.equals(head[1].trim(), true) }?.roleFolders.orEmpty(),
                 )
             }
             .toList()

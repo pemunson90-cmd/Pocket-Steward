@@ -23,6 +23,9 @@ interface ContentIndexDao {
     @Query("DELETE FROM indexed_segments_fts WHERE rowid IN (SELECT id FROM indexed_segments WHERE stableRef = :stableRef)")
     suspend fun deleteFtsForDocument(stableRef: String)
 
+    @Query("SELECT id, stableRef, ordinal, pageNumber, ocr, substr(body, 1, 2000) AS body FROM indexed_segments WHERE stableRef = :stableRef ORDER BY ordinal ASC LIMIT :limit")
+    suspend fun getExcerptSegments(stableRef: String, limit: Int): List<IndexedSegment>
+
     @Query("SELECT * FROM indexed_segments WHERE stableRef = :stableRef ORDER BY ordinal ASC")
     suspend fun getSegmentsForDocument(stableRef: String): List<IndexedSegment>
 

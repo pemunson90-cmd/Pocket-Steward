@@ -52,6 +52,7 @@ fun ScanFlowScaffold(
     error: String? = null,
     onDismissError: () -> Unit = {},
     busy: ScanUiState.Working? = null,
+    onCancelWorking: (() -> Unit)? = null,
     content: @Composable (Modifier) -> Unit,
 ) {
     Scaffold(
@@ -81,7 +82,12 @@ fun ScanFlowScaffold(
                 error?.let { message ->
                     ErrorBanner(message = message, onDismiss = onDismissError)
                 }
-                busy?.let { BusyIndicator(it) }
+                busy?.let {
+                    BusyIndicator(it)
+                    onCancelWorking?.let { cancel ->
+                        androidx.compose.material3.TextButton(onClick = cancel) { Text("Cancel planning · keep cached evidence") }
+                    }
+                }
                 content(Modifier.weight(1f))
             }
         }

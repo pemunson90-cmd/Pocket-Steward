@@ -119,15 +119,20 @@ public final class DirectProtection {
     }
 
     private static String inspectDirectory(Path folder) throws IOException {
-        // listFiles()==null must not become an empty folder or an allowed mutation.
+        // Prove listing access without walking thousands of unrelated siblings for every move.
         try (DirectoryStream<Path> children = Files.newDirectoryStream(folder)) {
-            int examined = 0;
-            for (Path child : children) {
-                if (++examined > MAX_ENTRIES) return "Protection unverifiable: ancestor listing exceeds bounded check.";
-                if (child.getFileName().toString().equals(MARKER))
-                    return "Protected: an ancestor contains " + MARKER;
-            }
+            children.iterator().hasNext();
+        } catch (DirectoryIteratorException e) {
+            throw e.getCause();
         }
-        return null;
+        try {
+            // NOFOLLOW_LINKS also treats a dangling marker symlink as protection.
+            Files.readAttributes(folder.resolve(MARKER), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return "Protected: an ancestor contains " + MARKER;
+        } catch (NoSuchFileException absent) {
+            if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS))
+                throw new IOException("Ancestor disappeared while checking protection.");
+            return null;
+        }
     }
 }

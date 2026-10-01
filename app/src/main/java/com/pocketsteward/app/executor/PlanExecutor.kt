@@ -125,7 +125,7 @@ class PlanExecutor(
         val sourcePreconditions = captureApprovalPreconditions(validated.accepted, plan.reviewedSources)
 
         val startedAt = System.currentTimeMillis()
-        return taskRunDao.insert(
+        return taskRunDao.insertWhenIdle(
             TaskRun(
                 requestText = plan.goal,
                 startedAt = startedAt,
@@ -165,7 +165,7 @@ class PlanExecutor(
         val sourcePreconditions = captureApprovalPreconditions(validated.accepted, plan.reviewedSources)
 
         val startedAt = System.currentTimeMillis()
-        val taskRunId = taskRunDao.insert(
+        val taskRunId = taskRunDao.insertWhenIdle(
             TaskRun(
                 requestText = plan.goal,
                 startedAt = startedAt,
@@ -433,7 +433,7 @@ class PlanExecutor(
             status = TaskRunStatus.RUNNING,
             completedAt = null,
         )
-        taskRunDao.update(task)
+        taskRunDao.activateWhenIdle(task)
 
         var foldersCreated = 0
         var filesMoved = 0

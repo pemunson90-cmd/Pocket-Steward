@@ -48,10 +48,15 @@ class InMemoryFileIndex(records: List<FileRecord>) : FileIndex {
             ?: byStableRef[ref.rawValue()]?.parentRef?.let(::parseFileRef)
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
-        val candidates = byParentAndLowerName[collisionKey(directory.rawValue(), name)] ?: return null
+        val candidates = byParentAndLowerName[collisionKey(canonicalRef(directory).rawValue(), name)] ?: return null
         val excludingRaw = excluding?.rawValue()
         val match = candidates.firstOrNull { it.stableRef != excludingRaw } ?: return null
         return parseFileRef(match.stableRef)
+    }
+
+    private fun canonicalRef(ref: FileRef): FileRef = when (ref) {
+        is FileRef.Child -> caseInsensitiveMatch(ref.parent, ref.name, null) ?: ref
+        else -> ref
     }
 
     private fun collisionKey(parentRawValue: String, name: String) = "$parentRawValue\u0000${name.lowercase()}"

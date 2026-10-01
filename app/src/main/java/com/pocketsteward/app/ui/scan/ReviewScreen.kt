@@ -162,6 +162,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             )
             is ScanUiState.SimilarReview -> SimilarReview(
                 state = current,
+                onArchive = viewModel::proposeSimilarArchive,
                 modifier = contentModifier,
             )
             is ScanUiState.ImageAnalysisReview -> ImageAnalysisReview(
@@ -1466,7 +1467,11 @@ private fun RichMetadataReview(
                             add("APK $pkg${record.apkVersionName?.let { " · $it" }.orEmpty()}")
                         }
                         entry.pdfPageCount?.let { add("PDF · $it page(s)") }
-                        entry.archiveEntryCount?.let { add("ZIP · $it entries") }
+                        entry.archiveEntryCount?.let { add("Archive · ${if (entry.archiveComplete == false) "at least " else ""}$it entries") }
+                        entry.archiveNote?.let { add(it) }
+                        entry.captureDate?.let { add("Camera date: $it") }
+                        entry.mediaArtist?.let { add("Artist: $it") }
+                        entry.mediaAlbum?.let { add("Album: $it") }
                         entry.exifCamera?.let { add("Camera: $it") }
                         entry.exifOrientation?.let { add("Orientation: $it") }
                     }
@@ -1645,6 +1650,7 @@ private fun ArtifactExportReview(
 @Composable
 private fun SimilarReview(
     state: ScanUiState.SimilarReview,
+    onArchive: (SimilarFileGroup, String) -> Unit,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -1655,13 +1661,13 @@ private fun SimilarReview(
         item {
             ScreenHeadline(
                 text = "Similar files · ${state.scopeLabel}",
-                supporting = "${state.groups.size} group(s) · ${state.imagesAnalyzed} images analyzed · ${state.documentsAnalyzed} indexed documents analyzed · review only",
+                supporting = "${state.groups.size} group(s) · ${state.imagesAnalyzed} images analyzed · ${state.documentsAnalyzed} indexed documents analyzed · compare and review an archive plan",
             )
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "These are perceptual/semantic near-duplicates, not byte-identical duplicates. Pocket Steward will not offer automatic trash actions from this screen.",
+                    "These are perceptual/semantic near-duplicates, not byte-identical duplicates. Choose a keeper and review an archive plan for other versions. Nothing is automatically trashed.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(Spacing.base),
@@ -1675,6 +1681,7 @@ private fun SimilarReview(
             item(key = "similar-$index") {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(Spacing.base)) {
+                        var keeper by rememberSaveable(group.records.map { it.stableRef }) { mutableStateOf<String?>(null) }
                         Text(
                             text = "${group.kind.name.lowercase().replaceFirstChar { it.uppercase() }} · ${group.records.size} similar files",
                             style = MaterialTheme.typography.titleSmall,
@@ -1698,6 +1705,7 @@ private fun SimilarReview(
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    TextButton(onClick = { keeper = record.stableRef }) { Text(if (keeper == record.stableRef) "Keeper selected" else "Keep this version") }
                                     Text(
                                         record.parentRef.orEmpty(),
                                         style = MaterialTheme.typography.labelSmall,
@@ -1707,6 +1715,9 @@ private fun SimilarReview(
                                     )
                                 }
                             }
+                        }
+                        Button(onClick = { keeper?.let { onArchive(group, it) } }, enabled = keeper != null) {
+                            Text("Review archiving ${group.records.size - 1} other versions")
                         }
                     }
                 }

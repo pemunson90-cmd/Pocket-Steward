@@ -486,6 +486,11 @@ class ScanViewModel(
     internal val _review = MutableStateFlow<ScanUiState?>(null)
     val review: StateFlow<ScanUiState?> = _review
 
+    internal var filingSession: FilingSession? = null
+    internal var filingEditJob: Job? = null
+    internal var filingPlanningJob: Job? = null
+    val hasActiveFilingWork: Boolean get() = filingPlanningJob?.isActive == true || filingEditJob?.isActive == true
+
     internal val _preview = MutableStateFlow<ScanUiState.PlanPreview?>(null)
     val preview: StateFlow<ScanUiState.PlanPreview?> = _preview
 
@@ -519,6 +524,8 @@ class ScanViewModel(
 
     val recentFolders: StateFlow<List<String>> = settingsRepository.recentFolders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val projectHomes = settingsRepository.projectHomes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val favoriteDestinations: StateFlow<List<FavoriteDestination>> = settingsRepository.favoriteDestinations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -648,14 +655,22 @@ class ScanViewModel(
      * restructure.
      */
     fun onLeftDestination(route: ScanRoute) {
-        when (route) {
-            ScanRoute.REVIEW -> _review.value = null
-            ScanRoute.PREVIEW -> _preview.value = null
-            ScanRoute.COMPLETION -> _completion.value = null
-            ScanRoute.PICKER -> _picker.value = null
-            ScanRoute.SCAN, ScanRoute.RESULTS -> Unit
-        }
+        cancelFilingWork()
+        // Keep completed review/preview choices available until an explicit new scan or reset.
+        if (route == ScanRoute.PICKER) _picker.value = null
         if (_uiState.value !is ScanUiState.Idle) _uiState.value = ScanUiState.Idle
+    }
+
+    fun cancelFilingWork() {
+        filingPlanningJob?.cancel()
+        filingEditJob?.cancel()
+        if (_uiState.value is ScanUiState.Working) _uiState.value = ScanUiState.Idle
+    }
+
+    fun resumePlanPreview() {
+        val preview = _preview.value ?: return
+        if (busy.value != null) return
+        _uiState.value = preview
     }
 
     /**
@@ -745,11 +760,13 @@ class ScanViewModel(
                     startScan(
                         targets = targets.ifEmpty { listOf(ScanTarget.Downloads) },
                         thenRun = if (checkpointOnly) PostScanAction.UNCERTAIN_FILING else PostScanAction.INBOX_FILING,
+                        forceWalk = true,
                     )
                 }
                 StorageAccessMode.SAF -> startScan(
-                    target = ScanTarget.GrantedFolder("Granted inbox"),
+                    targets = listOf(ScanTarget.GrantedFolder("Granted inbox")),
                     thenRun = if (checkpointOnly) PostScanAction.UNCERTAIN_FILING else PostScanAction.INBOX_FILING,
+                    forceWalk = true,
                 )
                 null -> _uiState.value = ScanUiState.Error("No storage access granted yet.")
             }
@@ -832,6 +849,10 @@ class ScanViewModel(
         forceWalk: Boolean = false,
     ) {
         scanJob?.cancel()
+        cancelFilingWork()
+        _preview.value = null
+        _review.value = null
+        filingSession = null
         userScanCancellationRequested = false
 
         val job = viewModelScope.launch {
@@ -1201,6 +1222,7 @@ class ScanViewModel(
         authorizedDestinationRoots: List<FileRef.Direct> = emptyList(),
         defaultSelectedSourceRefs: Set<String>? = null,
         filingPresentation: FilingReviewPresentation? = null,
+        previousReviewedSources: Map<String, SourcePrecondition> = emptyMap(),
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
             ?: error("No storage access mode is active.")
@@ -1208,6 +1230,7 @@ class ScanViewModel(
             scopes = scopes,
             destinationRoots = authorizedDestinationRoots,
             mode = mode,
+            operations = operations,
         )
         val validated = PlanValidator.validate(operations, index)
         val reviewedSources = withContext(Dispatchers.IO) {
@@ -1227,7 +1250,7 @@ class ScanViewModel(
             selectedIndices = selectedIndices,
             scopeNotes = scopeNotes,
             authorizedDestinationRoots = authorizedDestinationRoots,
-            reviewedSources = reviewedSources,
+            reviewedSources = reviewedSources + previousReviewedSources,
             filingPresentation = filingPresentation,
         )
     }
@@ -1236,6 +1259,7 @@ class ScanViewModel(
         scopes: List<ScanScope>,
         destinationRoots: List<FileRef.Direct>,
         mode: StorageAccessMode,
+        operations: List<PlannedOperation>,
     ): FileIndex {
         val delegates = mutableListOf<FileIndex>(
             InMemoryFileIndex(allRecordsForScopes(scopes)),
@@ -1245,48 +1269,16 @@ class ScanViewModel(
                 "Cross-root destination authorization currently requires direct storage access."
             }
             val gateway = container.gatewayFor(mode)
-            @Suppress("DEPRECATION")
-            val sharedStorageRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
             destinationRoots
                 .distinctBy { it.absolutePath.trimEnd('/') }
                 .forEach { root ->
-                    val normalized = root.absolutePath.trimEnd('/')
                     val entries = withContext(Dispatchers.IO) {
-                        if (normalized.equals(sharedStorageRoot, ignoreCase = true)) {
-                            // A new project home may be created at shared-storage root.
-                            // Only its immediate names matter; walking every top-level
-                            // tree would turn a review into a device-wide scan.
-                            gateway.listChildren(root)
-                        } else {
-                            // Existing project homes need release/file children so
-                            // collision checks see what is already there.
-                            liveDestinationEntries(gateway, root, maxDepth = 2, maxEntries = 5_000)
-                        }
+                        com.pocketsteward.app.executor.DestinationSnapshot.load(gateway, root, operations)
                     }
                     delegates += LiveTreeFileIndex(root, entries)
                 }
         }
         return if (delegates.size == 1) delegates.single() else CompositeFileIndex(delegates)
-    }
-
-    private suspend fun liveDestinationEntries(
-        gateway: StorageGateway,
-        root: FileRef,
-        maxDepth: Int,
-        maxEntries: Int,
-    ): List<com.pocketsteward.app.storage.FileEntry> {
-        val out = mutableListOf<com.pocketsteward.app.storage.FileEntry>()
-        suspend fun walk(directory: FileRef, depth: Int) {
-            if (depth > maxDepth || out.size >= maxEntries) return
-            val children = runCatching { gateway.listChildren(directory) }.getOrDefault(emptyList())
-            for (child in children) {
-                if (out.size >= maxEntries) return
-                out += child
-                if (child.isDirectory && depth < maxDepth) walk(child.ref, depth + 1)
-            }
-        }
-        walk(root, 0)
-        return out
     }
 
     internal fun defaultSelectionForSources(
@@ -1396,6 +1388,7 @@ class ScanViewModel(
                         scopes = preview.scopes,
                         destinationRoots = preview.authorizedDestinationRoots,
                         mode = mode,
+                        operations = selectedOperations,
                     )
                 } else {
                     SingleFolderIndex(
@@ -1490,6 +1483,7 @@ class ScanViewModel(
                 aliases = listOf(group.projectName),
                 packageIds = packageIds,
                 hierarchy = group.hierarchy,
+                roleFolders = group.roleFolders,
             )
         }
     }
@@ -1528,6 +1522,9 @@ class ScanViewModel(
      * review threw the scan away.
      */
     fun reset() {
+        cancelFilingWork()
+        scanJob?.cancel()
+        filingSession = null
         autoStarted = false
         entryCacheRestoreAttempted = true
         _summary.value = null

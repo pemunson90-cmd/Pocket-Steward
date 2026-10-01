@@ -139,8 +139,9 @@ class CleanupSuggestionWorker(
             }
 
             runCatching {
-                container.fileScanner(mode).scan(root)
+                container.scanLocks.withScanLock(rootRaw) { container.fileScanner(mode).scan(root) }
             }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
                 return transientFailureResult()
             }
 

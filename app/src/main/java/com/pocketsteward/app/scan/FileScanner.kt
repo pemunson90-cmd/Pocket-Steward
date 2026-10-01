@@ -106,14 +106,21 @@ class FileScanner(
                 val children = gateway.listChildren(directory)
                 val discoveredDirectories = mutableListOf<FileRef>()
 
-                val batch = children.map { entry ->
-                    val meta = gateway.stat(entry.ref)
-                    if (meta.isDirectory) discoveredDirectories += entry.ref
-                    meta.toFileRecord(parent = directory, scanGeneration = startedAt)
-                }
-                if (batch.isNotEmpty()) {
+                var directoryCount = 0
+                for (chunk in children.chunked(256)) {
+                    val batch = chunk.map { entry ->
+                        currentCoroutineContext().ensureActive()
+                        val meta = gateway.stat(entry.ref)
+                        if (meta.isDirectory) discoveredDirectories += entry.ref
+                        meta.toFileRecord(parent = directory, scanGeneration = startedAt)
+                    }
                     fileRecordDao.upsertAllFromScan(batch)
                     fileRecordDao.insertScopeTags(batch.map { FileScope(it.stableRef, scopeKey) })
+                    directoryCount += batch.size
+                    // Keep the current directory in the durable queue until all
+                    // chunks land. Partial progress is visible, but resume replays
+                    // this directory without inflating the durable count.
+                    if (directoryCount < children.size) onProgress(ScanProgress(processedCount + directoryCount, directory.rawValue(), ScanPhase.SCANNING))
                 }
 
                 // Only now is advancing the queue safe. Child directories are
@@ -121,7 +128,7 @@ class FileScanner(
                 // checkpoint cannot contain partially-discovered descendants.
                 queue.removeFirst()
                 discoveredDirectories.forEach(queue::addLast)
-                processedCount += batch.size
+                processedCount += directoryCount
 
                 persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
                 onProgress(ScanProgress(processedCount, directory.rawValue(), ScanPhase.SCANNING))

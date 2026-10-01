@@ -23,6 +23,26 @@ class SafPlanValidatorTest {
     )
 
     @Test
+    fun caseVariantsOfNewSafDestinationsCannotBothBeClaimed() {
+        val result = PlanValidator.validate(listOf(
+            PlannedOperation.Copy(source, root.child("report.txt"), "copy"),
+            PlannedOperation.Copy(source, root.child("REPORT.TXT"), "copy"),
+        ), index(sourceEntry()))
+        assertThat(result.accepted).hasSize(1)
+        assertThat(result.rejected).hasSize(1)
+    }
+
+    @Test
+    fun plannedFileCannotBecomeDirectoryInSamePlan() {
+        val result = PlanValidator.validate(listOf(
+            PlannedOperation.Copy(source, root.child("Reports"), "copy"),
+            PlannedOperation.CreateDirectory(root, "reports", "folder"),
+        ), index(sourceEntry()))
+        assertThat(result.accepted).hasSize(1)
+        assertThat(result.rejected).hasSize(1)
+    }
+
+    @Test
     fun nestedSafCreateAndMoveValidateWithSymbolicChildren() {
         val project = root.child("Projects")
         val leaf = project.child("Writing")

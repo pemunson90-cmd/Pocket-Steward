@@ -3,11 +3,14 @@ package com.pocketsteward.app.saved
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
+enum class WorkflowKind(val label: String) { REQUEST("Saved request"), INBOX_FILING("Organize inbox"), UNCERTAIN_FILING("Sort Uncertain") }
+
 data class SavedWorkflow(
     val id: String,
     val name: String,
     val request: String,
     val roots: List<String>,
+    val kind: WorkflowKind = WorkflowKind.REQUEST,
 )
 
 object SavedWorkflowCodec {
@@ -18,16 +21,18 @@ object SavedWorkflowCodec {
                 enc(workflow.name),
                 enc(workflow.request),
                 workflow.roots.joinToString(",") { enc(it) },
+                workflow.kind.name,
             ).joinToString(";")
         }
 
     fun decode(raw: String?): List<SavedWorkflow> {
         if (raw.isNullOrBlank()) return emptyList()
         return raw.lineSequence().mapNotNull { line ->
-            val parts = line.split(';', limit = 4)
-            if (parts.size != 4) return@mapNotNull null
+            val parts = line.split(';', limit = 5)
+            if (parts.size !in 4..5) return@mapNotNull null
             runCatching {
                 SavedWorkflow(
+                    kind = if (parts.size == 5) WorkflowKind.valueOf(parts[4]) else WorkflowKind.REQUEST,
                     id = dec(parts[0]),
                     name = dec(parts[1]),
                     request = dec(parts[2]),

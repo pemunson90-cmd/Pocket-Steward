@@ -91,6 +91,7 @@ fun ScanScreen(
         error = error,
         onDismissError = viewModel::dismissError,
         busy = busy,
+        onCancelWorking = if (viewModel.hasActiveFilingWork) viewModel::cancelFilingWork else null,
     ) { contentModifier ->
         val progress = scanning
         if (progress != null) {

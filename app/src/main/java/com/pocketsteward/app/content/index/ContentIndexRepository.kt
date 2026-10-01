@@ -22,6 +22,8 @@ data class ContentIndexRefreshSummary(
     val removedStale: Int,
 )
 
+data class ContentIndexInspection(val document: IndexedDocument, val reused: Boolean)
+
 class ContentIndexRepository(
     private val dao: ContentIndexDao,
     private val inspector: ContentInspector,
@@ -29,6 +31,32 @@ class ContentIndexRepository(
     private companion object {
         const val STATE_CHECKPOINT_INTERVAL = 25
     }
+
+    /** Enrich one observed document without pruning unrelated rows or claiming a whole root is indexed. */
+    suspend fun ensureDocument(candidate: ContentIndexCandidate): ContentIndexInspection {
+        currentCoroutineContext().ensureActive()
+        val record = candidate.record
+        val root = candidate.sourceRoot.trimEnd('/')
+        require(root.isNotBlank() && !record.isDirectory)
+        val existing = dao.getDocument(record.stableRef)
+        if (ContentIndexPolicy.canReuse(existing, record)) {
+            return ContentIndexInspection(requireNotNull(existing), reused = true)
+        }
+        val extraction = inspector.extract(record)
+        val segments = if (extraction is ContentExtraction.Text) extraction.toSegments(record.stableRef) else emptyList()
+        val document = when (extraction) {
+            is ContentExtraction.Text -> record.toIndexedDocument(root, extraction.kind, IndexedExtractionStatus.INDEXED, null, segments.size)
+            is ContentExtraction.Unsupported -> record.toIndexedDocument(root, null, IndexedExtractionStatus.UNSUPPORTED, extraction.reason, 0)
+            is ContentExtraction.Failed -> record.toIndexedDocument(root, null, IndexedExtractionStatus.FAILED, extraction.reason, 0)
+        }
+        currentCoroutineContext().ensureActive()
+        dao.replaceDocument(document, segments)
+        return ContentIndexInspection(document, reused = false)
+    }
+
+    suspend fun excerpt(stableRef: String, maxChars: Int = 8_000): String =
+        dao.getExcerptSegments(stableRef, 4).joinToString(" ") { it.body.take(maxChars.coerceIn(1, 8_000)) }
+            .take(maxChars.coerceIn(1, 8_000))
 
     suspend fun refresh(
         candidates: List<ContentIndexCandidate>,
@@ -81,55 +109,11 @@ class ContentIndexRepository(
             currentCoroutineContext().ensureActive()
             val record = candidate.record
             val root = candidate.sourceRoot.trimEnd('/')
-            val existing = dao.getDocument(record.stableRef)
-
-            if (ContentIndexPolicy.canReuse(existing, record)) {
-                reused++
-            } else {
-                when (val extraction = inspector.extract(record)) {
-                    is ContentExtraction.Text -> {
-                        val segments = extraction.toSegments(record.stableRef)
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = extraction.kind,
-                                status = IndexedExtractionStatus.INDEXED,
-                                error = null,
-                                segmentCount = segments.size,
-                            ),
-                            segments = segments,
-                        )
-                        extracted++
-                    }
-
-                    is ContentExtraction.Unsupported -> {
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = null,
-                                status = IndexedExtractionStatus.UNSUPPORTED,
-                                error = extraction.reason,
-                                segmentCount = 0,
-                            ),
-                            segments = emptyList(),
-                        )
-                        unsupported++
-                    }
-
-                    is ContentExtraction.Failed -> {
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = null,
-                                status = IndexedExtractionStatus.FAILED,
-                                error = extraction.reason,
-                                segmentCount = 0,
-                            ),
-                            segments = emptyList(),
-                        )
-                        failed++
-                    }
-                }
+            val inspection = ensureDocument(candidate)
+            if (inspection.reused) reused++ else when (inspection.document.extractionStatus) {
+                IndexedExtractionStatus.INDEXED.name -> extracted++
+                IndexedExtractionStatus.UNSUPPORTED.name -> unsupported++
+                else -> failed++
             }
 
             processed++
@@ -314,55 +298,12 @@ class ContentIndexRepository(
 
             val candidate = sorted[index]
             val record = candidate.record
-            val existing = dao.getDocument(record.stableRef)
-
-            if (ContentIndexPolicy.canReuse(existing, record)) {
-                job = job.copy(reused = job.reused + 1)
-            } else {
-                when (val extraction = inspector.extract(record)) {
-                    is ContentExtraction.Text -> {
-                        val segments = extraction.toSegments(record.stableRef)
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = extraction.kind,
-                                status = IndexedExtractionStatus.INDEXED,
-                                error = null,
-                                segmentCount = segments.size,
-                            ),
-                            segments = segments,
-                        )
-                        job = job.copy(extracted = job.extracted + 1)
-                    }
-
-                    is ContentExtraction.Unsupported -> {
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = null,
-                                status = IndexedExtractionStatus.UNSUPPORTED,
-                                error = extraction.reason,
-                                segmentCount = 0,
-                            ),
-                            segments = emptyList(),
-                        )
-                        job = job.copy(unsupported = job.unsupported + 1)
-                    }
-
-                    is ContentExtraction.Failed -> {
-                        dao.replaceDocument(
-                            document = record.toIndexedDocument(
-                                sourceRoot = root,
-                                kind = null,
-                                status = IndexedExtractionStatus.FAILED,
-                                error = extraction.reason,
-                                segmentCount = 0,
-                            ),
-                            segments = emptyList(),
-                        )
-                        job = job.copy(failed = job.failed + 1)
-                    }
-                }
+            val inspection = ensureDocument(candidate)
+            job = when {
+                inspection.reused -> job.copy(reused = job.reused + 1)
+                inspection.document.extractionStatus == IndexedExtractionStatus.INDEXED.name -> job.copy(extracted = job.extracted + 1)
+                inspection.document.extractionStatus == IndexedExtractionStatus.UNSUPPORTED.name -> job.copy(unsupported = job.unsupported + 1)
+                else -> job.copy(failed = job.failed + 1)
             }
 
             job = job.copy(

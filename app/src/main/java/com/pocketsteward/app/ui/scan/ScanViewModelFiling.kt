@@ -3,7 +3,8 @@ package com.pocketsteward.app.ui.scan
 import android.os.Environment
 import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.content.ContentExtractor
-import com.pocketsteward.app.content.index.ContentSearchDatabase
+import com.pocketsteward.app.content.index.ContentIndexCandidate
+import com.pocketsteward.app.content.index.IndexedExtractionStatus
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.executor.StorageDigest
 import com.pocketsteward.app.filing.FilingArtifact
@@ -22,6 +23,8 @@ import com.pocketsteward.app.storage.DirectProtection
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.rawValue
 import com.pocketsteward.app.storage.child
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -38,8 +41,9 @@ private val GENERIC_TOP_LEVEL_FOLDERS = setOf(
  * from Smart cleanup: the source root is an inbox and the destination may be
  * elsewhere in authorized shared storage.
  */
-internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, checkpointOnly: Boolean = false) {
-    viewModelScope.launch {
+internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, checkpointOnly: Boolean = false, scheduled: com.pocketsteward.app.scheduled.PendingCleanupSuggestion? = null) {
+    filingPlanningJob?.cancel()
+    filingPlanningJob = viewModelScope.launch {
         _uiState.value = ScanUiState.Working(
             label = "Planning inbox filing",
             detail = "Matching incoming artifacts to projects and releases",
@@ -48,8 +52,11 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
         try {
             val mode = settingsRepository.storageAccessState.first().mode
                 ?: error("No storage access mode is active.")
+            val allowlist = scheduled?.newFileRefs?.toHashSet()
+            val extraNotes = scheduled?.let { listOf("Scheduled filing considers only ${it.newFileRefs.size} saved new-file references that are still direct inbox children. Older files and nested folder contents are left alone.") }.orEmpty()
             if (mode == StorageAccessMode.SAF) {
-                proposeInboxFilingSaf(summary, checkpointOnly)
+                proposeInboxFilingSaf(summary, checkpointOnly, allowlist, extraNotes)
+                if (scheduled != null && _uiState.value is ScanUiState.PlanPreview) settingsRepository.clearPendingCleanupSuggestion()
                 return@launch
             }
 
@@ -58,7 +65,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             val intake = InboxFilingIntake.select(
                 scannedRecords, sourceRootKeys, checkpointOnly, includeDirectories = true,
             )
-            val records = intake.records
+            val records = intake.records.filter { allowlist == null || (!it.isDirectory && it.stableRef in allowlist) }.filter { allowlist == null || (!it.isDirectory && it.stableRef in allowlist) }
             val skippedFolders = 0
 
             if (records.isEmpty()) {
@@ -69,32 +76,20 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 return@launch
             }
 
+            val metadataEnabled = settingsRepository.privacySettings.first().metadataIndexingEnabled
             val enriched = withContext(Dispatchers.IO) {
                 records.map { record ->
-                    val metadata = container.metadataEnricher.enrich(record)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val metadata = enrichFreshFilingRecord(record, summary.mode, metadataEnabled)
                     if (metadata.changed) container.database.fileRecordDao().upsert(metadata.record)
                     record.stableRef to metadata
                 }.toMap()
             }
 
-            val contentDao = ContentSearchDatabase
-                .getInstance(container.appContextForUi)
-                .contentIndexDao()
-            val indexedText = withContext(Dispatchers.IO) {
-                records.associate { record ->
-                    val segmentText = if (ContentExtractor.supports(record.extension)) {
-                        runCatching {
-                            contentDao.getSegmentsForDocument(record.stableRef)
-                                .take(4)
-                                .joinToString(" ") { it.body.take(2_000) }
-                        }.getOrDefault("")
-                    } else {
-                        ""
-                    }
-                    record.stableRef to listOfNotNull(record.textPreview, segmentText.takeIf { it.isNotBlank() })
-                        .joinToString(" ")
-                }
-            }
+            val freshRecords = records.map { enriched.getValue(it.stableRef).record }
+            val imageLabels = prepareFilingImages(freshRecords)
+            val content = prepareFilingContent(freshRecords, summary)
+            val indexedText = content.text
 
             @Suppress("DEPRECATION")
             val storageRoot = FileRef.Direct(Environment.getExternalStorageDirectory().absolutePath.trimEnd('/'))
@@ -115,6 +110,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     aliases = home.aliases,
                     packageIds = home.packageIds,
                     hierarchy = home.hierarchy,
+                    roleFolders = home.roleFolders,
                     persisted = true,
                 )
             }
@@ -176,6 +172,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     apkLabel = metadata.apkLabel,
                     apkVersionCode = metadata.apkVersionCode,
                     archiveSample = metadata.archiveSample,
+            captureDate = metadata.captureDate, mediaArtist = metadata.mediaArtist, mediaAlbum = metadata.mediaAlbum,
+                    imageLabels = imageLabels[updated.stableRef].orEmpty(),
                     indexedText = indexedText[updated.stableRef].orEmpty(),
                     isDirectory = updated.isDirectory,
                 )
@@ -189,6 +187,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     projectKeywords = settingsRepository.projectKeywords.first(),
                     correctionRules = settingsRepository.correctionRules.first(),
                     storageRoot = storageRoot.absolutePath,
+                    newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
                 )
             }
             // Folder contents stay together; their internal layout is never split by role.
@@ -220,19 +219,19 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 )
             }
 
-            if (plan.operations.isEmpty()) {
-                _uiState.value = ScanUiState.Error(
-                    "Nothing in this inbox has enough project evidence to file safely. " +
-                        "${result.unresolved.size} file(s) were left exactly where they are.",
-                )
-                return@launch
-            }
+            filingSession = FilingSession(result, storageRoot, existingDirectories, intake.retainedUncertainSourceRefs,
+                (savedHomes + favorites + discovered + documentProjects).distinctBy { it.path.lowercase() })
 
             val notes = buildList {
                 add("The selected landing folder is being treated as an inbox, not a permanent category tree.")
                 add("Project ownership outranks file type. APK, ZIP, notes, and supporting assets can travel together when their evidence agrees.")
                 add(if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Anything still unresolved stays in its existing Uncertain checkpoint."
                     else "Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
+                add(content.summary)
+                addAll(extraNotes)
+                if (!metadataEnabled) add("Metadata inspection is off; camera dates, media tags and archive entries were not read.")
+                val partialArchives = enriched.values.count { it.archiveComplete == false }
+                if (partialArchives > 0) add("$partialArchives archives had partial or unavailable inspection. Only observed entry names were used as evidence.")
                 add("Existing project homes are preferred over creating near-duplicate folders.")
                 add("Existing folders move intact. Their contents are checked again before execution; changed folders require a fresh review.")
                 if (skippedFolders > 0) {
@@ -249,6 +248,9 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
                 filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
             )
+            if (scheduled != null && _uiState.value is ScanUiState.PlanPreview) settingsRepository.clearPendingCleanupSuggestion()
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
         }
@@ -256,7 +258,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
 }
 
 
-private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Summary, checkpointOnly: Boolean) {
+private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Summary, checkpointOnly: Boolean, allowlist: Set<String>?, extraNotes: List<String>) {
     val scope = summary.scopes.singleOrNull() ?: run {
         _uiState.value = ScanUiState.Error(
             "Selected-folder filing currently needs one granted tree at a time.",
@@ -281,26 +283,19 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         return
     }
 
+    val metadataEnabled = settingsRepository.privacySettings.first().metadataIndexingEnabled
     val enriched = withContext(Dispatchers.IO) {
         records.map { record ->
-            val metadata = container.metadataEnricher.enrich(record)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val metadata = enrichFreshFilingRecord(record, summary.mode, metadataEnabled)
             if (metadata.changed) container.database.fileRecordDao().upsert(metadata.record)
             record.stableRef to metadata
         }.toMap()
     }
-    val contentDao = ContentSearchDatabase.getInstance(container.appContextForUi).contentIndexDao()
-    val indexedText = withContext(Dispatchers.IO) {
-        records.associate { record ->
-            val segmentText = if (ContentExtractor.supports(record.extension)) {
-                runCatching {
-                    contentDao.getSegmentsForDocument(record.stableRef)
-                        .take(4)
-                        .joinToString(" ") { it.body.take(2_000) }
-                }.getOrDefault("")
-            } else ""
-            record.stableRef to listOfNotNull(record.textPreview, segmentText.takeIf(String::isNotBlank)).joinToString(" ")
-        }
-    }
+    val freshRecords = records.map { enriched.getValue(it.stableRef).record }
+    val imageLabels = prepareFilingImages(freshRecords)
+    val content = prepareFilingContent(freshRecords, summary)
+    val indexedText = content.text
 
     val gateway = container.gatewayFor(StorageAccessMode.SAF)
     val children = withContext(Dispatchers.IO) {
@@ -333,6 +328,8 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             apkLabel = metadata.apkLabel,
             apkVersionCode = metadata.apkVersionCode,
             archiveSample = metadata.archiveSample,
+            captureDate = metadata.captureDate, mediaArtist = metadata.mediaArtist, mediaAlbum = metadata.mediaAlbum,
+            imageLabels = imageLabels[updated.stableRef].orEmpty(),
             indexedText = indexedText[updated.stableRef].orEmpty(),
         )
     }
@@ -344,6 +341,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             projectKeywords = settingsRepository.projectKeywords.first(),
             correctionRules = settingsRepository.correctionRules.first(),
             storageRoot = scope.root.rawValue(),
+            newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
         )
     }
     val existingHomeRefs = homes.associate { home ->
@@ -358,21 +356,20 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             retainedUncertainSourceRefs = intake.retainedUncertainSourceRefs,
         )
     }
-    if (plan.operations.isEmpty()) {
-        _uiState.value = ScanUiState.Error(
-            "Nothing in this granted inbox has enough project evidence to file safely. ${result.unresolved.size} file(s) stay where they are.",
-        )
-        return
-    }
+    filingSession = FilingSession(result, scope.root, emptySet(), intake.retainedUncertainSourceRefs, homes, existingHomeRefs)
     showPlanPreview(
         goal = if (checkpointOnly) "Sort Uncertain" else "Inbox filing",
         operations = plan.operations,
         scopes = summary.scopes,
         scopeNotes = listOf(
+            content.summary,
             "Selected-folder access can file only inside this granted tree; it cannot discover project homes elsewhere on the device.",
             if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Unresolved files stay in their existing checkpoint."
             else "Strong matches are selected by default. Probable matches wait for review. Unresolved loose files move to Uncertain after review.",
             "$skippedFolders existing folder(s) remain in the inbox; this pass does not move folder contents without a reviewed snapshot.",
+        ) + extraNotes + listOfNotNull(
+            if (!metadataEnabled) "Metadata inspection is off; camera dates, media tags and archive entries were not read." else null,
+            enriched.values.count { it.archiveComplete == false }.takeIf { it > 0 }?.let { "$it archives had partial or unavailable inspection. Only observed entry names were used as evidence." },
         ),
         defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
         filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
@@ -441,4 +438,65 @@ private suspend fun resolveDirectDestinationCollisions(
             }
         },
     )
+}
+
+private data class FilingContent(val text: Map<String, String>, val reused: Int, val extracted: Int, val unavailable: Int, val enabled: Boolean = true) {
+    val summary: String get() = if (!enabled) "Content inspection is off. Enable it in Settings for content-based filing; this review uses names and metadata." else "Local document evidence: $reused cached, $extracted freshly inspected, $unavailable unreadable or unsupported."
+}
+
+private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>, summary: ScanUiState.Summary): FilingContent {
+    if (!settingsRepository.privacySettings.first().contentInspectionEnabled) return FilingContent(emptyMap(), 0, 0, 0, enabled = false)
+    val candidates = records.filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
+    val repository = container.contentIndexRepository(summary.mode)
+    val text = linkedMapOf<String, String>()
+    var reused = 0
+    var extracted = 0
+    var unavailable = 0
+    for ((index, record) in candidates.withIndex()) {
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        _uiState.value = ScanUiState.Working(
+            label = "Reading local document evidence",
+            detail = "${index + 1} of ${candidates.size} · ${record.displayName}",
+            processed = index, total = candidates.size,
+        )
+        val inspection = withContext(Dispatchers.IO) {
+            repository.ensureDocument(ContentIndexCandidate(record, sourceRootFor(record.stableRef, summary.scopes) ?: summary.scopes.first().root.rawValue()))
+        }
+        if (inspection.document.extractionStatus == IndexedExtractionStatus.INDEXED.name) {
+            text[record.stableRef] = withContext(Dispatchers.IO) { repository.excerpt(record.stableRef, maxChars = 2_000) }
+            if (inspection.reused) reused++ else extracted++
+        } else unavailable++
+    }
+    return FilingContent(text, reused, extracted, unavailable)
+}
+
+private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>): Map<String, List<String>> {
+    if (!settingsRepository.privacySettings.first().imageAnalysisEnabled) return emptyMap()
+    val candidates = records.filter { !it.isDirectory && it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "heic") }
+    val result = linkedMapOf<String, List<String>>()
+    for ((index, record) in candidates.withIndex()) {
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        _uiState.value = ScanUiState.Working("Reading local image evidence", "${index + 1} of ${candidates.size} · ${record.displayName}", processed = index, total = candidates.size)
+        val insight = withContext(Dispatchers.IO) { container.imageUnderstanding.analyze(record) }
+        if (insight != null) result[record.stableRef] = insight.labels.map { it.label } + if (insight.likelyScreenshot) listOf("screenshot") else emptyList()
+    }
+    return result
+}
+
+private suspend fun ScanViewModel.enrichFreshFilingRecord(record: FileRecord, mode: StorageAccessMode, enabled: Boolean): com.pocketsteward.app.metadata.MetadataEnrichment {
+    val live = container.gatewayFor(mode).stat(com.pocketsteward.app.storage.parseFileRef(record.stableRef))
+    val fresh = com.pocketsteward.app.filing.FilingFreshness.refresh(record, live)
+    if (fresh != record) container.database.fileRecordDao().upsert(fresh)
+    return if (enabled) container.metadataEnricher.enrich(fresh) else com.pocketsteward.app.metadata.MetadataEnrichment(fresh, false)
+}
+
+internal fun ScanViewModel.enableContentAndReplanFiling() {
+    val summary = _summary.value ?: return
+    val preview = _preview.value ?: return
+    val checkpointOnly = preview.filingPresentation?.reviewingUncertain ?: return
+    if (busy.value != null) return
+    viewModelScope.launch {
+        settingsRepository.setContentInspectionEnabled(true)
+        proposeInboxFiling(summary, checkpointOnly)
+    }
 }

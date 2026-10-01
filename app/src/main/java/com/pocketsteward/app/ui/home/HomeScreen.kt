@@ -337,7 +337,8 @@ fun HomeScreen(
                             text = buildString {
                                 append(workflow.roots.size)
                                 append(if (workflow.roots.size == 1) " folder" else " folders")
-                                if (workflow.request.isNotBlank()) {
+                                if (workflow.kind != com.pocketsteward.app.saved.WorkflowKind.REQUEST) append(" · ${workflow.kind.label}")
+                                if (workflow.kind == com.pocketsteward.app.saved.WorkflowKind.REQUEST && workflow.request.isNotBlank()) {
                                     append(" · ")
                                     append(workflow.request)
                                 }

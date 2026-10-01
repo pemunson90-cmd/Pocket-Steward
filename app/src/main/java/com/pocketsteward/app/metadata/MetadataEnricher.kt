@@ -11,8 +11,6 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.pocketsteward.app.data.db.FileRecord
 import java.io.File
-import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
 
 data class MetadataEnrichment(
     val record: FileRecord,
@@ -21,10 +19,16 @@ data class MetadataEnrichment(
     val pdfPageCount: Int? = null,
     val archiveEntryCount: Int? = null,
     val archiveSample: List<String> = emptyList(),
+    val archiveComplete: Boolean? = null,
+    val archiveNote: String? = null,
     val apkLabel: String? = null,
     val apkVersionCode: Long? = null,
     val exifCamera: String? = null,
     val exifOrientation: String? = null,
+    val captureDate: String? = null,
+    val mediaArtist: String? = null,
+    val mediaAlbum: String? = null,
+    val mediaTitle: String? = null,
 )
 
 /**
@@ -39,6 +43,8 @@ data class MetadataEnrichment(
 class MetadataEnricher(
     private val context: Context,
 ) {
+    private val evidenceCache = MetadataEvidenceCache(File(context.cacheDir, "artifact-evidence-v3"))
+
     fun supports(record: FileRecord): Boolean {
         if (record.isDirectory) return false
         val ext = record.extension.lowercase()
@@ -46,7 +52,7 @@ class MetadataEnricher(
             ext in MEDIA_EXTENSIONS ||
             ext == "apk" ||
             ext == "pdf" ||
-            ext == "zip"
+            ext in ArchiveInspector.supportedExtensions
     }
 
     fun enrich(record: FileRecord): MetadataEnrichment {
@@ -55,15 +61,23 @@ class MetadataEnricher(
             return MetadataEnrichment(record, changed = false)
         }
 
+        evidenceCache.read(record)?.let { return it }
+
         var updated = record
         val fields = linkedSetOf<String>()
         var pdfPages: Int? = null
         var archiveCount: Int? = null
         var archiveSample = emptyList<String>()
+        var archiveComplete: Boolean? = null
+        var archiveNote: String? = null
         var apkLabel: String? = null
         var apkVersionCode: Long? = null
         var camera: String? = null
         var orientation: String? = null
+        var captureDate: String? = null
+        var mediaArtist: String? = null
+        var mediaAlbum: String? = null
+        var mediaTitle: String? = null
 
         if (record.extension.lowercase() in IMAGE_EXTENSIONS) {
             imageBounds(record)?.let { (width, height) ->
@@ -76,14 +90,18 @@ class MetadataEnricher(
             exif(record)?.let { metadata ->
                 camera = metadata.first
                 orientation = metadata.second
+                captureDate = metadata.third
             }
         }
 
         if (record.extension.lowercase() in MEDIA_EXTENSIONS) {
-            val duration = mediaDuration(record)
-            if (duration != null && duration >= 0 && record.durationMs != duration) {
-                updated = updated.copy(durationMs = duration)
-                fields += "duration"
+            mediaTags(record)?.let { tags ->
+                val duration = tags[0]?.toLongOrNull()
+                mediaArtist = tags[1]; mediaAlbum = tags[2]; mediaTitle = tags[3]
+                if (duration != null && duration >= 0 && record.durationMs != duration) {
+                    updated = updated.copy(durationMs = duration)
+                    fields += "duration"
+                }
             }
         }
 
@@ -112,11 +130,19 @@ class MetadataEnricher(
             pdfPages = pdfPageCount(record)
         }
 
-        if (record.extension.equals("zip", ignoreCase = true)) {
-            zipSummary(record)?.let { (count, sample) ->
-                archiveCount = count
-                archiveSample = sample
-            }
+        if (record.extension.lowercase() in ArchiveInspector.supportedExtensions) {
+            val inspection = runCatching {
+                if (!record.isSaf() && record.extension.lowercase() in setOf("zip", "apks", "xapk")) {
+                    ArchiveInspector.zipFile(File(record.stableRef))
+                } else {
+                    val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
+                    requireNotNull(input).use { ArchiveInspector.stream(it, record.extension) }
+                }
+            }.getOrElse { ArchiveInspection(0, emptyList(), false, "Archive could not be inspected. No files were extracted.") }
+            archiveCount = inspection.observedEntries
+            archiveSample = inspection.names
+            archiveComplete = inspection.complete
+            archiveNote = inspection.note
         }
 
         return MetadataEnrichment(
@@ -126,11 +152,13 @@ class MetadataEnricher(
             pdfPageCount = pdfPages,
             archiveEntryCount = archiveCount,
             archiveSample = archiveSample,
+            archiveComplete = archiveComplete, archiveNote = archiveNote,
             apkLabel = apkLabel,
             apkVersionCode = apkVersionCode,
             exifCamera = camera,
             exifOrientation = orientation,
-        )
+            captureDate = captureDate, mediaArtist = mediaArtist, mediaAlbum = mediaAlbum, mediaTitle = mediaTitle,
+        ).also(evidenceCache::write)
     }
 
     private fun imageBounds(record: FileRecord): Pair<Int, Int>? {
@@ -158,8 +186,8 @@ class MetadataEnricher(
         }
     }
 
-    private fun exif(record: FileRecord): Pair<String?, String?>? = runCatching {
-        val read: (ExifInterface) -> Pair<String?, String?> = { exif ->
+    private fun exif(record: FileRecord): Triple<String?, String?, String?>? = runCatching {
+        val read: (ExifInterface) -> Triple<String?, String?, String?> = { exif ->
             val make = exif.getAttribute(ExifInterface.TAG_MAKE)?.trim()
             val model = exif.getAttribute(ExifInterface.TAG_MODEL)?.trim()
             val camera = listOfNotNull(make, model)
@@ -182,7 +210,10 @@ class MetadataEnricher(
                 ExifInterface.ORIENTATION_FLIP_VERTICAL -> "Flip vertical"
                 else -> null
             }
-            camera to orientation
+            val captureDate = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)?.take(10)?.let { raw ->
+                runCatching { java.time.LocalDate.parse(raw, java.time.format.DateTimeFormatter.ofPattern("uuuu:MM:dd").withResolverStyle(java.time.format.ResolverStyle.STRICT)).toString() }.getOrNull()
+            }
+            Triple(camera, orientation, captureDate)
         }
 
         if (record.isSaf()) {
@@ -194,14 +225,16 @@ class MetadataEnricher(
         }
     }.getOrNull()
 
-    private fun mediaDuration(record: FileRecord): Long? = runCatching {
+    private fun mediaTags(record: FileRecord): List<String?>? = runCatching {
         MediaMetadataRetriever().use { retriever ->
             if (record.isSaf()) {
                 retriever.setDataSource(context, record.uri())
             } else {
                 retriever.setDataSource(record.stableRef)
             }
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            listOf(MediaMetadataRetriever.METADATA_KEY_DURATION, MediaMetadataRetriever.METADATA_KEY_ARTIST,
+                MediaMetadataRetriever.METADATA_KEY_ALBUM, MediaMetadataRetriever.METADATA_KEY_TITLE)
+                .map { retriever.extractMetadata(it)?.trim()?.take(200)?.takeIf(String::isNotBlank) }
         }
     }.getOrNull()
 
@@ -258,39 +291,6 @@ class MetadataEnricher(
             }
         }
     }.getOrNull()
-
-    private fun zipSummary(record: FileRecord): Pair<Int, List<String>>? =
-        if (record.isSaf()) {
-            runCatching {
-                context.contentResolver.openInputStream(record.uri())?.use { input ->
-                    ZipInputStream(input.buffered()).use { zip ->
-                        val names = mutableListOf<String>()
-                        var count = 0
-                        while (true) {
-                            val entry = zip.nextEntry ?: break
-                            count++
-                            if (names.size < MAX_ARCHIVE_SAMPLE) names += entry.name
-                            zip.closeEntry()
-                        }
-                        count to names
-                    }
-                }
-            }.getOrNull()
-        } else {
-            runCatching {
-                ZipFile(File(record.stableRef)).use { zip ->
-                    val names = mutableListOf<String>()
-                    var count = 0
-                    val entries = zip.entries()
-                    while (entries.hasMoreElements()) {
-                        val entry = entries.nextElement()
-                        count++
-                        if (names.size < MAX_ARCHIVE_SAMPLE) names += entry.name
-                    }
-                    count to names
-                }
-            }.getOrNull()
-        }
 
     private fun FileRecord.isSaf(): Boolean = stableRef.startsWith("content://")
     private fun FileRecord.uri(): Uri = Uri.parse(stableRef)

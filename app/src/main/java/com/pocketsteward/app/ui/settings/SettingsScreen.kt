@@ -20,6 +20,7 @@ import android.content.pm.PackageManager
 
 import android.Manifest
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -273,6 +275,38 @@ fun SettingsScreen(
                 ) {
                     Text("Clear content index")
                 }
+            }
+        }
+
+        val template by viewModel.hierarchyTemplate.collectAsState()
+        val templateMessage by viewModel.hierarchyTemplateMessage.collectAsState()
+        val namedTemplates by viewModel.namedHierarchyTemplates.collectAsState()
+        var templateName by rememberSaveable { mutableStateOf("") }
+        var roleFolders by rememberSaveable(template.encode()) {
+            mutableStateOf(com.pocketsteward.app.saved.HierarchyTemplate.roles.associateWith { template.roleFolders[it] ?: it })
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Project folder template", style = MaterialTheme.typography.titleMedium)
+                Text("Choose the folders inside new projects. Leave a field blank to use the project folder itself. Use / for a subfolder.")
+                com.pocketsteward.app.saved.HierarchyTemplate.roles.forEach { role ->
+                    OutlinedTextField(
+                        value = roleFolders[role].orEmpty(),
+                        onValueChange = { roleFolders = roleFolders + (role to it) },
+                        label = { Text("$role folder") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    )
+                }
+                Button(onClick = { viewModel.saveHierarchyTemplate(roleFolders.entries.joinToString("\n") { "${it.key}=${it.value}" }) }) { Text("Save template") }
+                OutlinedTextField(templateName, { templateName = it }, label = { Text("Reusable template name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Button(onClick = { viewModel.saveNamedHierarchyTemplate(templateName, roleFolders.entries.joinToString("\n") { "${it.key}=${it.value}" }) }, enabled = templateName.isNotBlank()) { Text("Save and use named template") }
+                namedTemplates.forEach { saved ->
+                    Row {
+                        androidx.compose.material3.TextButton(onClick = { viewModel.saveHierarchyTemplate(saved.template.encode()) }) { Text("Use ${saved.name}") }
+                        androidx.compose.material3.TextButton(onClick = { viewModel.deleteNamedHierarchyTemplate(saved.name) }) { Text("Delete") }
+                    }
+                }
+                templateMessage?.let { Text(it) }
             }
         }
 

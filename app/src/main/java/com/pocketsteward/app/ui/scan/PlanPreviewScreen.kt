@@ -76,6 +76,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val preview = state
     var confirmBulkRed by rememberSaveable { mutableStateOf(false) }
     var view by rememberSaveable { mutableStateOf(PlanView.LIST) }
+    var unresolvedQuery by rememberSaveable { mutableStateOf("") }
     val haptics = LocalHapticFeedback.current
 
     ScanFlowScaffold(
@@ -84,6 +85,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         error = error,
         onDismissError = viewModel::dismissError,
         busy = busy,
+        onCancelWorking = if (viewModel.hasActiveFilingWork) viewModel::cancelFilingWork else null,
     ) { contentModifier ->
         if (preview == null) {
             EmptyState("Nothing proposed.", contentModifier)
@@ -237,9 +239,15 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 preview.filingPresentation?.let { filing ->
                     item {
                         FilingOverviewCard(filing)
+                        if (preview.scopeNotes.any { it.contains("Content inspection is off") }) {
+                            Text("Read documents locally to improve project matching. Rebuilding replaces edits in this preview.")
+                            OutlinedButton(onClick = { viewModel.enableContentAndReplanFiling() }) {
+                                Text("Enable local content and rebuild")
+                            }
+                        }
                     }
                     if (filing.groups.isNotEmpty()) {
-                        item { SectionHeader("Proposed project folders") }
+                        item { SectionHeader("Proposed folders") }
                     }
                     filing.groups.groupBy { it.projectHomePath }.forEach { (_, projectGroups) ->
                         item(key = "project:${projectGroups.first().projectHomePath}") {
@@ -255,6 +263,8 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
+                                onAssign = { title, role, homePath -> viewModel.assignFilingFiles(group.items.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                                knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { root, name ->
                                     viewModel.editPlanDestinationGroup(
                                         groupDirectory = group.destinationPath,
@@ -274,12 +284,39 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
+                                onAssign = { title, role, homePath -> viewModel.assignFilingFiles(group.items.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                                knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { _, _ -> },
                             )
                         }
                     }
+                    if (filing.unresolved.isNotEmpty()) {
+                        item {
+                            OutlinedTextField(
+                                value = unresolvedQuery, onValueChange = { unresolvedQuery = it },
+                                label = { Text("Find unresolved files by name, evidence or content") },
+                                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            )
+                        }
+                        val matches = filing.unresolved.filter { item ->
+                            unresolvedQuery.isBlank() || item.displayName.contains(unresolvedQuery, true) ||
+                                item.contentExcerpt.orEmpty().contains(unresolvedQuery, true) || item.evidence.any { it.contains(unresolvedQuery, true) }
+                        }
+                        item {
+                            FilingAssignmentEditor(
+                                count = matches.size,
+                                examples = matches.take(3).joinToString(" · ") { it.displayName },
+                                knownProjects = viewModel.filingSession?.homes.orEmpty(),
+                                onApply = { title, role, homePath -> viewModel.assignFilingFiles(matches.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath) },
+                            )
+                        }
+                    }
                     val checkpointSourceRefs = filing.checkpointGroups.asSequence().flatMap { it.items.asSequence() }.map { it.sourceRef }.toHashSet()
-                    val withoutCheckpoint = filing.unresolved.filterNot { it.sourceRef in checkpointSourceRefs }
+                    val withoutCheckpoint = filing.unresolved.filter { item ->
+                        item.sourceRef !in checkpointSourceRefs && (unresolvedQuery.isBlank() ||
+                            item.displayName.contains(unresolvedQuery, true) || item.contentExcerpt.orEmpty().contains(unresolvedQuery, true) ||
+                            item.evidence.any { it.contains(unresolvedQuery, true) })
+                    }
                     if (withoutCheckpoint.isNotEmpty()) {
                         item { SectionHeader(if (filing.reviewingUncertain) "Still uncertain · stays here" else "Cannot move to Uncertain") }
                         items(withoutCheckpoint, key = { it.sourceRef }) { item ->
@@ -292,6 +329,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                     FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef)
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
+                                        item.contentExcerpt?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis) }
                                         Text(
                                             buildString {
                                                 append(formatBytes(item.sizeBytes)).append(" · ")
@@ -337,7 +375,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
 
                 if (preview.accepted.isEmpty()) {
-                    item { EmptyState("Nothing here can be acted on.") }
+                    item { EmptyState(if (preview.filingPresentation != null) "Assign unresolved files to a project to build a reviewed plan." else "Nothing here can be acted on.") }
                 }
 
                 // Inbox Filing already renders every proposed file inside its human-facing
@@ -461,7 +499,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                         viewModel.approvePlan(preview)
                     },
-                    enabled = preview.selectedIndices.isNotEmpty(),
+                    enabled = preview.selectedIndices.isNotEmpty() && busy == null,
                 ) {
                     val selectedFileCount = preview.selectedIndices.count { index ->
                         when (preview.accepted.getOrNull(index)) {
@@ -653,6 +691,8 @@ private fun FilingDestinationCard(
     preview: ScanUiState.PlanPreview,
     sourceOperationIndices: Map<String, Int>,
     onSetSelected: (Int, Boolean) -> Unit,
+    onAssign: (String, com.pocketsteward.app.filing.FilingRole, String?) -> Unit,
+    knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
     onApplyDestination: (String, String) -> Unit,
 ) {
     var expanded by remember(group.destinationPath) { mutableStateOf(false) }
@@ -677,7 +717,7 @@ private fun FilingDestinationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else if (group.isTopicDestination) "Image topic" else {
+                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else if (group.isTopicDestination) "Media category" else {
                             group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
                                 .ifBlank { "Project root" }
                         },
@@ -749,6 +789,10 @@ private fun FilingDestinationCard(
                     }
                 }
             }
+
+            var assigning by remember(group.destinationPath) { mutableStateOf(false) }
+            TextButton(onClick = { assigning = !assigning }) { Text(if (assigning) "Hide project assignment" else "Assign project / role") }
+            if (assigning) FilingAssignmentEditor(group.items.size, group.items.take(3).joinToString(" · ") { it.displayName }, knownProjects, onAssign)
 
             if (group.editableDirectDestination) {
                 TextButton(onClick = { editing = !editing }) {
@@ -1113,4 +1157,40 @@ private fun treeMarkLabel(mark: PlanTree.Mark, after: Boolean): String = when (m
     PlanTree.Mark.COPY -> if (after) "copy" else "copied"
     PlanTree.Mark.TRASH -> if (after) "recoverable" else "to Trash"
     PlanTree.Mark.NEW -> "new"
+}
+
+@Composable
+private fun FilingAssignmentEditor(
+    count: Int,
+    examples: String,
+    knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
+    onApply: (String, com.pocketsteward.app.filing.FilingRole, String?) -> Unit,
+) {
+    var title by rememberSaveable { mutableStateOf("") }
+    var role by rememberSaveable { mutableStateOf(com.pocketsteward.app.filing.FilingRole.AUTO) }
+    var chosenHomePath by rememberSaveable { mutableStateOf<String?>(null) }
+    var showChoices by remember { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base), verticalArrangement = Arrangement.spacedBy(Spacing.tight)) {
+            Text("Assign $count files together", style = MaterialTheme.typography.titleMedium)
+            Text(examples.ifBlank { "No files match this search." }, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            OutlinedTextField(title, { title = it; chosenHomePath = null }, label = { Text("Project title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            TextButton(onClick = { showChoices = !showChoices }) { Text(if (showChoices) "Hide project choices" else "Choose a known project / role") }
+            if (showChoices) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
+                    items(com.pocketsteward.app.filing.ProjectHomeRanking.rank(knownProjects, title).take(12), key = { "home:${it.path}" }) { home ->
+                        TextButton(onClick = { title = home.name; chosenHomePath = home.path }) {
+                            Column { Text(home.name); Text(home.path, style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                    items(com.pocketsteward.app.filing.FilingRole.entries, key = { "role:${it.name}" }) { choice ->
+                        TextButton(onClick = { role = choice }) { Text(choice.label) }
+                    }
+                }
+            }
+            Text("Role: ${role.label}. Existing folders remain intact. This changes the preview; files move only after approval.", style = MaterialTheme.typography.bodySmall)
+            chosenHomePath?.let { Text("Selected home: $it", style = MaterialTheme.typography.bodySmall) }
+            Button(onClick = { onApply(title, role, chosenHomePath) }, enabled = count > 0 && title.isNotBlank()) { Text("Apply assignment to preview") }
+        }
+    }
 }

@@ -41,9 +41,9 @@ object PlanValidator {
             }
             accepted += operation
             destinationOf(operation, index)?.let { destination ->
-                claimedDestinations += destination.rawValue()
+                claimedDestinations += collisionIdentity(destination)
                 if (operation is PlannedOperation.CreateDirectory) {
-                    plannedDirectories += destination.rawValue()
+                    plannedDirectories += collisionIdentity(destination)
                 }
             }
         }
@@ -60,7 +60,7 @@ object PlanValidator {
         traversalRejection(operation)?.let { return it }
 
         return when (operation) {
-            is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index, plannedDirectories)
+            is PlannedOperation.CreateDirectory -> validateCreateDirectory(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Move -> validateMove(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Copy -> validateCopy(operation, index, claimedDestinations, plannedDirectories)
             is PlannedOperation.Rename -> validateRename(operation, index, claimedDestinations)
@@ -72,14 +72,17 @@ object PlanValidator {
     private fun validateCreateDirectory(
         op: PlannedOperation.CreateDirectory,
         index: FileIndex,
+        claimedDestinations: Set<String>,
         plannedDirectories: Set<String>,
     ): String? {
-        val parentPlanned = op.parent.rawValue() in plannedDirectories
+        val parentPlanned = collisionIdentity(op.parent) in plannedDirectories
         if (!index.exists(op.parent) && !parentPlanned) return "Parent directory does not exist in the index or plan."
         if (index.exists(op.parent) && !index.isDirectory(op.parent)) return "Parent is not a directory."
         if (op.name.isBlank()) return "Directory name is blank."
         if ('/' in op.name || '\\' in op.name) return "Directory name cannot contain a path separator."
 
+        val destinationKey = collisionIdentity(childRef(op.parent, op.name))
+        if (destinationKey in claimedDestinations && destinationKey !in plannedDirectories) return "A file operation already claims this directory name."
         val existing = if (parentPlanned) {
             null
         } else {
@@ -106,7 +109,7 @@ object PlanValidator {
         if (op.source == op.destination) return "Source and destination are the same."
         val destinationParent = parentOf(op.destination)
             ?: return "Cannot determine destination parent."
-        val parentAuthorized = index.isDirectory(destinationParent) || destinationParent.rawValue() in plannedDirectories
+        val parentAuthorized = index.isDirectory(destinationParent) || collisionIdentity(destinationParent) in plannedDirectories
         if (!parentAuthorized) {
             return "Destination parent is outside the indexed/authorized scope."
         }
@@ -127,7 +130,7 @@ object PlanValidator {
         if (op.source == op.destination) return "Source and destination are the same."
         val destinationParent = parentOf(op.destination)
             ?: return "Cannot determine destination parent."
-        val parentAuthorized = index.isDirectory(destinationParent) || destinationParent.rawValue() in plannedDirectories
+        val parentAuthorized = index.isDirectory(destinationParent) || collisionIdentity(destinationParent) in plannedDirectories
         if (!parentAuthorized) {
             return "Destination parent is outside the indexed/authorized scope."
         }
@@ -150,7 +153,7 @@ object PlanValidator {
         if (index.caseInsensitiveMatch(parent, op.newName, excluding = op.source) != null) {
             return "A differently-cased entry with that name already exists."
         }
-        return checkDestinationFree(destination, index, claimedDestinations)
+        return checkDestinationFree(destination, index, claimedDestinations, excluding = op.source)
     }
 
     private fun validateTrash(op: PlannedOperation.Trash, index: FileIndex): String? {
@@ -186,14 +189,30 @@ object PlanValidator {
         destination: FileRef,
         index: FileIndex,
         claimedDestinations: Set<String>,
+        excluding: FileRef? = null,
     ): String? {
-        if (destination.rawValue() in claimedDestinations) {
+        if (collisionIdentity(destination) in claimedDestinations) {
             return "Destination is already claimed by an earlier operation in this plan."
         }
-        if (index.exists(destination)) {
+        val parent = parentOf(destination) ?: index.parentOf(destination)
+        val name = when (destination) {
+            is FileRef.Direct -> destination.absolutePath.substringAfterLast('/')
+            is FileRef.Child -> destination.name
+            is FileRef.Saf -> null
+        }
+        val matched = if (parent != null && name != null) index.caseInsensitiveMatch(parent, name) else null
+        val existingIsExcluded = excluding != null && (destination == excluding || matched == excluding)
+        val otherMatch = if (parent != null && name != null) index.caseInsensitiveMatch(parent, name, excluding) else null
+        if ((index.exists(destination) && !existingIsExcluded) || otherMatch != null) {
             return "Destination already exists — no overwrite without explicit policy."
         }
         return null
+    }
+
+    private fun collisionIdentity(ref: FileRef): String = when (ref) {
+        is FileRef.Direct -> "direct:" + ref.absolutePath.trimEnd('/').lowercase(java.util.Locale.ROOT)
+        is FileRef.Saf -> "saf:" + ref.documentUri // Provider IDs are opaque and may be case-sensitive.
+        is FileRef.Child -> collisionIdentity(ref.parent) + "\u0000" + ref.name.lowercase(java.util.Locale.ROOT)
     }
 
     private fun childRef(parent: FileRef, name: String): FileRef =

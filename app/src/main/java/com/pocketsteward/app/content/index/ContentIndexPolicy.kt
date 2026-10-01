@@ -8,6 +8,8 @@ object ContentIndexPolicy {
     fun canReuse(existing: IndexedDocument?, record: FileRecord): Boolean {
         if (existing == null) return false
         if (existing.extractorVersion != EXTRACTOR_VERSION) return false
+        if (record.modifiedAt == null) return false
+        if (existing.quickFingerprint != record.quickFingerprint) return false
         if (existing.sizeBytes != record.sizeBytes) return false
         if (existing.modifiedAt != record.modifiedAt) return false
         if (!existing.extension.equals(record.extension, ignoreCase = true)) return false

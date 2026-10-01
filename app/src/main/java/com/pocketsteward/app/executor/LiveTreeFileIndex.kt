@@ -14,32 +14,32 @@ class LiveTreeFileIndex(
     private val root: FileRef,
     entries: List<FileEntry>,
 ) : FileIndex {
-    private val rootKey = root.rawValue().trimEnd('/')
-    private val byKey = entries.associateBy { it.ref.rawValue().trimEnd('/') }
+    private val rootKey = key(root)
+    private val byKey = entries.associateBy { key(it.ref) }
     private val byParent = entries
         .mapNotNull { entry ->
-            entry.parentRef?.rawValue()?.trimEnd('/')?.let { parent -> parent to entry }
+            entry.parentRef?.let(::key)?.let { parent -> parent to entry }
         }
         .groupBy(keySelector = { it.first }, valueTransform = { it.second })
 
     override fun exists(ref: FileRef): Boolean {
-        val key = ref.rawValue().trimEnd('/')
+        val key = key(ref)
         return key == rootKey || key in byKey
     }
 
     override fun isDirectory(ref: FileRef): Boolean {
-        val key = ref.rawValue().trimEnd('/')
+        val key = key(ref)
         return key == rootKey || byKey[key]?.isDirectory == true
     }
 
     override fun parentOf(ref: FileRef): FileRef? {
-        val key = ref.rawValue().trimEnd('/')
+        val key = key(ref)
         if (key == rootKey) return null
         return byKey[key]?.parentRef
     }
 
     override fun caseInsensitiveMatch(directory: FileRef, name: String, excluding: FileRef?): FileRef? {
-        val parentKey = directory.rawValue().trimEnd('/')
+        val parentKey = key(directory)
         return byParent[parentKey]
             .orEmpty()
             .firstOrNull { entry ->
@@ -47,4 +47,10 @@ class LiveTreeFileIndex(
             }
             ?.ref
     }
+    private fun key(ref: FileRef): String = when (ref) {
+        is FileRef.Direct -> ref.absolutePath.trimEnd('/').lowercase(java.util.Locale.ROOT)
+        is FileRef.Saf -> ref.documentUri
+        is FileRef.Child -> caseInsensitiveMatch(ref.parent, ref.name, null)?.let(::key) ?: ref.rawValue()
+    }
+
 }

@@ -17,6 +17,23 @@ class InboxFilingEngineTest {
     )
 
     @Test
+    fun genericFilenameUsesExplicitDocumentHeadingForProjectAndRole() {
+        val home = ProjectHomeCandidate("NSTL", "/storage/emulated/0/Documents/NSTL", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES, persisted = true)
+        val file = artifact("final.txt", "txt", 1000).copy(indexedText = "# NSTL Manuscript\nChapter One")
+        val result = InboxFilingEngine.resolve(listOf(file), listOf(home), emptyList(), emptyList(), emptyList(), "/storage/emulated/0").decisions.single()
+        assertThat(result.confidence).isEqualTo(FilingConfidence.STRONG)
+        assertThat(result.destinationDirectory).isEqualTo("${home.path}/Manuscript")
+    }
+
+    @Test
+    fun incidentalContentMentionIsNotPromotedToStrongTitleEvidence() {
+        val home = ProjectHomeCandidate("NSTL", "/storage/emulated/0/Documents/NSTL", persisted = true)
+        val file = artifact("final.txt", "txt", 1000).copy(indexedText = "A letter about other matters.\nSomeone mentioned NSTL in passing.")
+        val result = InboxFilingEngine.resolve(listOf(file), listOf(home), emptyList(), emptyList(), emptyList(), "/storage/emulated/0").decisions.single()
+        assertThat(result.confidence).isNotEqualTo(FilingConfidence.STRONG)
+    }
+
+    @Test
     fun newMixedProjectFamilySharesHomeAcrossRoles() {
         val result = InboxFilingEngine.resolve(
             listOf(artifact("NSTL-manuscript.txt", "txt", 1000), artifact("NSTL-notes.md", "md", 1000), artifact("NSTL-cover.jpg", "jpg", 1000)),

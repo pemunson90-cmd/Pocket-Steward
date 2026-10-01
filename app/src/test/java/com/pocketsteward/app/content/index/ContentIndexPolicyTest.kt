@@ -27,6 +27,8 @@ class ContentIndexPolicyTest {
         )
 
         assertThat(ContentIndexPolicy.canReuse(existing, record)).isTrue()
+        assertThat(ContentIndexPolicy.canReuse(existing.copy(modifiedAt = null), record.copy(modifiedAt = null))).isFalse()
+        assertThat(ContentIndexPolicy.canReuse(existing.copy(quickFingerprint = "old"), record.copy(quickFingerprint = "new"))).isFalse()
     }
 
     @Test

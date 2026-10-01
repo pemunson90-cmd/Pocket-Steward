@@ -18,16 +18,31 @@ object PlanSelection {
     fun noneSelected(): Set<Int> = emptySet()
 
     fun safeSelected(operations: List<PlannedOperation>): Set<Int> {
-        var selected = emptySet<Int>()
-        operations.forEachIndexed { index, operation ->
-            if (operation.safetyClass() == MutationSafetyClass.GREEN) {
-                selected = setSelected(
-                    operations = operations,
-                    current = selected,
-                    index = index,
-                    selected = true,
-                )
+        val directoryIndices = buildMap<String, Int> {
+            operations.forEachIndexed { index, operation ->
+                if (operation is PlannedOperation.CreateDirectory) putIfAbsent(operation.createdDirectoryRaw(), index)
             }
+        }
+        val requiredParents = operations.map { operation ->
+            when (operation) {
+                is PlannedOperation.CreateDirectory -> operation.parent.rawValue()
+                is PlannedOperation.Move -> operation.destination.parentRaw()
+                is PlannedOperation.Copy -> operation.destination.parentRaw()
+                is PlannedOperation.WriteTextFile -> operation.parent.rawValue()
+                else -> null
+            }
+        }
+        val dependents = requiredParents.mapNotNull { it?.let(directoryIndices::get) }.toSet()
+        val selected = linkedSetOf<Int>()
+        fun addWithParents(index: Int) {
+            var current: Int? = index
+            while (current != null && selected.add(current)) current = requiredParents[current]?.let(directoryIndices::get)
+        }
+        // Standalone requested directories remain selectable. Generated
+        // directories with dependents are added only when a safe dependent needs them.
+        operations.forEachIndexed { index, operation ->
+            if (operation.safetyClass() == MutationSafetyClass.GREEN &&
+                (operation !is PlannedOperation.CreateDirectory || index !in dependents)) addWithParents(index)
         }
         return selected
     }

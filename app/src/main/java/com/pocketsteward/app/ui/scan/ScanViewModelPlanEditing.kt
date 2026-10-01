@@ -245,6 +245,7 @@ internal fun ScanViewModel.editPlanOperation(
                 scopes = current.scopes,
                 destinationRoots = if (editMode == StorageAccessMode.DIRECT) extraRoots else emptyList(),
                 mode = editMode,
+                operations = transformed,
             )
             val validated = PlanValidator.validate(transformed, index)
             if (validated.rejected.isNotEmpty() ||
@@ -530,6 +531,7 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 scopes = current.scopes,
                 destinationRoots = extraRoots,
                 mode = StorageAccessMode.DIRECT,
+                operations = transformed,
             )
             val validated = PlanValidator.validate(transformed, index)
             if (validated.rejected.isNotEmpty() ||

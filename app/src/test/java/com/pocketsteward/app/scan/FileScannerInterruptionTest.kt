@@ -30,6 +30,26 @@ class FileScannerInterruptionTest {
     private val stale = FileRef.Direct("/root/stale.txt")
 
     @Test
+    fun pauseDuringLargeDirectoryKeepsDirectoryQueuedAndResumeCountsEachFileOnce() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val entries = (1..600).map { FileEntry(FileRef.Direct("/root/$it.txt"), "$it.txt", false, root) }
+        val gateway = TreeGateway(mapOf(root to entries))
+        val scanner = FileScanner(gateway, records, checkpoints)
+        try {
+            scanner.scan(root) { if (it.processedCount == 256) throw CancellationException("pause in directory") }
+            fail("Expected pause")
+        } catch (_: CancellationException) { }
+        val paused = checkpoints.get(root.raw())!!
+        assertThat(paused.processedCount).isEqualTo(0)
+        assertThat(FileRefCodec.decodeList(paused.pendingDirectoriesJson)).containsExactly(root)
+        assertThat(records.getAllUnderScopeRoot(root.raw())).hasSize(257)
+        scanner.scan(root)
+        assertThat(checkpoints.get(root.raw())!!.processedCount).isEqualTo(600)
+        assertThat(records.getAllUnderScopeRoot(root.raw())).hasSize(601)
+    }
+
+    @Test
     fun pausePreservesLastGoodInventory_thenResumeContinuesQueueAndCleansStaleRows() = runTest {
         val records = FakeFileRecordDao()
         val checkpoints = FakeCheckpointDao()

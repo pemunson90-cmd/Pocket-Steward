@@ -300,7 +300,8 @@ class SafStorageGateway(
     private fun resolve(ref: FileRef): DocumentFile = when (ref) {
         is FileRef.Saf -> {
             val uri = Uri.parse(ref.documentUri)
-            DocumentFile.fromTreeUri(context, uri)
+            (if (DocumentsContract.isTreeUri(uri)) DocumentFile.fromTreeUri(context, uri)
+            else DocumentFile.fromSingleUri(context, uri))
                 ?: error("SafStorageGateway could not resolve a DocumentFile for $uri")
         }
         is FileRef.Child -> {

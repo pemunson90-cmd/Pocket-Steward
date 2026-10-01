@@ -24,11 +24,13 @@ object InboxFilingEngine {
     private val draftRole = Regex("(^|[^a-z])(drafts?|revisions?)([^a-z]|$)")
     private val notesRole = Regex("(^|[^a-z])(notes?|research|outline)([^a-z]|$)")
 
+    private val headingMarker = Regex("""(?i)\b(project|manuscript|drafts?|notes|outline)\b""")
+
     private val genericTokens = setOf(
         "app", "application", "apk", "source", "src", "build", "release", "debug",
         "final", "copy", "handoff", "notes", "note", "readme", "master", "private",
         "signed", "canonical", "arm64", "universal", "bundle", "zip", "file", "files",
-        "image", "img", "screenshot", "android", "version", "ver", "dev",
+        "image", "img", "photo", "picture", "track", "song", "audio", "video", "screenshot", "android", "version", "ver", "dev",
         "manuscript", "manuscripts", "novel", "chapter", "chapters", "draft", "drafts",
         "revision", "revisions", "research", "outline", "cover", "artwork",
     )
@@ -40,6 +42,7 @@ object InboxFilingEngine {
         projectKeywords: List<ProjectKeyword>,
         correctionRules: List<CorrectionRule>,
         storageRoot: String,
+        newProjectRoles: Map<String, String> = emptyMap(),
     ): InboxFilingResult {
         if (artifacts.isEmpty()) return InboxFilingResult(emptyList())
 
@@ -64,18 +67,15 @@ object InboxFilingEngine {
         // Second pass: a file with real project evidence but no release can
         // inherit a nearby unique release from that same project. Time alone
         // is never enough to establish project membership.
+        val releaseIndex = anchors.filter { it.projectName != null && it.release != null }
+            .groupBy { normalizeCompact(requireNotNull(it.projectName)) }
+            .mapValues { (_, decisions) -> decisions.groupBy { requireNotNull(it.release) }.mapValues { (_, group) -> TimedCohort(group) } }
         val releaseResolved = anchors.map { decision ->
             if (decision.artifact.isDirectory || decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
                 decision
             } else {
-                val candidates = anchors.filter { other ->
-                    other !== decision &&
-                        other.projectName != null &&
-                        normalizeCompact(other.projectName) == normalizeCompact(decision.projectName) &&
-                        other.release != null &&
-                        closeInTime(eventTime(decision.artifact), eventTime(other.artifact), COHORT_WINDOW_MS)
-                }
-                val releases = candidates.mapNotNull { it.release }.distinct()
+                val releases = releaseIndex[normalizeCompact(decision.projectName)].orEmpty()
+                    .filterValues { it.countNear(eventTime(decision.artifact), COHORT_WINDOW_MS) > 0 }.keys.toList()
                 if (releases.size == 1 && decision.evidence.any { it.kind != FilingEvidenceKind.COHORT }) {
                     val release = releases.single()
                     decision.copy(
@@ -102,26 +102,22 @@ object InboxFilingEngine {
         // it arrived in the middle of one unambiguous, strongly identified
         // project/release burst. This never becomes a default-selected strong
         // match: temporal proximity alone only promotes it to PROBABLE.
+        val supportingIndex = releaseResolved.filter { it.confidence == FilingConfidence.STRONG && it.projectHome != null }
+            .groupBy { normalize(requireNotNull(it.projectHome).path) to it.release }
+            .values.map { TimedCohort(it) }
         val resolved = releaseResolved.map { decision ->
-            if (decision.confidence != FilingConfidence.UNRESOLVED || !isSupportingArtifact(decision.artifact)) {
+            val categoryOnly = decision.confidence == FilingConfidence.PROBABLE && decision.evidence.all { it.kind in setOf(FilingEvidenceKind.IMAGE_CONTENT, FilingEvidenceKind.MEDIA_METADATA) }
+            if ((!categoryOnly && decision.confidence != FilingConfidence.UNRESOLVED) || !isSupportingArtifact(decision.artifact)) {
                 decision
             } else {
-                val nearby = releaseResolved.filter { other ->
-                    other.confidence == FilingConfidence.STRONG &&
-                        other.projectHome != null &&
-                        other.release != null &&
-                        closeInTime(eventTime(decision.artifact), eventTime(other.artifact), SUPPORTING_COHORT_WINDOW_MS)
-                }
-                val cohorts = nearby
-                    .groupBy { normalize(requireNotNull(it.projectHome).path) to requireNotNull(it.release) }
-                    .entries
-                    .sortedByDescending { it.value.size }
-                val winner = cohorts.firstOrNull()?.value.orEmpty()
-                val runnerUpSize = cohorts.getOrNull(1)?.value?.size ?: 0
-                if (winner.isNotEmpty() && winner.size > runnerUpSize) {
-                    val anchor = winner.first()
+                val cohorts = supportingIndex.map { it to it.countNear(eventTime(decision.artifact), SUPPORTING_COHORT_WINDOW_MS) }
+                    .filter { it.second > 0 }.sortedByDescending { it.second }
+                val winner = cohorts.firstOrNull()
+                val runnerUpSize = cohorts.getOrNull(1)?.second ?: 0
+                if (winner != null && winner.second > runnerUpSize) {
+                    val anchor = winner.first.representative
                     val home = requireNotNull(anchor.projectHome)
-                    val release = requireNotNull(anchor.release)
+                    val release = anchor.release
                     decision.copy(
                         projectName = home.name,
                         projectHome = home,
@@ -131,18 +127,48 @@ object InboxFilingEngine {
                         evidence = listOf(
                             FilingEvidence(
                                 FilingEvidenceKind.COHORT,
-                                "possible supporting file: arrived with strong ${home.name} $release artifacts",
+                                "possible supporting file: arrived with strong ${home.name}${release?.let { " $it" }.orEmpty()} artifacts",
                                 45,
                             ),
                         ),
                     )
+                } else if (categoryOnly && cohorts.isNotEmpty()) {
+                    decision.copy(projectName = null, projectHome = null, destinationDirectory = null, confidence = FilingConfidence.UNRESOLVED,
+                        evidence = listOf(FilingEvidence(FilingEvidenceKind.PROJECT_AMBIGUITY, "Related project cohorts compete; keep this asset in Uncertain for review.", 80)))
                 } else {
                     decision
                 }
             }
         }
 
-        return InboxFilingResult(resolved)
+        return InboxFilingResult(resolved.map { decision ->
+            val home = decision.projectHome
+            if (decision.createsProjectHome && home?.hierarchy == ProjectHierarchyStrategy.PROJECT_ROLES && !decision.artifact.isDirectory) {
+                val templated = home.copy(roleFolders = newProjectRoles)
+                decision.copy(projectHome = templated, destinationDirectory = destinationFor(templated, decision.release, decision.artifact))
+            } else decision
+        })
+    }
+
+    /** Sorted per-cohort times replace repeated scans of the whole inbox. */
+    private class TimedCohort(decisions: List<FilingDecision>) {
+        val representative = decisions.first()
+        private val times = decisions.mapNotNull { eventTime(it.artifact) }.sorted().toLongArray()
+        fun countNear(time: Long?, window: Long): Int {
+            if (time == null) return 0
+            val low = if (time < Long.MIN_VALUE + window) Long.MIN_VALUE else time - window
+            val high = if (time > Long.MAX_VALUE - window) Long.MAX_VALUE else time + window
+            return boundary(high, inclusive = true) - boundary(low, inclusive = false)
+        }
+        private fun boundary(value: Long, inclusive: Boolean): Int {
+            var low = 0
+            var high = times.size
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (times[mid] < value || (inclusive && times[mid] == value)) low = mid + 1 else high = mid
+            }
+            return low
+        }
     }
 
     private fun resolveAnchor(
@@ -218,7 +244,16 @@ object InboxFilingEngine {
                 add(home, FilingEvidenceKind.ARCHIVE_ENTRY, "archive entries mention ${home.name}", 78)
             }
             if (artifact.indexedText.isNotBlank() && labels.any { artifact.indexedText.contains(it, ignoreCase = true) }) {
-                add(home, FilingEvidenceKind.INDEXED_CONTENT, "indexed document content mentions ${home.name}", 70)
+                val heading = artifact.indexedText.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
+                val headingTokens = meaningfulTokens(heading).toSet()
+                val titleMarker = heading.trimStart().startsWith("#") || headingMarker.containsMatchIn(heading)
+                val identifiesTitle = titleMarker && labels.any { label ->
+                    val tokens = meaningfulTokens(label).toSet()
+                    tokens.isNotEmpty() && headingTokens.containsAll(tokens)
+                }
+                add(home, FilingEvidenceKind.INDEXED_CONTENT,
+                    if (identifiesTitle) "document heading identifies ${home.name}" else "indexed document content mentions ${home.name}",
+                    if (identifiesTitle) 94 else 70)
             }
         }
 
@@ -251,6 +286,7 @@ object InboxFilingEngine {
         val ranked = evidenceByHome.entries.sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
         val best = ranked.firstOrNull()
         if (best == null) {
+            NonProjectMediaFiling.propose(artifact, storageRoot)?.let { return it }
             if (imageTopic != null) {
                 val topicHome = ProjectHomeCandidate(imageTopic, "${storageRoot.trimEnd('/')}/Images/$imageTopic", hierarchy = ProjectHierarchyStrategy.FLAT)
                 return FilingDecision(
@@ -338,23 +374,40 @@ object InboxFilingEngine {
         return clean
     }
 
-    private fun destinationFor(home: ProjectHomeCandidate, release: String?, artifact: FilingArtifact): String {
+    fun destinationFor(home: ProjectHomeCandidate, release: String?, artifact: FilingArtifact): String {
         val base = home.path.trimEnd('/')
         if (artifact.isDirectory) return base
         return when (home.hierarchy) {
             ProjectHierarchyStrategy.FLAT -> base
             ProjectHierarchyStrategy.VERSIONED -> sanitizeSegment(release)?.let { "$base/$it" } ?: base
-            ProjectHierarchyStrategy.PROJECT_ROLES -> roleFor(artifact, release)?.let { "$base/$it" } ?: base
+            ProjectHierarchyStrategy.PROJECT_ROLES -> roleFor(artifact, release)?.let { role ->
+                val folder = home.roleFolders[role] ?: role
+                if (folder.isBlank()) base else "$base/$folder"
+            } ?: base
+            ProjectHierarchyStrategy.CATEGORY -> "$base/${categoryFor(artifact.extension)}"
         }
+    }
+
+    private fun categoryFor(extension: String): String = when (extension.lowercase(Locale.ROOT)) {
+        "png", "jpg", "jpeg", "webp", "gif", "heic" -> "Images"
+        "mp3", "m4a", "flac", "wav", "ogg" -> "Audio"
+        "mp4", "mkv", "mov", "webm" -> "Video"
+        "apk", "aab" -> "Apps"
+        "zip", "7z", "rar", "tar", "gz" -> "Archives"
+        else -> "Documents"
     }
 
     private fun roleFor(artifact: FilingArtifact, release: String?): String? {
         val name = artifact.displayName.lowercase(Locale.ROOT)
+        val heading = artifact.indexedText.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(160).lowercase(Locale.ROOT)
         val extension = artifact.extension.lowercase(Locale.ROOT)
         return when {
             manuscriptRole.containsMatchIn(name) -> "Manuscript"
             draftRole.containsMatchIn(name) -> "Drafts"
             notesRole.containsMatchIn(name) -> "Notes"
+            manuscriptRole.containsMatchIn(heading) -> "Manuscript"
+            draftRole.containsMatchIn(heading) -> "Drafts"
+            notesRole.containsMatchIn(heading) -> "Notes"
             extension in setOf("png", "jpg", "jpeg", "webp", "gif", "heic") -> "Images"
             extension in setOf("zip", "7z", "rar", "tar", "gz") -> "Archive"
             release != null -> "Versions"
@@ -369,7 +422,7 @@ object InboxFilingEngine {
             name = safe,
             path = storageRoot.trimEnd('/') + if (directStorage) "/Documents/$safe" else "/$safe",
             aliases = listOf(safe),
-            hierarchy = if (directStorage) ProjectHierarchyStrategy.PROJECT_ROLES else ProjectHierarchyStrategy.VERSIONED,
+            hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
             persisted = false,
         )
     }

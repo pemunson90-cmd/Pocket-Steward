@@ -19,6 +19,7 @@ enum class ProjectHierarchyStrategy {
     FLAT,
     VERSIONED,
     PROJECT_ROLES,
+    CATEGORY,
 }
 
 data class ProjectHome(
@@ -28,6 +29,7 @@ data class ProjectHome(
     val aliases: List<String> = emptyList(),
     val packageIds: List<String> = emptyList(),
     val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
+    val roleFolders: Map<String, String> = emptyMap(),
 )
 
 data class InboxRoot(
@@ -79,14 +81,15 @@ object OrganizationPreferenceCodec {
                 enc(value.aliases.joinToString(LIST_SEPARATOR.toString())),
                 enc(value.packageIds.joinToString(LIST_SEPARATOR.toString())),
                 enc(value.hierarchy.name),
+                enc(HierarchyTemplate(value.roleFolders).encode()),
             ).joinToString(";")
         }
 
     fun decodeProjectHomes(raw: String?): List<ProjectHome> {
         if (raw.isNullOrBlank()) return emptyList()
         return raw.lineSequence().mapNotNull { line ->
-            val parts = line.split(';', limit = 6)
-            if (parts.size != 6) return@mapNotNull null
+            val parts = line.split(';', limit = 7)
+            if (parts.size !in 6..7) return@mapNotNull null
             runCatching {
                 ProjectHome(
                     id = dec(parts[0]),
@@ -97,6 +100,7 @@ object OrganizationPreferenceCodec {
                     hierarchy = ProjectHierarchyStrategy.entries.firstOrNull {
                         it.name == dec(parts[5])
                     } ?: ProjectHierarchyStrategy.VERSIONED,
+                    roleFolders = if (parts.size == 7) HierarchyTemplate.parse(dec(parts[6])).roleFolders else emptyMap(),
                 )
             }.getOrNull()
         }.filter { it.name.isNotBlank() && it.path.isNotBlank() }

@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +36,8 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
     val summary by viewModel.summary.collectAsState()
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val retainedPreview by viewModel.preview.collectAsState()
+    val projectHomes by viewModel.projectHomes.collectAsState()
     var includeSubfolders by remember { mutableStateOf(false) }
     var request by rememberSaveable { mutableStateOf("") }
     var workflowName by rememberSaveable { mutableStateOf("") }
@@ -52,6 +55,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
         error = error,
         onDismissError = viewModel::dismissError,
         busy = busy,
+        onCancelWorking = if (viewModel.hasActiveFilingWork) viewModel::cancelFilingWork else null,
     ) { contentModifier ->
         if (state == null) {
             EmptyState("Restoring the previous scan…", contentModifier)
@@ -70,6 +74,9 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
             ) {
+                if (retainedPreview != null) item {
+                    Button(onClick = viewModel::resumePlanPreview, enabled = busy == null) { Text("Resume review · keep selections") }
+                }
                 item { SectionHeader("Overview") }
                 item {
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -153,6 +160,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
 
                 item { SectionHeader("Save this setup") }
                 item {
+                    var workflowKind by rememberSaveable { mutableStateOf(com.pocketsteward.app.saved.WorkflowKind.REQUEST) }
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(Spacing.base)) {
                             Text(
@@ -169,6 +177,11 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = Spacing.hairline),
                             )
+                            com.pocketsteward.app.saved.WorkflowKind.entries.forEach { kind ->
+                                TextButton(onClick = { workflowKind = kind }) {
+                                    Text(if (workflowKind == kind) "✓ ${kind.label}" else kind.label)
+                                }
+                            }
                             OutlinedTextField(
                                 value = workflowName,
                                 onValueChange = { workflowName = it },
@@ -178,7 +191,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                             )
                             Button(
                                 onClick = {
-                                    viewModel.saveWorkflow(state, workflowName, request)
+                                    viewModel.saveWorkflow(state, workflowName, request, workflowKind)
                                     workflowName = ""
                                 },
                                 enabled = workflowName.isNotBlank(),
@@ -225,6 +238,9 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         }
                         Switch(checked = includeSubfolders, onCheckedChange = null)
                     }
+                }
+                if (hasBroadAccess && projectHomes.size >= 2) item {
+                    ProjectConsolidationCard(projectHomes, busy == null, viewModel::proposeProjectConsolidation)
                 }
                 item { SectionHeader("Find") }
                 item {
@@ -379,4 +395,28 @@ private fun FileCategory.friendlyName(): String = when (this) {
     FileCategory.ARCHIVE -> "Archives"
     FileCategory.AUDIO_VIDEO -> "Audio & video"
     FileCategory.OTHER -> "Other"
+}
+
+@Composable
+private fun ProjectConsolidationCard(homes: List<com.pocketsteward.app.saved.ProjectHome>, enabled: Boolean, onBuild: (String, String) -> Unit) {
+    var source by rememberSaveable { mutableStateOf<String?>(null) }
+    var destination by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(Spacing.base)) {
+            Text("Consolidate project homes", style = MaterialTheme.typography.titleMedium)
+            Text("Choose the source and the home to keep. Matching folders merge; naming conflicts stay at source. Every move is reviewed.")
+            OutlinedTextField(query, { query = it }, label = { Text("Find homes by name or path") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            homes.filter { query.isBlank() || it.name.contains(query, true) || it.path.contains(query, true) }.take(8).forEach { home ->
+                Text("${home.name} · ${home.path}", style = MaterialTheme.typography.bodySmall)
+                Row {
+                    TextButton(onClick = { source = home.path }, enabled = enabled) { Text("Use as source") }
+                    TextButton(onClick = { destination = home.path }, enabled = enabled) { Text("Keep this home") }
+                }
+            }
+            Text("From: ${source ?: "Choose a home"}")
+            Text("To: ${destination ?: "Choose a home"}")
+            Button(onClick = { onBuild(requireNotNull(source), requireNotNull(destination)) }, enabled = enabled && source != null && destination != null && source != destination) { Text("Build consolidation review") }
+        }
+    }
 }
