@@ -17,6 +17,39 @@ class InboxFilingEngineTest {
     )
 
     @Test
+    fun newMixedProjectFamilySharesHomeAcrossRoles() {
+        val result = InboxFilingEngine.resolve(
+            listOf(artifact("NSTL-manuscript.txt", "txt", 1000), artifact("NSTL-notes.md", "md", 1000), artifact("NSTL-cover.jpg", "jpg", 1000)),
+            emptyList(), emptyList(), emptyList(), emptyList(), "/storage/emulated/0",
+        )
+        assertThat(result.decisions.map { it.projectHome?.path }.distinct()).containsExactly("/storage/emulated/0/Documents/NSTL")
+        assertThat(result.decisions.map { it.destinationDirectory }).containsExactly(
+            "/storage/emulated/0/Documents/NSTL/Manuscript", "/storage/emulated/0/Documents/NSTL/Notes", "/storage/emulated/0/Documents/NSTL/Images",
+        )
+        assertThat(result.decisions.all { it.confidence == FilingConfidence.STRONG }).isTrue()
+    }
+
+    @Test
+    fun filenameTopicSuggestsLandscapeWithoutAutomaticSelection() {
+        val decision = resolve(artifact("mountain-landscape.jpg", "jpg", 1000)).decisions.single()
+        assertThat(decision.destinationDirectory).isEqualTo("/storage/emulated/0/Images/Landscape")
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.PROBABLE)
+    }
+
+    @Test
+    fun conflictingImageTopicsWaitAtCheckpoint() {
+        val decision = resolve(artifact("portrait-landscape.jpg", "jpg", 1000)).decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
+    @Test
+    fun projectEvidenceTakesPriorityOverImageTopic() {
+        val decision = resolve(artifact("LilithCompanion-landscape.jpg", "jpg", 1000)).decisions.single()
+        assertThat(decision.projectHome?.path).isEqualTo(lilith.path)
+        assertThat(decision.destinationDirectory).doesNotContain("/Images/Landscape")
+    }
+
+    @Test
     fun apkMetadataAndRegisteredPackageFilesIntoExistingVersionHome() {
         val result = resolve(
             FilingArtifact(

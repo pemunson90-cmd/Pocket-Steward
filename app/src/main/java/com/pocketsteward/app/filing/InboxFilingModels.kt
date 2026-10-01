@@ -45,6 +45,7 @@ data class FilingArtifact(
     val apkVersionCode: Long? = null,
     val archiveSample: List<String> = emptyList(),
     val indexedText: String = "",
+    val isDirectory: Boolean = false,
 )
 
 data class ProjectHomeCandidate(

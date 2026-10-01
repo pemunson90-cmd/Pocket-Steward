@@ -234,8 +234,8 @@ fun HomeScreen(
             onClick = onAsk,
         )
         HomeQuickAction(
-            title = "File inboxes into projects",
-            supporting = "Treat Downloads (and any configured inboxes) as landing zones. Match APKs, source bundles, notes, and related files to project homes and releases.",
+            title = "Organize Downloads",
+            supporting = "Keep related files together in project folders. Review where everything will go; unsure items stay in Downloads › Uncertain.",
             onClick = { onQuickAction(PostScanAction.INBOX_FILING) },
         )
         HomeQuickAction(

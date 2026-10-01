@@ -7,6 +7,14 @@ import org.junit.Test
 
 class DurablePlanCodecTest {
     @Test
+    fun folderSnapshotSurvivesPauseAndResumeEncoding() {
+        val operation = PlannedOperation.Move(FileRef.Direct("/Download/Lilith"), FileRef.Direct("/Documents/Lilith"), "keep folder intact")
+        val snapshot = SourcePrecondition(1234L, 99L, "folder-digest", 12)
+        val encoded = DurablePlanCodec.encode("Folder filing", listOf(operation), mapOf(0 to snapshot))
+        assertThat(DurablePlanCodec.decodeOrNull(encoded)?.sourcePreconditions).containsExactly(0, snapshot)
+    }
+
+    @Test
     fun roundTripsEveryOperationType() {
         val operations = listOf(
             PlannedOperation.CreateDirectory(
@@ -102,6 +110,16 @@ class DurablePlanCodecTest {
     }
 
     @Test
+    fun versionTwoFilePreconditionsRemainReadable() {
+        val operations = listOf(PlannedOperation.Move(FileRef.Direct("/a"), FileRef.Direct("/b"), "move"))
+        val expected = SourcePrecondition(42L, 123L)
+        val v2 = DurablePlanCodec.encode("Legacy file", operations, mapOf(0 to expected))
+            .replace("@psplan\t3", "@psplan\t2")
+            .replace("@pspre\t0\t42\t123\tnull\t0", "@pspre\t0\t42\t123")
+        assertThat(DurablePlanCodec.decodeOrNull(v2)?.sourcePreconditions).containsExactly(0, expected)
+    }
+
+    @Test
     fun versionOneDurablePlanStillDecodesAfterPreconditionsWereAdded() {
         val operations = listOf(
             PlannedOperation.Move(
@@ -111,7 +129,7 @@ class DurablePlanCodecTest {
             ),
         )
         val v1 = DurablePlanCodec.encode("Legacy durable", operations)
-            .replace("@psplan\t2", "@psplan\t1")
+            .replace("@psplan\t3", "@psplan\t1")
 
         val decoded = DurablePlanCodec.decodeOrNull(v1)
 

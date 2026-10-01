@@ -29,6 +29,8 @@ object InboxFilingEngine {
         "final", "copy", "handoff", "notes", "note", "readme", "master", "private",
         "signed", "canonical", "arm64", "universal", "bundle", "zip", "file", "files",
         "image", "img", "screenshot", "android", "version", "ver", "dev",
+        "manuscript", "manuscripts", "novel", "chapter", "chapters", "draft", "drafts",
+        "revision", "revisions", "research", "outline", "cover", "artwork",
     )
 
     fun resolve(
@@ -63,7 +65,7 @@ object InboxFilingEngine {
         // inherit a nearby unique release from that same project. Time alone
         // is never enough to establish project membership.
         val releaseResolved = anchors.map { decision ->
-            if (decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
+            if (decision.artifact.isDirectory || decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
                 decision
             } else {
                 val candidates = anchors.filter { other ->
@@ -151,6 +153,16 @@ object InboxFilingEngine {
         storageRoot: String,
         repeatedLabels: Map<String, Int>,
     ): FilingDecision {
+        val imageTopic = if (!artifact.isDirectory && !storageRoot.startsWith("content://") &&
+                artifact.extension.lowercase(Locale.ROOT) in setOf("png", "jpg", "jpeg", "webp", "gif", "heic")) {
+                val words = artifact.displayName.lowercase(Locale.ROOT).split(Regex("[^a-z0-9]+")).toSet()
+                val topics = listOf(
+                    "Landscape" to setOf("landscape", "mountain", "mountains", "forest", "sunset", "scenery"),
+                    "Portraits" to setOf("portrait", "portraits", "headshot"),
+                    "Screenshots" to setOf("screenshot", "screenshots", "screencapture"),
+                ).filter { (_, terms) -> words.any { it in terms } }
+                topics.singleOrNull()?.first
+            } else null
         val evidenceByHome = linkedMapOf<ProjectHomeCandidate, MutableList<FilingEvidence>>()
         fun add(home: ProjectHomeCandidate, kind: FilingEvidenceKind, detail: String, weight: Int) {
             evidenceByHome.getOrPut(home) { mutableListOf() } += FilingEvidence(kind, detail, weight)
@@ -230,7 +242,7 @@ object InboxFilingEngine {
             val matchingHome = homes.bestNamed(guessed)
             if (matchingHome != null && textMatchScore(guessed, matchingHome.name) >= 65) {
                 add(matchingHome, FilingEvidenceKind.FILENAME, "filename identifies ${matchingHome.name}", if (repeated) 92 else 78)
-            } else if (repeated) {
+            } else if (repeated && imageTopic == null) {
                 val synthetic = syntheticHome(guessed, storageRoot)
                 add(synthetic, FilingEvidenceKind.FILENAME, "repeated filename family identifies $guessed", 84)
             }
@@ -239,6 +251,19 @@ object InboxFilingEngine {
         val ranked = evidenceByHome.entries.sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
         val best = ranked.firstOrNull()
         if (best == null) {
+            if (imageTopic != null) {
+                val topicHome = ProjectHomeCandidate(imageTopic, "${storageRoot.trimEnd('/')}/Images/$imageTopic", hierarchy = ProjectHierarchyStrategy.FLAT)
+                return FilingDecision(
+                    artifact = artifact,
+                    projectName = imageTopic,
+                    projectHome = topicHome,
+                    release = null,
+                    destinationDirectory = topicHome.path,
+                    confidence = FilingConfidence.PROBABLE,
+                    evidence = listOf(FilingEvidence(FilingEvidenceKind.FILENAME, "image filename suggests $imageTopic; confirm this topic", 70)),
+                    createsProjectHome = true,
+                )
+            }
             return FilingDecision(
                 artifact = artifact,
                 projectName = null,
@@ -250,7 +275,11 @@ object InboxFilingEngine {
             )
         }
 
-        val home = best.key
+        val createsFolderHome = artifact.isDirectory && !storageRoot.startsWith("content://") &&
+            homes.none { normalize(it.path) == normalize(best.key.path) }
+        val home = if (createsFolderHome) best.key.copy(
+            path = "${storageRoot.trimEnd('/')}/Documents/${sanitizeSegment(artifact.displayName) ?: error("Unsafe folder name")}",
+        ) else best.key
         val evidence = best.value.distinctBy { it.kind to it.detail }
         val score = evidence.sumOf { it.weight }
         val runnerUp = ranked.getOrNull(1)
@@ -283,7 +312,9 @@ object InboxFilingEngine {
             projectName = home.name,
             projectHome = home,
             release = release,
-            destinationDirectory = if (confidence == FilingConfidence.UNRESOLVED) null else destinationFor(home, release, artifact),
+            destinationDirectory = if (confidence == FilingConfidence.UNRESOLVED) null
+                else if (createsFolderHome) home.path.substringBeforeLast('/')
+                else destinationFor(home, release, artifact),
             confidence = confidence,
             evidence = evidence,
             createsProjectHome = !home.persisted && homes.none { normalize(it.path) == normalize(home.path) },
@@ -309,6 +340,7 @@ object InboxFilingEngine {
 
     private fun destinationFor(home: ProjectHomeCandidate, release: String?, artifact: FilingArtifact): String {
         val base = home.path.trimEnd('/')
+        if (artifact.isDirectory) return base
         return when (home.hierarchy) {
             ProjectHierarchyStrategy.FLAT -> base
             ProjectHierarchyStrategy.VERSIONED -> sanitizeSegment(release)?.let { "$base/$it" } ?: base

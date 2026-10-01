@@ -56,12 +56,10 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             val scannedRecords = allRecordsForScopes(summary.scopes)
             val records = scannedRecords
                 .filter { record ->
-                    !record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys
+                    record.parentRef?.trimEnd('/') in sourceRootKeys &&
+                        !record.displayName.equals("Uncertain", ignoreCase = true)
                 }
-            val skippedFolders = scannedRecords.count { record ->
-                record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys &&
-                    !record.displayName.equals("Uncertain", ignoreCase = true)
-            }
+            val skippedFolders = 0
 
             if (records.isEmpty()) {
                 _uiState.value = ScanUiState.Error(
@@ -178,6 +176,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
                     apkVersionCode = metadata.apkVersionCode,
                     archiveSample = metadata.archiveSample,
                     indexedText = indexedText[updated.stableRef].orEmpty(),
+                    isDirectory = updated.isDirectory,
                 )
             }
 
@@ -191,6 +190,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
                     storageRoot = storageRoot.absolutePath,
                 )
             }
+            // Folder contents stay together; their internal layout is never split by role.
             val result = resolveDirectDestinationCollisions(inferred, gateway, storageRoot.absolutePath)
 
             val existingDirectories = linkedSetOf<String>()
@@ -229,8 +229,9 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             val notes = buildList {
                 add("The selected landing folder is being treated as an inbox, not a permanent category tree.")
                 add("Project ownership outranks file type. APK, ZIP, notes, and supporting assets can travel together when their evidence agrees.")
-                add("Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved loose files move to Uncertain after review.")
+                add("Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
                 add("Existing project homes are preferred over creating near-duplicate folders.")
+                add("Existing folders move intact. Their contents are checked again before execution; changed folders require a fresh review.")
                 if (skippedFolders > 0) {
                     add("$skippedFolders existing folder(s) remain in the inbox; this pass does not move folder contents without a reviewed snapshot.")
                 }

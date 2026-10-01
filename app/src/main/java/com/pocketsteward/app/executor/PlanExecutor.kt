@@ -723,7 +723,7 @@ class PlanExecutor(
             val key = source.rawValue()
             val reviewed = reviewedSources[key]
             val exists = gateway.exists(source)
-            val current = if (exists) SourcePreconditions.from(gateway.stat(source)) else null
+            val current = if (exists) SourcePreconditions.capture(gateway, source) else null
 
             if (reviewed != null) {
                 ReviewedSources.failure(key, reviewed, exists, current)?.let { error(it) }
@@ -752,8 +752,13 @@ class PlanExecutor(
         if (!gateway.exists(source)) {
             return "Source disappeared after approval; refusing to apply the operation: ${source.rawValue()}"
         }
-        val current = SourcePreconditions.from(gateway.stat(source))
-            ?: return "Source type changed after approval; refusing to apply the operation: ${source.rawValue()}"
+        val current = try {
+            SourcePreconditions.capture(gateway, source)
+        } catch (cancel: kotlinx.coroutines.CancellationException) {
+            throw cancel
+        } catch (failure: Exception) {
+            return "Source could not be checked after approval; review it again: ${source.rawValue()}"
+        }
         return if (SourcePreconditions.matches(expected, current)) {
             null
         } else {

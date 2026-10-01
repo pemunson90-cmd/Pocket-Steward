@@ -9,6 +9,17 @@ import org.junit.Test
 
 class InboxFilingPlanAdapterTest {
     @Test
+    fun folderBecomesNewProjectHomeWithoutDuplicateNesting() {
+        val artifact = FilingArtifact("/storage/emulated/0/Download/NSTL", "NSTL", "", 100, modifiedAt = 1, parentRef = "/storage/emulated/0/Download", isDirectory = true)
+        val home = ProjectHomeCandidate("NSTL", "/storage/emulated/0/Documents/NSTL", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val decision = FilingDecision(artifact, "NSTL", home, null, "/storage/emulated/0/Documents", FilingConfidence.STRONG, emptyList(), createsProjectHome = true)
+        val plan = InboxFilingPlanAdapter.build(InboxFilingResult(listOf(decision)), FileRef.Direct("/storage/emulated/0"), setOf("/storage/emulated/0/Documents"))
+        assertThat(plan.operations).hasSize(1)
+        assertThat((plan.operations.single() as PlannedOperation.Move).destination.rawValue()).isEqualTo(home.path)
+        assertThat(plan.presentation.groups.single().items.single().isDirectory).isTrue()
+    }
+
+    @Test
     fun newDirectProjectBuildsHomeThenVersionThenMove() {
         val decision = decision(
             home = ProjectHomeCandidate(

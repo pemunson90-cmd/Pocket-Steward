@@ -272,7 +272,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                     horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    FileVisual(name = item.displayName, location = item.sourceRef)
+                                    FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef)
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                                         Text(
@@ -656,7 +656,7 @@ private fun FilingDestinationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else {
+                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else if (group.isTopicDestination) "Image topic" else {
                             group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
                                 .ifBlank { "Project root" }
                         },
@@ -671,7 +671,7 @@ private fun FilingDestinationCard(
                     )
                     Text(
                         buildString {
-                            append(if (group.isUncertainCheckpoint) "Review later" else if (group.existingProjectHome) "Existing project" else "New project home")
+                            append(if (group.isUncertainCheckpoint) "Review later" else if (group.isTopicDestination) "Confirm topic" else if (group.existingProjectHome) "Existing project" else "New project home")
                             group.release?.let { append(" · release ").append(it) }
                             append(" · ").append(selectedFiles).append("/").append(group.items.size).append(" selected")
                             append(" · ").append(formatBytes(totalBytes))
@@ -700,7 +700,7 @@ private fun FilingDestinationCard(
                             onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
                             enabled = operationIndex != null,
                         )
-                        FileVisual(name = item.displayName, location = item.sourceRef, size = 28.dp)
+                        FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef, size = 28.dp)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                             Text(

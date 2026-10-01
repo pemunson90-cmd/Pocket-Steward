@@ -25,6 +25,7 @@ data class DurablePlan(
 object DurablePlanCodec {
     private const val HEADER_V1 = "@psplan\t1"
     private const val HEADER_V2 = "@psplan\t2"
+    private const val HEADER_V3 = "@psplan\t3"
     private const val OP_PREFIX = "@psop\t"
     private const val PRECONDITION_PREFIX = "@pspre\t"
     private const val BINARY_VERSION = 1
@@ -36,14 +37,15 @@ object DurablePlanCodec {
         sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
     ): String = buildString {
         appendLine(goal)
-        appendLine(HEADER_V2)
+        appendLine(HEADER_V3)
         operations.forEachIndexed { sequence, operation ->
             appendLine("$sequence\t${operation.typeLabel()}\t${operation.reason}")
             appendLine("$OP_PREFIX$sequence\t${encodeOperation(operation)}")
             sourcePreconditions[sequence]?.let { precondition ->
                 appendLine(
                     "$PRECONDITION_PREFIX$sequence\t${precondition.sizeBytes}\t" +
-                        (precondition.modifiedAtEpochMs?.toString() ?: "null"),
+                        (precondition.modifiedAtEpochMs?.toString() ?: "null") + "\t" +
+                        (precondition.directoryDigest ?: "null") + "\t" + precondition.directoryEntryCount,
                 )
             }
         }
@@ -52,6 +54,7 @@ object DurablePlanCodec {
     fun decodeOrNull(text: String): DurablePlan? = runCatching {
         val lines = text.lineSequence().toList()
         val version = when {
+            HEADER_V3 in lines -> 3
             HEADER_V2 in lines -> 2
             HEADER_V1 in lines -> 1
             else -> return null
@@ -73,11 +76,15 @@ object DurablePlanCodec {
             lines.mapNotNull { line ->
                 if (!line.startsWith(PRECONDITION_PREFIX)) return@mapNotNull null
                 val fields = line.split('\t')
-                require(fields.size == 4) { "Malformed source-precondition line." }
+                require(fields.size == if (version >= 3) 6 else 4) { "Malformed source-precondition line." }
                 val sequence = fields[1].toInt()
                 val sizeBytes = fields[2].toLong()
                 val modified = fields[3].takeUnless { it == "null" }?.toLong()
-                sequence to SourcePrecondition(sizeBytes, modified)
+                sequence to SourcePrecondition(
+                    sizeBytes, modified,
+                    if (version >= 3) fields[4].takeUnless { it == "null" } else null,
+                    if (version >= 3) fields[5].toInt() else 0,
+                )
             }.toMap()
         } else {
             emptyMap()
@@ -94,7 +101,7 @@ object DurablePlanCodec {
     }.getOrNull()
 
     fun isDurable(text: String): Boolean =
-        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 }
+        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 || it == HEADER_V3 }
 
     private fun encodeOperation(operation: PlannedOperation): String {
         val bytes = ByteArrayOutputStream()

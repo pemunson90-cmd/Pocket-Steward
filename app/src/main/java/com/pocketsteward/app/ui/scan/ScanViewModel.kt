@@ -1462,6 +1462,7 @@ class ScanViewModel(
             }
         }
         for (group in filing.groups) {
+            if (group.isTopicDestination) continue
             if (!group.projectHomePath.startsWith('/')) continue
             val approvedRefs = group.items.map { it.sourceRef }.filter { it in selectedSourceRefs }
             if (approvedRefs.isEmpty()) continue

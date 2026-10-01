@@ -5,8 +5,49 @@ import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.storage.FileMetadata
 import com.pocketsteward.app.storage.FileRef
 import org.junit.Test
+import com.pocketsteward.app.storage.StorageGateway
+import com.pocketsteward.app.storage.FileEntry
+import kotlinx.coroutines.runBlocking
+import java.lang.reflect.Proxy
+import java.nio.file.Files
+import java.io.File
 
 class SourcePreconditionTest {
+    @Test
+    fun nestedFileChangeIsDetectedEvenWhenRootTimestampIsUnchanged() = runBlocking {
+        val root = Files.createTempDirectory("reviewed-folder").toFile()
+        try {
+            val nested = File(root, "Notes").apply { mkdir() }
+            val note = File(nested, "note.txt").apply { writeText("before") }
+            val rootTime = root.lastModified()
+            val gateway = Proxy.newProxyInstance(StorageGateway::class.java.classLoader, arrayOf(StorageGateway::class.java)) { _, method, args ->
+                val ref = args[0] as FileRef.Direct
+                val file = File(ref.absolutePath)
+                when (method.name) {
+                    "stat" -> FileMetadata(ref, file.name, file.extension, null, file.length(), null, file.lastModified(), file.isDirectory, file.isHidden)
+                    "listChildren" -> file.listFiles()!!.map { FileEntry(FileRef.Direct(it.path), it.name, it.isDirectory, ref) }
+                    else -> error("Unexpected gateway method: ${method.name}")
+                }
+            } as StorageGateway
+            val before = SourcePreconditions.capture(gateway, FileRef.Direct(root.path))
+            note.writeText("after, with extra content")
+            root.setLastModified(rootTime)
+            val after = SourcePreconditions.capture(gateway, FileRef.Direct(root.path))
+            assertThat(before.directoryEntryCount).isEqualTo(2)
+            assertThat(SourcePreconditions.matches(before, after)).isFalse()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun changedFolderContentsAndTypeFailClosed() {
+        val folder = SourcePrecondition(100L, 200L, "reviewed-tree", 3)
+        assertThat(SourcePreconditions.matches(folder, folder.copy(directoryDigest = "changed-tree"))).isFalse()
+        assertThat(SourcePreconditions.matches(folder, folder.copy(directoryEntryCount = 4))).isFalse()
+        assertThat(SourcePreconditions.matches(folder, SourcePrecondition(100L, 200L))).isFalse()
+    }
+
     @Test
     fun exactMetadataMatches() {
         val expected = SourcePrecondition(100L, 200L)

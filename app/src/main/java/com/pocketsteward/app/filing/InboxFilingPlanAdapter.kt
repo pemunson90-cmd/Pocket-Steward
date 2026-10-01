@@ -14,6 +14,7 @@ data class FilingReviewItem(
     val confidence: FilingConfidence,
     val evidence: List<String>,
     val destinationPath: String?,
+    val isDirectory: Boolean = false,
 )
 
 data class FilingReviewGroup(
@@ -26,6 +27,7 @@ data class FilingReviewGroup(
     val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
     val editableDirectDestination: Boolean = true,
     val isUncertainCheckpoint: Boolean = false,
+    val isTopicDestination: Boolean = false,
 )
 
 data class FilingReviewPresentation(
@@ -85,9 +87,18 @@ object InboxFilingPlanAdapter {
 
         val proposed = result.proposed.filter { decision ->
             decision.projectHome != null && decision.destinationDirectory != null
+        }.map { decision ->
+            val home = requireNotNull(decision.projectHome)
+            // A folder can become the home only when no loose item also needs to
+            // create that home. Otherwise keep the folder as an intact bundle:
+            // merging its children would invalidate the reviewed source unit.
+            if (decision.artifact.isDirectory && decision.createsProjectHome &&
+                result.proposed.any { other -> other !== decision && other.projectHome?.path.equals(home.path, ignoreCase = true) }) {
+                decision.copy(destinationDirectory = home.path)
+            } else decision
         }
 
-        proposed.groupBy { decision ->
+        proposed.sortedByDescending { it.artifact.isDirectory }.groupBy { decision ->
             Triple(
                 requireNotNull(decision.projectHome).path.trimEnd('/'),
                 requireNotNull(decision.destinationDirectory).trimEnd('/'),
@@ -98,8 +109,13 @@ object InboxFilingPlanAdapter {
             val homeRef = FileRef.Direct(homePath)
             val homeExists = homePath.lowercase() in existing
 
+            val folderBecomesHome = decisions.size == 1 && decisions.single().artifact.isDirectory &&
+                "$destinationPath/${decisions.single().artifact.displayName}".equals(homePath, ignoreCase = true)
             if (!homeExists) {
-                ensureDirectory(homePath, projectName)
+                if (folderBecomesHome) {
+                    ensureDirectory(destinationPath, projectName)
+                    plannedDirectories.add(homePath.lowercase())
+                } else ensureDirectory(homePath, projectName)
                 authorization += rootPath
             } else {
                 authorization += homePath
@@ -142,6 +158,7 @@ object InboxFilingPlanAdapter {
                     release = first.release,
                     items = decisions.map(::reviewItem),
                     hierarchy = home.hierarchy,
+                    isTopicDestination = home.hierarchy == ProjectHierarchyStrategy.FLAT && home.path.startsWith("$rootPath/Images/"),
                     editableDirectDestination = home.path.trimEnd('/').lowercase() in existing,
                 )
             }
@@ -192,6 +209,7 @@ object InboxFilingPlanAdapter {
         confidence = decision.confidence,
         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
         destinationPath = decision.destinationDirectory,
+        isDirectory = decision.artifact.isDirectory,
     )
 }
 

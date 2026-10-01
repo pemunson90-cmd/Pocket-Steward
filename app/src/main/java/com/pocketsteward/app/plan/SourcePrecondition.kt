@@ -6,9 +6,13 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.CancellationException
+import java.security.MessageDigest
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.Paths
 
 /**
- * Cheap approval-time identity check for a source file.
+ * Approval-time identity check for a source file or intact folder.
  *
  * This is intentionally metadata, not a whole-file hash. Hashing thousands of
  * files merely because a plan was approved would turn a safe preview into a
@@ -20,6 +24,8 @@ import kotlinx.coroutines.CancellationException
 data class SourcePrecondition(
     val sizeBytes: Long,
     val modifiedAtEpochMs: Long?,
+    val directoryDigest: String? = null,
+    val directoryEntryCount: Int = 0,
 )
 
 object SourcePreconditions {
@@ -36,9 +42,51 @@ object SourcePreconditions {
         )
 
     fun matches(expected: SourcePrecondition, current: SourcePrecondition): Boolean {
+        if (expected.directoryDigest != current.directoryDigest ||
+            expected.directoryEntryCount != current.directoryEntryCount) return false
         if (expected.sizeBytes != current.sizeBytes) return false
         val expectedModified = expected.modifiedAtEpochMs
         return expectedModified == null || expectedModified == current.modifiedAtEpochMs
+    }
+
+    /** Captures a folder as one reviewed unit without opening its file contents. */
+    suspend fun capture(gateway: StorageGateway, source: FileRef): SourcePrecondition {
+        val root = gateway.stat(source)
+        if (!root.isDirectory) return requireNotNull(from(root))
+        val digest = MessageDigest.getInstance("SHA-256")
+        val pending = ArrayDeque<Pair<FileRef, String>>()
+        val visited = hashSetOf<String>()
+        pending.add(source to "")
+        var entries = 0
+        var bytes = 0L
+        while (pending.isNotEmpty()) {
+            val (directory, relative) = pending.removeFirst()
+            require(visited.add(directory.rawValue())) { "Folder contains a repeated directory; review cannot be completed." }
+            if (directory is FileRef.Direct) {
+                require(!Files.isSymbolicLink(Paths.get(directory.absolutePath))) { "Folder contains a symbolic link; review it separately." }
+            }
+            val children = gateway.listChildren(directory).sortedBy { it.displayName }
+            for (child in children) {
+                require(++entries <= 100_000) { "Folder has too many entries for one reviewed move; choose a smaller folder." }
+                if (child.ref is FileRef.Direct) {
+                    require(!Files.isSymbolicLink(Paths.get(child.ref.absolutePath))) { "Folder contains a symbolic link; review it separately." }
+                }
+                val metadata = gateway.stat(child.ref)
+                val path = "$relative/${child.displayName}"
+                val record = "$path\u0000${metadata.isDirectory}\u0000${metadata.sizeBytes}\u0000${metadata.modifiedAtEpochMs}\n"
+                val encoded = record.toByteArray(Charsets.UTF_8)
+                digest.update(ByteBuffer.allocate(4).putInt(encoded.size).array())
+                digest.update(encoded)
+                if (metadata.isDirectory) pending.add(child.ref to path)
+                else bytes = Math.addExact(bytes, metadata.sizeBytes)
+            }
+        }
+        return SourcePrecondition(
+            sizeBytes = bytes,
+            modifiedAtEpochMs = root.modifiedAtEpochMs,
+            directoryDigest = digest.digest().joinToString("") { "%02x".format(it) },
+            directoryEntryCount = entries,
+        )
     }
 }
 
@@ -66,9 +114,9 @@ object ReviewedSources {
     }
 
     /**
-     * Metadata only (no hashing), so it stays cheap for large cleanup plans.
-     * Sources that cannot be read are left out; the executor then falls back
-     * to its previous scan-index comparison for them.
+     * File metadata and bounded folder-tree metadata, without reading file
+     * contents. An unreadable folder aborts review rather than being approved
+     * without a snapshot; unreadable files retain the scan-index fallback.
      */
     suspend fun capture(
         operations: List<PlannedOperation>,
@@ -87,7 +135,8 @@ object ReviewedSources {
             } catch (_: Throwable) {
                 continue
             }
-            SourcePreconditions.from(metadata)?.let { captured[key] = it }
+            captured[key] = if (metadata.isDirectory) SourcePreconditions.capture(gateway, source)
+            else requireNotNull(SourcePreconditions.from(metadata))
         }
         return captured
     }
