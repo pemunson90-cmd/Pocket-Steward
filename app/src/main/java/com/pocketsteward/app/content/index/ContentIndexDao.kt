@@ -196,7 +196,9 @@ interface ContentIndexDao {
                d.extension AS extension,
                s.pageNumber AS pageNumber,
                s.ocr AS ocr,
-               s.body AS body
+               s.body AS body,
+               d.sizeBytes AS sizeBytes,
+               d.modifiedAt AS modifiedAt
         FROM indexed_segments_fts
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
         INNER JOIN indexed_documents d ON d.stableRef = s.stableRef

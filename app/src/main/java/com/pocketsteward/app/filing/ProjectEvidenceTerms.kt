@@ -14,6 +14,7 @@ object ProjectEvidenceTerms {
         "chatgpt", "chat", "gpt", "openai", "claude", "gemini", "conversation", "conversations", "backup", "archive", "archived",
         "attachment", "attachments", "generated", "output", "prompt", "response", "part", "page", "pages", "section", "text", "temp",
         "temporary", "unknown", "unsure", "uncertain", "landscape", "portrait", "landscapes", "portraits", "imgsrc",
+        "project", "title", "story", "stories",
     )
     private val numericVersion = Regex("(?i)(?:v?\\d+(?:\\.\\d+)*|(?:dev|alpha|beta|rc|hb)\\d*)")
     private val opaqueId = Regex("[0-9a-f]{8,}")

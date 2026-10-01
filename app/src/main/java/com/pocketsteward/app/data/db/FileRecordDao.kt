@@ -125,6 +125,17 @@ interface FileRecordDao {
     @Query("SELECT file_records.* FROM file_records INNER JOIN file_scopes ON file_records.stableRef = file_scopes.fileRef WHERE file_scopes.scopeRoot = :scopeRootRef")
     suspend fun getAllUnderScopeRoot(scopeRootRef: String): List<FileRecord>
 
+    /** Project-layout observations reuse the persistent library, without loading every file row. */
+    @Query(
+        "SELECT h.stableRef AS path, h.displayName AS name, h.isHidden AS hidden, " +
+            "group_concat(c.displayName, char(10)) AS observedRoles FROM file_records c " +
+            "INNER JOIN file_records h ON h.stableRef = c.parentRef " +
+            "INNER JOIN file_scopes s ON s.fileRef = h.stableRef " +
+            "WHERE s.scopeRoot = :scopeRootRef AND h.isDirectory = 1 AND c.isDirectory = 1 " +
+            "AND lower(c.displayName) IN (:roleNames) GROUP BY h.stableRef ORDER BY h.stableRef LIMIT :limit",
+    )
+    suspend fun indexedProjectLayouts(scopeRootRef: String, roleNames: List<String>, limit: Int): List<IndexedProjectLayout>
+
     @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
     suspend fun getByStableRef(stableRef: String): FileRecord?
 
@@ -240,3 +251,5 @@ interface FileRecordDao {
 
 /** Per-extension totals for the Files tab's category tiles. */
 data class ExtensionStat(val extension: String, val fileCount: Int, val totalBytes: Long)
+
+data class IndexedProjectLayout(val path: String, val name: String, val hidden: Boolean, val observedRoles: String)

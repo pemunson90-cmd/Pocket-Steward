@@ -202,8 +202,8 @@ object InboxFilingEngine {
             val contentHit = !filenameHit && ProjectEvidenceTerms.containsTerm(artifact.indexedText, keyword.term)
             val archiveHit = !filenameHit && artifact.archiveSample.any { ProjectEvidenceTerms.containsTerm(it, keyword.term) }
             if (filenameHit || contentHit || archiveHit) {
-                val home = homes.bestNamed(keyword.projectFolder)
-                    ?: syntheticHome(keyword.projectFolder, storageRoot)
+                val candidates = homes.matchingNamed(keyword.projectFolder)
+                    .ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot)) }
                 val weight = when {
                     filenameHit -> 105
                     archiveHit -> 82
@@ -214,7 +214,7 @@ object InboxFilingEngine {
                     archiveHit -> FilingEvidenceKind.ARCHIVE_ENTRY
                     else -> FilingEvidenceKind.INDEXED_CONTENT
                 }
-                add(home, kind, "project mapping “${keyword.term}” → ${keyword.projectFolder}", weight)
+                candidates.forEach { home -> add(home, kind, "project mapping “${keyword.term}” → ${keyword.projectFolder}", weight) }
             }
         }
 
@@ -260,8 +260,8 @@ object InboxFilingEngine {
         }
 
         artifact.apkLabel?.takeIf { isUsefulLabel(it) }?.let { label ->
-            val home = homes.bestNamed(label) ?: syntheticHome(label, storageRoot)
-            add(home, FilingEvidenceKind.APK_LABEL, "APK metadata identifies “$label”", 112)
+            val candidates = homes.matchingNamed(label).ifEmpty { listOf(syntheticHome(label, storageRoot)) }
+            candidates.forEach { home -> add(home, FilingEvidenceKind.APK_LABEL, "APK metadata identifies “$label”", 112) }
         }
 
         artifact.apkPackageName?.let { pkg ->
@@ -276,9 +276,9 @@ object InboxFilingEngine {
 
         guessedProjectLabel(artifact.displayName)?.let { guessed ->
             val repeated = (repeatedLabels[normalizeCompact(guessed)] ?: 0) >= 2
-            val matchingHome = homes.bestNamed(guessed)
-            if (matchingHome != null && textMatchScore(guessed, matchingHome.name) >= 65) {
-                add(matchingHome, FilingEvidenceKind.FILENAME, "filename identifies ${matchingHome.name}", if (repeated) 92 else 78)
+            val matchingHomes = homes.matchingNamed(guessed)
+            if (matchingHomes.isNotEmpty()) {
+                matchingHomes.forEach { home -> add(home, FilingEvidenceKind.FILENAME, "filename identifies ${home.name}", if (repeated) 92 else 78) }
             } else if (repeated && imageTopic == null) {
                 val synthetic = syntheticHome(guessed, storageRoot)
                 add(synthetic, FilingEvidenceKind.FILENAME, "repeated filename family identifies $guessed", 84)
@@ -442,7 +442,8 @@ object InboxFilingEngine {
         val labels = text.lineSequence().take(16).mapNotNull { line ->
             val title = explicitProjectField.matchEntire(line.take(160))?.groupValues?.get(1)?.trim()?.trim('"', '\'')
                 ?: return@mapNotNull null
-            title.takeIf { sanitizeSegment(it) == it && meaningfulTokens(it).isNotEmpty() }
+            title.takeIf { sanitizeSegment(it) == it && it.any(Char::isLetter) &&
+                it.lowercase(Locale.ROOT) !in genericTokens && it.lowercase(Locale.ROOT) !in setOf("untitled project", "new project", "unknown project") }
         }.distinct().take(2).toList()
         return labels.singleOrNull()
     }
@@ -450,17 +451,13 @@ object InboxFilingEngine {
     private val explicitProjectField = Regex("(?i)\\s*(?:#{1,3}\\s*)?(?:project(?:\\s+title)?|series)\\s*[:—-]\\s*(.+?)\\s*")
 
     private fun List<ProjectHomeCandidate>.matchingNamed(label: String): List<ProjectHomeCandidate> {
-        val scored = map { home -> home to (listOf(home.name) + home.aliases).maxOf { textMatchScore(label, it) } }
-            .filter { it.second >= 62 }
-        val best = scored.maxOfOrNull { it.second } ?: return emptyList()
-        return scored.filter { it.second == best }.map { it.first }.distinctBy { normalize(it.path) }
+        val exact = filter { home -> (listOf(home.name) + home.aliases).any { normalizeCompact(label) == normalizeCompact(it) } }
+        if (exact.isNotEmpty()) return exact.distinctBy { normalize(it.path) }
+        val core = meaningfulTokens(label)
+        if (core.isEmpty()) return emptyList()
+        return filter { home -> (listOf(home.name) + home.aliases).any { meaningfulTokens(it) == core } }
+            .distinctBy { normalize(it.path) }
     }
-
-    private fun List<ProjectHomeCandidate>.bestNamed(label: String): ProjectHomeCandidate? =
-        map { it to textMatchScore(label, it.name) }
-            .filter { it.second >= 62 }
-            .maxWithOrNull(compareBy<Pair<ProjectHomeCandidate, Int>> { it.second }.thenBy { if (it.first.persisted) 1 else 0 })
-            ?.first
 
     private fun eventTime(artifact: FilingArtifact): Long? = artifact.createdAt ?: artifact.modifiedAt
 
@@ -472,21 +469,26 @@ object InboxFilingEngine {
             guessedProjectLabel(artifact.displayName) == null
 
     private fun textMatchScore(a: String, b: String): Int {
-        val ac = normalizeCompact(a)
-        val bc = normalizeCompact(b)
+        val normalizedA = normalizedText(a)
+        val normalizedB = normalizedText(b)
+        val ac = normalizedA.compact
+        val bc = normalizedB.compact
         if (ac.isBlank() || bc.isBlank()) return 0
         if (ac == bc) return 100
-        if (ac.contains(bc) || bc.contains(ac)) {
+        if (bc.none(Char::isLetter)) return 0
+        fun identifiablePart(outer: NormalizedText, inner: NormalizedText): Boolean =
+            outer.compact.contains(inner.compact) && (outer.words.contains(inner.words) || inner.compact in outer.wordTokens)
+        if (identifiablePart(normalizedA, normalizedB) || identifiablePart(normalizedB, normalizedA)) {
             val shorter = minOf(ac.length, bc.length)
             val longer = maxOf(ac.length, bc.length)
             return (72 + (28.0 * shorter / longer)).toInt().coerceAtMost(98)
         }
-        val at = meaningfulTokens(a)
-        val bt = meaningfulTokens(b)
+        val at = normalizedA.meaningful
+        val bt = normalizedB.meaningful
         if (at.isEmpty() || bt.isEmpty()) return 0
-        val intersection = at.intersect(bt).size
+        val intersection = at.count { it in bt }
         if (intersection == 0) return 0
-        val union = at.union(bt).size
+        val union = at.size + bt.size - intersection
         return (55 + 45.0 * intersection / union).toInt()
     }
 
@@ -511,15 +513,23 @@ object InboxFilingEngine {
             .joinToString(" ") { token -> token.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() } }
     }
 
-    private fun meaningfulTokens(value: String): Set<String> =
-        value.replace(Regex("(?<=[a-z])(?=[A-Z])"), " ")
-            .lowercase(Locale.ROOT)
-            .split(Regex("[^a-z0-9]+"))
-            .filter { it.length >= 2 && it !in genericTokens && !it.all(Char::isDigit) }
-            .toSet()
+    private data class NormalizedText(val compact: String, val words: String, val wordTokens: Set<String>, val meaningful: Set<String>)
+    private val camelBoundary = Regex("(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+    private val nonWord = Regex("[^\\p{L}\\p{N}]+")
+    private val normalizationCache = object : LinkedHashMap<String, NormalizedText>(1024, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NormalizedText>?): Boolean = size > 1024
+    }
+    private fun normalizedText(value: String): NormalizedText = synchronized(normalizationCache) {
+        normalizationCache.getOrPut(value) {
+            val tokens = value.replace(camelBoundary, " ").lowercase(Locale.ROOT).split(nonWord).filter { it.isNotBlank() }
+            NormalizedText(value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit), tokens.joinToString(" ", " ", " "), tokens.toSet(),
+                tokens.filter { it.length >= 2 && it !in genericTokens && !it.all(Char::isDigit) }.toSet())
+        }
+    }
+    private fun meaningfulTokens(value: String): Set<String> = normalizedText(value).meaningful
 
     private fun normalize(value: String): String = value.trim().trimEnd('/').lowercase(Locale.ROOT)
-    private fun normalizeCompact(value: String): String = value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+    private fun normalizeCompact(value: String): String = normalizedText(value).compact
     private fun isUsefulLabel(value: String): Boolean = value.trim().length >= 3 && value.lowercase(Locale.ROOT) !in genericTokens
     private fun isUsefulVersion(value: String): Boolean = value.any(Char::isDigit) && value.length <= 40
     private fun normalizeVersion(value: String): String = value.trim().removePrefix("v").removePrefix("V").trim(' ', '-', '_')

@@ -7,6 +7,29 @@ import com.pocketsteward.app.saved.ProjectHierarchyStrategy
 import org.junit.Test
 
 class InboxFilingEngineTest {
+    @Test fun numericProjectTitlesRemainDistinct() {
+        val homes = (1..200).map { number -> ProjectHomeCandidate("Project $number", "/storage/emulated/0/Documents/Project $number",
+            hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES, persisted = true) }
+        val decision = InboxFilingEngine.resolve(listOf(artifact("Project 17-notes.md", "md", 1000)), homes, emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.projectHome?.path).isEqualTo("/storage/emulated/0/Documents/Project 17")
+    }
+
+    @Test fun longerWordsDoNotBecomeFalseProjectAliases() {
+        val home = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val decision = InboxFilingEngine.resolve(listOf(artifact("Lilithian-notes.md", "md", 1000)), listOf(home), emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
+    @Test fun repeatedFilenameFamiliesCannotChooseBetweenDuplicateProjectHomes() {
+        val home = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val other = home.copy(path = "/storage/emulated/0/Projects/Lilith")
+        val decisions = InboxFilingEngine.resolve(listOf(artifact("Lilith-notes.md", "md", 1000), artifact("Lilith-drafts.md", "md", 1000)),
+            listOf(home, other), emptyList(), emptyList(), emptyList(), "/storage/emulated/0").decisions
+        assertThat(decisions.all { it.confidence == FilingConfidence.UNRESOLVED }).isTrue()
+    }
+
     @Test fun explicitProjectFieldCanResolveAGenericFileWithoutARegisteredHome() {
         val file = artifact("ChatGPT_export_1.txt", "txt", 1000).copy(indexedText = "Project: NSTL\nManuscript\nChapter One")
         val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(), emptyList(),

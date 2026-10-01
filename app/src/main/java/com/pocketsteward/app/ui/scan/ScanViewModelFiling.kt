@@ -162,6 +162,11 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                         }
                 }.orEmpty()
 
+            val knowledge = withContext(Dispatchers.IO) {
+                container.projectKnowledge.discover(storageRoot, (settingsRepository.inboxRoots.first().map { it.path } + sourceRootKeys).distinct())
+            }
+            val observedHomes = (knowledge.homes + documentProjects).distinctBy { it.path.lowercase() }
+
             val artifacts = records.map { record ->
                 val metadata = enriched.getValue(record.stableRef)
                 val updated = metadata.record
@@ -189,7 +194,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 InboxFilingEngine.resolve(
                     artifacts = artifacts,
                     persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
-                    discoveredHomes = discovered + documentProjects,
+                    discoveredHomes = observedHomes + discovered,
                     projectKeywords = settingsRepository.projectKeywords.first(),
                     correctionRules = settingsRepository.correctionRules.first(),
                     storageRoot = storageRoot.absolutePath,
@@ -202,12 +207,12 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             existingDirectories += scannedRecords.filter { record ->
                 record.isDirectory && record.parentRef?.trimEnd('/') in sourceRootKeys
             }.map { it.stableRef.trimEnd('/') }
-            existingDirectories += documentProjects.map { it.path }
+            existingDirectories += observedHomes.map { it.path }
             existingDirectories += savedHomes.map { it.path }
             existingDirectories += favorites.map { it.path }
             // Known release children matter for friendly "existing" UI;
             // plan validation independently snapshots them live.
-            for (home in (savedHomes + favorites + discovered + documentProjects).distinctBy { it.path.lowercase() }.take(100)) {
+            for (home in (savedHomes + favorites + observedHomes + discovered).distinctBy { it.path.lowercase() }.take(100)) {
                 val children = withContext(Dispatchers.IO) {
                     runCatching { gateway.listChildren(FileRef.Direct(home.path)) }.getOrDefault(emptyList())
                 }
@@ -226,7 +231,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             }
 
             filingSession = FilingSession(result, storageRoot, existingDirectories, intake.retainedUncertainSourceRefs,
-                (savedHomes + favorites + discovered + documentProjects).distinctBy { it.path.lowercase() })
+                (savedHomes + favorites + observedHomes + discovered).distinctBy { it.path.lowercase() })
 
             val notes = buildList {
                 add("The selected landing folder is being treated as an inbox, not a permanent category tree.")
@@ -234,6 +239,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 add(if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Anything still unresolved stays in its existing Uncertain checkpoint."
                     else "Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
                 add(content.summary)
+                add(knowledge.explanation)
                 addAll(extraNotes)
                 if (!metadataEnabled) add("Metadata inspection is off; camera dates, media tags and archive entries were not read.")
                 val partialArchives = enriched.values.count { it.archiveComplete == false }
@@ -519,9 +525,7 @@ private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>)
 }
 
 private suspend fun ScanViewModel.enrichFreshFilingRecord(record: FileRecord, mode: StorageAccessMode, enabled: Boolean): com.pocketsteward.app.metadata.MetadataEnrichment {
-    val live = container.gatewayFor(mode).stat(com.pocketsteward.app.storage.parseFileRef(record.stableRef))
-    val fresh = com.pocketsteward.app.filing.FilingFreshness.refresh(record, live)
-    if (fresh != record) container.database.fileRecordDao().upsert(fresh)
+    val fresh = freshEvidenceRecord(record, mode)
     return if (enabled) container.metadataEnricher.enrich(fresh) else com.pocketsteward.app.metadata.MetadataEnrichment(fresh, false)
 }
 

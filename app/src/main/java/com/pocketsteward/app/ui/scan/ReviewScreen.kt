@@ -379,7 +379,7 @@ private fun IndexedContentSearchReview(
 
         Column(modifier = Modifier.fillMaxSize()) {
             Text(
-                text = "$indexDetails · local persistent index",
+                text = "$indexDetails · verified current metadata · local persistent index",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = Spacing.tight),

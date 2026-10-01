@@ -386,7 +386,7 @@ class BrowserViewModel(
                 val keywords = AskRetrieval.keywords(query).ifEmpty { listOf(query.lowercase()) }
                 val match = AskRetrieval.ftsQuery(keywords) ?: return@runCatching emptyList()
                 val dao = ContentSearchDatabase.getInstance(container.appContextForUi).contentIndexDao()
-                val rows = dao.askCandidateRows(match, 300)
+                val rows = container.verifyAskCandidates(dao.askCandidateRows(match, 300))
                 AskRetrieval.rank(rows, keywords, maxPassages = 30, perFile = 1, excerptChars = 180).map { p ->
                     val ref = parseFileRef(p.stableRef)
                     ContentHit(

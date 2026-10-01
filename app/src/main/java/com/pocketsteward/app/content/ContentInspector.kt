@@ -12,6 +12,9 @@ class ContentInspector(
     private val gateway: StorageGateway,
     private val pdfExtractor: PdfContentExtractor? = null,
 ) {
+    suspend fun observeMetadata(stableRef: String): com.pocketsteward.app.storage.FileMetadata =
+        gateway.stat(parseFileRef(stableRef))
+
     suspend fun extract(record: FileRecord, budget: ContentInspectionBudget = ContentInspectionBudget.FULL): ContentExtraction {
         if (record.isDirectory) return ContentExtraction.Unsupported("Directories do not have inspectable content.")
         if (!ContentExtractor.supports(record.extension)) {

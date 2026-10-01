@@ -419,11 +419,15 @@ class ContentIndexRepository(
     ): List<IndexedSearchRow> {
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         require(roots.isNotEmpty()) { "Indexed content search needs at least one source root." }
-        return dao.searchRows(
+        val rows = dao.searchRows(
             matchQuery = ContentFtsQuery.build(query),
             sourceRoots = roots,
             limit = limit.coerceIn(1, 20_000),
         )
+        val current = ContentEvidenceVerifier(inspector::observeMetadata).currentRefs(rows.map { row ->
+            ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt)
+        })
+        return rows.filter { it.stableRef in current }
     }
 
     suspend fun state(sourceRoot: String): ContentIndexState? =

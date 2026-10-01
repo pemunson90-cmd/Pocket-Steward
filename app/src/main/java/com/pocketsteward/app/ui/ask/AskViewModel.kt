@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 sealed interface AskUiState {
     data object Idle : AskUiState
@@ -55,6 +57,9 @@ sealed interface AskUiState {
 class AskViewModel(
     private val dao: ContentIndexDao,
     private val model: AgentModel,
+    private val verifyRows: suspend (List<com.pocketsteward.app.content.ask.AskCandidateRow>) -> List<com.pocketsteward.app.content.ask.AskCandidateRow>,
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val computeDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<AskUiState>(AskUiState.Idle)
@@ -75,20 +80,24 @@ class AskViewModel(
                     _state.value = AskUiState.NeedsSpecificWords
                     return@launch
                 }
-                val (indexed, rows) = withContext(Dispatchers.IO) {
-                    dao.countDocuments() to dao.askCandidateRows(match, CANDIDATE_LIMIT)
+                val (indexed, rows) = withContext(ioDispatcher) {
+                    val count = dao.countDocuments()
+                    count to if (count == 0) emptyList() else verifyRows(dao.askCandidateRows(match, CANDIDATE_LIMIT))
                 }
                 if (indexed == 0) {
                     _state.value = AskUiState.NoIndex
                     return@launch
                 }
-                val passages = withContext(Dispatchers.Default) { AskRetrieval.rank(rows, keywords) }
+                val passages = withContext(computeDispatcher) { AskRetrieval.rank(rows, keywords) }
                 if (passages.isEmpty()) {
                     _state.value = AskUiState.NoMatches(keywords)
                     return@launch
                 }
 
-                val availability = runCatching { model.availability() }.getOrDefault(AgentModelAvailability.UNAVAILABLE)
+                val availability = try { model.availability() }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { AgentModelAvailability.UNAVAILABLE }
+                currentCoroutineContext().ensureActive()
                 if (availability != AgentModelAvailability.AVAILABLE) {
                     _state.value = AskUiState.Results(
                         question = q,
@@ -107,6 +116,17 @@ class AskViewModel(
                 _state.value = AskUiState.Results(q, keywords, passages, answering = true)
                 val answer = withTimeoutOrNull(ANSWER_TIMEOUT_MS) {
                     model.answerFromPassages(q, passages)
+                }
+                currentCoroutineContext().ensureActive()
+                val passageRefs = passages.mapTo(hashSetOf()) { it.stableRef }
+                val stillCurrent = withContext(ioDispatcher) { verifyRows(rows.filter { it.stableRef in passageRefs }) }
+                if (stillCurrent.mapTo(hashSetOf()) { it.stableRef } != passageRefs) {
+                    val currentPassages = withContext(computeDispatcher) { AskRetrieval.rank(stillCurrent, keywords) }
+                    _state.value = if (currentPassages.isEmpty()) AskUiState.NoMatches(keywords) else AskUiState.Results(
+                        q, keywords, currentPassages, answering = false,
+                        note = "A source changed while the model was answering. Ask again to refresh the answer.",
+                    )
+                    return@launch
                 }
                 _state.value = AskUiState.Results(
                     question = q,

@@ -69,6 +69,7 @@ fun AskScreen(onBack: () -> Unit) {
                 AskViewModel(
                     dao = ContentSearchDatabase.getInstance(context.applicationContext).contentIndexDao(),
                     model = container.agentModel,
+                    verifyRows = container::verifyAskCandidates,
                 )
             }
         },
@@ -160,8 +161,8 @@ fun AskScreen(onBack: () -> Unit) {
                     "Add at least one specific word to look for, like a name, place, amount or topic.",
                 )
                 is AskUiState.NoMatches -> Hint(
-                    "No indexed file mentions ${s.keywords.joinToString(", ") { "\"$it\"" }}. " +
-                        "Try other words, or index the folder that holds the answer.",
+                    "No currently verified indexed passage matches ${s.keywords.joinToString(", ") { "\"$it\"" }}. " +
+                        "Try other words or refresh changed documents. Files with no modification date cannot supply persistent cached evidence.",
                 )
                 is AskUiState.Failed -> Hint("Couldn't search the index: ${s.message}")
                 is AskUiState.Results -> Results(s, onOpen = { p ->

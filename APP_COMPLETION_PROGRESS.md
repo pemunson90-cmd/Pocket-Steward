@@ -51,12 +51,22 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 
 543 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev9 (49). The existing overlapping-root SQLite checks also passed. Instrumentation was compiled, not run. Canonical signed dev9 release assembly passed; its signer matches the installed-app pin, its version is 1.4.0-dev9 (49), and INTERNET permission remains absent. Phone acceptance remains open.
 
+## Implemented for dev10
+
+- Persistent, read-only project knowledge uses the existing scoped library inventory to recognize standard role layouts beyond immediate Documents children. Discovery checks up to 200 indexed candidates, verifies live homes and role directories, preserves role spelling, rejects case ambiguity, and excludes inbox/checkpoint, hidden and private system paths. Explicitly remembered homes remain authoritative. Direct mode currently supports this broader discovery; selected-tree parity remains open.
+- Search and Ask verify cached evidence against live name, size and modification time. Missing, revoked, changed, undated or internally inconsistent observations cannot supply current passages. Ask rechecks cited sources after a model answer; changed sources withhold the answer. Cancellation propagates across availability checks and late model responses. These checks neither read content nor delete cached documents.
+- Coherence now refreshes source metadata before evidence reuse just as filing does. Both retain evidence-time source baselines in the approved operation plan; model-reviewed operations use their original review baselines.
+- Project matching considers every equally matching home rather than depending on list order. Distinct numbered titles and whole-word identity avoid Project 1/Project 17 and Lilith/Lilithian substring matches. Bounded memoization shares normalized title/token work across large filing reviews. This does not establish a measured end-to-end 16k phone time.
+- Native SQLite checks exercise the exact project-layout query for scoped identity, role spelling, ambiguity and result bounds. Regression cases cover 200 numbered homes, duplicate-home filename cohorts, evidence freshness, metadata-only search, Ask cancellation and post-answer source changes.
+
+564 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev10 (50). Both project-layout and overlapping-root SQLite checks passed. Instrumentation was compiled, not run. Canonical signed dev10 release assembly passed; its certificate matches the installed-app pin, version is 1.4.0-dev10 (50), and INTERNET permission remains absent. Target-phone acceptance remains open.
+
 ## Remaining completion work
 
 - Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
 - Expanded archive formats where safe; richer grounded image descriptions and project/topic template coverage.
-- Persistent storage-wide project knowledge; target-phone acceptance of the new inbox observation and its permission-aware fallback.
+- Broader selected-tree project knowledge and custom-role discovery; target-phone acceptance of project discovery and inbox observation with its permission-aware fallback.
 - Target-phone acceptance of settings backup/restore; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.
 - AppFunctions maturity review completed: official releases remain alpha-only (1.0.0-alpha12). Production integration is conditionally deferred; see APPFUNCTIONS_DECISION.md. Remaining shortcut/integration coverage stays open.
 - Current-phone acceptance: full 16k corpus timing and memory, navigation/restart/cancel, Fold/split/accessibility, revoked grants, low storage, thermal/battery, reboot/recovery, migrations and cross-root undo.

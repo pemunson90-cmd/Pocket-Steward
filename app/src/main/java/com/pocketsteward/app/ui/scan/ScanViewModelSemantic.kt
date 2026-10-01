@@ -184,7 +184,10 @@ internal fun ScanViewModel.runCoherenceAudit(summary: ScanUiState.Summary) {
             var indexedExcerpts = 0
             var freshExtractions = 0
 
-            for ((index, record) in selected.withIndex()) {
+            for ((index, indexedRecord) in selected.withIndex()) {
+                val record = try { withContext(Dispatchers.IO) { freshEvidenceRecord(indexedRecord, summary.mode) } }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { skippedUnreadable++; continue }
                 _uiState.value = ScanUiState.Working(
                     label = "Coherence audit",
                     detail = "Preparing representative document ${index + 1} of ${selected.size}: ${record.displayName}",
@@ -498,12 +501,19 @@ internal fun ScanViewModel.proposeSemanticOrganization(
                 }
             }
 
+            val modelSourceRefs = groupingDecisions.filter { it.evidence == com.pocketsteward.app.semantic.SemanticEvidence.MODEL }
+                .mapTo(hashSetOf()) { it.suggestion.stableRef }
+            val originalModelRecords = review.rows.associate { it.record.stableRef to it.record }
             showPlanPreview(
                 goal = "Organize ${result.plannedFileCount} file(s) from semantic findings",
                 operations = result.operations,
                 scopes = review.scopes,
                 scopeNotes = notes,
                 authorizedDestinationRoots = result.authorizedDestinationRoots,
+                previousReviewedSources = records.mapNotNull { record ->
+                    val evidenceRecord = if (record.stableRef in modelSourceRefs) originalModelRecords[record.stableRef] ?: record else record
+                    com.pocketsteward.app.plan.SourcePreconditions.from(evidenceRecord)?.let { record.stableRef to it }
+                }.toMap(),
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)

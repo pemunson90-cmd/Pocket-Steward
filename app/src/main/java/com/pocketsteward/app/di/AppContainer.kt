@@ -34,7 +34,9 @@ import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
+import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -75,6 +77,10 @@ class AppContainer(context: Context) {
         )
     }
 
+    val projectKnowledge: com.pocketsteward.app.projects.ProjectKnowledge by lazy {
+        com.pocketsteward.app.projects.ProjectKnowledge(database.fileRecordDao(), directStorageGateway)
+    }
+
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
 
@@ -101,6 +107,21 @@ class AppContainer(context: Context) {
             dao = ContentSearchDatabase.getInstance(appContext).contentIndexDao(),
             inspector = contentInspector(mode),
         )
+
+    suspend fun verifyAskCandidates(rows: List<com.pocketsteward.app.content.ask.AskCandidateRow>): List<com.pocketsteward.app.content.ask.AskCandidateRow> {
+        val access = settingsRepository.storageAccessState.first()
+        val mode = access.mode ?: return emptyList()
+        val prefix = when (mode) {
+            StorageAccessMode.DIRECT -> library.root(access)?.rawValue()?.trimEnd('/')?.plus("/") ?: return emptyList()
+            StorageAccessMode.SAF -> access.safTreeUri?.substringBefore("/document/")?.trimEnd('/')?.plus("/document/") ?: return emptyList()
+        }
+        val scoped = rows.filter { it.stableRef.startsWith(prefix) }
+        val current = com.pocketsteward.app.content.index.ContentEvidenceVerifier(contentInspector(mode)::observeMetadata)
+            .currentRefs(scoped.map { row ->
+                com.pocketsteward.app.content.index.ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt)
+            })
+        return scoped.filter { it.stableRef in current }
+    }
 
     suspend fun contentIndexOverview(): com.pocketsteward.app.content.index.ContentIndexOverview =
         ContentIndexRepository(

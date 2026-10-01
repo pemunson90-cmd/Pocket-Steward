@@ -25,6 +25,8 @@ data class AskCandidateRow(
     val pageNumber: Int?,
     val ocr: Boolean,
     val body: String,
+    val sizeBytes: Long? = null,
+    val modifiedAt: Long? = null,
 )
 
 /**
