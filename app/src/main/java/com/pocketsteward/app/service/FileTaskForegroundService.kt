@@ -93,7 +93,6 @@ class FileTaskForegroundService : Service() {
 
     private suspend fun runTask(taskRunId: Long, startId: Int) {
         try {
-            container.mutationRecovery.recoverAll()
             val task = container.database.taskRunDao().getById(taskRunId)
                 ?: error("Task no longer exists.")
             val executor = container.planExecutor(task.storageAccessMode)
@@ -134,7 +133,7 @@ class FileTaskForegroundService : Service() {
             // the durable plan still identifies every missing sequence.
             throw cancel
         } catch (security: SecurityException) {
-            container.database.taskRunDao().markRunningPaused(
+            container.mutationRecovery.pauseInterruptedTask(
                 id = taskRunId,
                 completedAt = System.currentTimeMillis(),
                 summary = "Paused because storage access is unavailable. Restore access, then Resume from Tasks.",

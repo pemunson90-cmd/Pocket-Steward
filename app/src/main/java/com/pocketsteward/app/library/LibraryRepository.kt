@@ -13,6 +13,7 @@ import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.StorageScope
 import com.pocketsteward.app.storage.rawValue
+import kotlinx.coroutines.ensureActive
 
 data class LibraryStatus(
     val rootKey: String?,
@@ -93,6 +94,47 @@ class LibraryRepository(
         }
         if (walked) noteCompleted(root.rawValue())
         return true
+    }
+
+    suspend fun directoryRefreshRoots(access: StorageAccessState, directories: List<String>): List<String>? {
+        if (access.mode != StorageAccessMode.DIRECT) return null
+        val libraryRoot = root(access) as? FileRef.Direct ?: return null
+        return DirectoryRefreshPolicy.select(libraryRoot.absolutePath, directories, java.io.File(libraryRoot.absolutePath).canonicalPath)
+    }
+
+    /** Refresh only observed directory trees; periodic/manual full walks still reconcile the whole root. */
+    suspend fun refreshDirectories(access: StorageAccessState, directories: List<String>, resume: Boolean = false): Boolean {
+        if (access.mode != StorageAccessMode.DIRECT) return false
+        val libraryRoot = root(access) as? FileRef.Direct ?: return false
+        val canonicalRoot = java.io.File(libraryRoot.absolutePath).canonicalPath
+        val selected = DirectoryRefreshPolicy.select(libraryRoot.absolutePath, directories, canonicalRoot) ?: return false
+        return locks.withScanLock(libraryRoot.rawValue()) {
+            val libraryCheckpoint = checkpointDao.get(libraryRoot.rawValue())
+            // An incomplete library needs full reconciliation instead of an incomplete slice claim.
+            if (libraryCheckpoint?.status?.let { it != ScanStatus.COMPLETED } == true ||
+                lastCompleted(libraryRoot.rawValue(), libraryCheckpoint) == null) return@withScanLock false
+            val gateway = gatewayFor(StorageAccessMode.DIRECT)
+            for (path in selected) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val file = java.io.File(path)
+                if (file.canonicalPath != canonicalRoot.trimEnd('/') + path.removePrefix(libraryRoot.absolutePath.trimEnd('/')) || java.nio.file.Files.isSymbolicLink(file.toPath())) return@withScanLock false
+                val ref = FileRef.Direct(path)
+                val metadata = try { gateway.stat(ref) }
+                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                catch (_: Exception) { return@withScanLock false }
+                if (!metadata.isDirectory) return@withScanLock false
+                locks.withScanLock(path) {
+                    val refreshKey = FileScanner.refreshScopeKey(ref)
+                    if (!resume) checkpointDao.clear(refreshKey)
+                    scannerFor(StorageAccessMode.DIRECT).scanRefreshSlice(ref)
+                    val scopes = DirectoryRefreshPolicy.overlappingScopes(path, fileRecordDao.getKnownScopeRoots() + listOf(libraryRoot.rawValue(), path))
+                    fileRecordDao.replaceRefreshedSlice(refreshKey, path, scopes)
+                    checkpointDao.clear(refreshKey)
+                }
+            }
+            // Deliberately retain the full-library completion timestamp.
+            true
+        }
     }
 
     /** Records a finished walk of the library root, whoever ran it (background job or a manual whole-storage scan). */

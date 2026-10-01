@@ -204,6 +204,28 @@ interface FileRecordDao {
     )
     suspend fun copyScopeTagsUnder(libraryScope: String, newScope: String, folderRef: String, folderSlash: String)
 
+    @Query(
+        "DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef " +
+            "AND (fileRef = :folderRef OR substr(fileRef, 1, length(:folderSlash)) = :folderSlash)",
+    )
+    suspend fun removeScopeTagsUnder(scopeRootRef: String, folderRef: String, folderSlash: String)
+
+    /** A completed read-only slice replaces overlapping inventory, without claiming other folders were walked. */
+    @Transaction
+    suspend fun replaceRefreshedSlice(refreshScope: String, folderRef: String, targetScopes: List<String>) {
+        val folder = folderRef.trimEnd('/')
+        require(refreshScope !in targetScopes)
+        for (scope in targetScopes.distinct()) {
+            val normalized = scope.trimEnd('/')
+            val slice = if (normalized == folder || normalized.startsWith("$folder/")) normalized else folder
+            require(normalized == folder || normalized.startsWith("$folder/") || folder.startsWith("$normalized/"))
+            removeScopeTagsUnder(scope, slice, "$slice/")
+            copyScopeTagsUnder(refreshScope, scope, slice, "$slice/")
+        }
+        removeAllScopeTags(refreshScope)
+        deleteOrphanedFiles()
+    }
+
     /**
      * Makes [newScope] an exact slice of the library under [folderRef],
      * replacing whatever that scope held before. Records are shared, so this

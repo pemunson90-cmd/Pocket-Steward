@@ -40,6 +40,9 @@ class UndoExecutor(
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
     private val gatewayFor: (StorageAccessMode) -> StorageGateway,
+    private val onUndoActivated: suspend (StorageAccessMode, List<com.pocketsteward.app.plan.PlannedOperation>) -> Unit = { _, _ -> },
+    private val runnerGate: MutationRunnerGate = MutationRunnerGate(),
+    private val beforeRun: suspend () -> Unit = {},
 ) {
     /**
      * Reverses exactly one committed mutation, rather than a whole task run.
@@ -54,7 +57,12 @@ class UndoExecutor(
      * check: if something now occupies the original path, this blocks rather
      * than overwriting.
      */
-    suspend fun undoSingleMutation(mutationId: Long): MutationResult {
+    suspend fun undoSingleMutation(mutationId: Long): MutationResult = runnerGate.run {
+        beforeRun()
+        undoSingleLocked(mutationId)
+    }
+
+    private suspend fun undoSingleLocked(mutationId: Long): MutationResult {
         val record = mutationRecordDao.getById(mutationId)
             ?: return MutationResult.Failure("No such journal entry: $mutationId")
         if (record.status != MutationStatus.COMMITTED ||
@@ -65,6 +73,12 @@ class UndoExecutor(
         val task = taskRunDao.getById(record.taskRunId)
             ?: return MutationResult.Failure("The task that made this change is missing.")
 
+        if (task.status !in setOf(TaskRunStatus.COMPLETED, TaskRunStatus.PARTIAL,
+                TaskRunStatus.FAILED, TaskRunStatus.CANCELLED, TaskRunStatus.UNDO_PARTIAL)) {
+            return MutationResult.Failure("Task is not in an undoable state: ${task.status}")
+        }
+        taskRunDao.activateWhenIdle(task.copy(status = TaskRunStatus.UNDOING))
+        prepareInventoryRefresh(task)
         val gateway = gatewayFor(task.storageAccessMode)
         val pending = record.copy(
             undoState = UndoState.PENDING,
@@ -73,7 +87,7 @@ class UndoExecutor(
         )
         mutationRecordDao.update(pending)
 
-        return when (val result = undoOne(pending, gateway)) {
+        val result = when (val result = undoOne(pending, gateway)) {
             is MutationResult.Success -> {
                 mutationRecordDao.update(
                     pending.copy(
@@ -91,6 +105,15 @@ class UndoExecutor(
                 result
             }
         }
+        val allUndone = mutationRecordDao.getForTaskRun(task.id)
+            .filter { it.undoState != UndoState.NOT_AVAILABLE }
+            .all { it.undoState == UndoState.UNDONE }
+        val latest = taskRunDao.getById(task.id) ?: task
+        taskRunDao.update(latest.copy(
+            status = if (allUndone) TaskRunStatus.UNDONE else TaskRunStatus.UNDO_PARTIAL,
+            undoCompletedAt = if (allUndone) System.currentTimeMillis() else null,
+        ))
+        return result
     }
 
     /**
@@ -102,7 +125,12 @@ class UndoExecutor(
     suspend fun undo(
         taskRunId: Long,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
-    ): UndoSummary {
+    ): UndoSummary = runnerGate.run {
+        beforeRun()
+        undoLocked(taskRunId, onProgress)
+    }
+
+    private suspend fun undoLocked(taskRunId: Long, onProgress: (Int, Int) -> Unit): UndoSummary {
         val task = taskRunDao.getById(taskRunId) ?: error("Unknown task run: $taskRunId")
         // PARTIAL belongs here for the same reason it exists at all: a run
         // that moved 4,829 files and missed one has 4,829 reversible
@@ -129,6 +157,7 @@ class UndoExecutor(
 
         val gateway = gatewayFor(task.storageAccessMode)
         taskRunDao.activateWhenIdle(task.copy(status = TaskRunStatus.UNDOING))
+        prepareInventoryRefresh(task)
 
         var undone = 0
         var skipped = 0
@@ -210,6 +239,13 @@ class UndoExecutor(
             otherBlocked = otherBlocked,
             messages = messages,
         )
+    }
+
+    private suspend fun prepareInventoryRefresh(task: com.pocketsteward.app.data.db.TaskRun) {
+        val operations = com.pocketsteward.app.plan.DurablePlanCodec.decodeOrNull(task.planJson)?.operations.orEmpty()
+        try { onUndoActivated(task.storageAccessMode, operations) }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { /* The journal remains the sole authority for undo. */ }
     }
 
     private suspend fun undoOne(record: MutationRecord, gateway: StorageGateway): MutationResult {

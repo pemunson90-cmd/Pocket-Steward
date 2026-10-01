@@ -28,6 +28,10 @@ class PocketStewardApplication : Application() {
         // NEEDS_REVIEW rather than being guessed.
         appScope.launch {
             runCatching { container.mutationRecovery.recoverAll() }
+            // Recover the narrow crash window between saving a refresh hint and queueing its worker.
+            if (container.inventoryInvalidations.hasPending()) {
+                runCatching { com.pocketsteward.app.service.LibraryRefreshWorker.afterMutation(this@PocketStewardApplication) }
+            }
             val running = runCatching {
                 container.database.taskRunDao().getRunning()
             }.getOrDefault(emptyList())

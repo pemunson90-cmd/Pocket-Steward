@@ -195,6 +195,91 @@ class FileScannerInterruptionTest {
         assertThat(records.scopesFor(b.raw())).containsExactly(root.raw())
     }
 
+
+    @Test fun observedSliceUpdatesOverlappingScopesWithoutWalkingUnrelatedFolders() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(mapOf(root to listOf(FileEntry(a, "a.txt", false, root), FileEntry(sub, "sub", true, root)),
+            sub to listOf(FileEntry(b, "b.txt", false, sub))))
+        val scanner = FileScanner(gateway, records, checkpoints)
+        scanner.scan(root)
+        scanner.scan(sub)
+        val completed = checkpoints.get(root.raw())!!
+        val previousA = records.getByStableRef(a.raw())!!
+        gateway.replaceChildren(sub, emptyList())
+        val library = com.pocketsteward.app.library.LibraryRepository({ gateway }, { scanner }, records, checkpoints,
+            com.pocketsteward.app.library.ScanLocks(), { null }, { _, _ -> error("A slice must not claim the whole library was walked") })
+        val access = com.pocketsteward.app.data.settings.StorageAccessState(mode = com.pocketsteward.app.storage.StorageAccessMode.DIRECT)
+        assertThat(library.refreshDirectories(access, listOf(sub.raw()))).isTrue()
+        assertThat(gateway.listCount[root]).isEqualTo(1)
+        assertThat(records.getByStableRef(a.raw())).isEqualTo(previousA)
+        assertThat(records.getByStableRef(b.raw())).isNull()
+        assertThat(records.getByStableRef(sub.raw())!!.parentRef).isEqualTo(root.raw())
+        assertThat(records.scopesFor(sub.raw())).containsExactly(root.raw(), sub.raw())
+        assertThat(checkpoints.get(root.raw())).isEqualTo(completed)
+        assertThat(records.getKnownScopeRoots().any { it.startsWith("library-refresh:") }).isFalse()
+    }
+
+    @Test fun incompleteOrUnsupportedLibraryCannotClaimASliceRefresh() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(mapOf(root to emptyList(), sub to emptyList()))
+        val scanner = FileScanner(gateway, records, checkpoints)
+        val library = com.pocketsteward.app.library.LibraryRepository({ gateway }, { scanner }, records, checkpoints,
+            com.pocketsteward.app.library.ScanLocks(), { null }, { _, _ -> })
+        val direct = com.pocketsteward.app.data.settings.StorageAccessState(mode = com.pocketsteward.app.storage.StorageAccessMode.DIRECT)
+        assertThat(library.refreshDirectories(direct, listOf(sub.raw()))).isFalse()
+        assertThat(library.refreshDirectories(direct.copy(mode = com.pocketsteward.app.storage.StorageAccessMode.SAF, safTreeUri = "content://tree"), listOf(sub.raw()))).isFalse()
+        assertThat(gateway.listCount).isEmpty()
+    }
+
+    @Test fun failedSliceRetainsPriorLibraryMembershipAndManualCheckpoint() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val goodGateway = TreeGateway(mapOf(root to listOf(FileEntry(sub, "sub", true, root)), sub to listOf(FileEntry(b, "b.txt", false, sub))))
+        FileScanner(goodGateway, records, checkpoints).scan(root)
+        val manual = ScanCheckpoint(sub.raw(), FileRefCodec.encodeList(listOf(sub)), 3, ScanStatus.PAUSED, 1, 2)
+        checkpoints.upsert(manual)
+        val failing = TreeGateway(mapOf(sub to emptyList()), failOnList = sub)
+        val library = com.pocketsteward.app.library.LibraryRepository({ failing }, { FileScanner(failing, records, checkpoints) }, records, checkpoints,
+            com.pocketsteward.app.library.ScanLocks(), { null }, { _, _ -> })
+        val direct = com.pocketsteward.app.data.settings.StorageAccessState(mode = com.pocketsteward.app.storage.StorageAccessMode.DIRECT)
+        assertThat(runCatching { library.refreshDirectories(direct, listOf(sub.raw())) }.isFailure).isTrue()
+        assertThat(records.scopesFor(b.raw())).containsExactly(root.raw())
+        assertThat(checkpoints.get(sub.raw())).isEqualTo(manual)
+        assertThat(checkpoints.get(FileScanner.refreshScopeKey(sub))!!.status).isEqualTo(ScanStatus.FAILED)
+    }
+
+
+    @Test fun declaredPrivateContainersCannotStopAnOtherwiseReachableFullWalk() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(mapOf(root to listOf(FileEntry(a, "a.txt", false, root), FileEntry(sub, "sub", true, root))), failOnList = sub)
+        FileScanner(gateway, records, checkpoints, excludedDirectory = { it == sub }).scan(root)
+        assertThat(checkpoints.get(root.raw())!!.status).isEqualTo(ScanStatus.COMPLETED)
+        assertThat(records.getByStableRef(a.raw())).isNotNull()
+        assertThat(records.getByStableRef(sub.raw())).isNotNull()
+        assertThat(gateway.listCount[sub]).isNull()
+    }
+    @Test fun explicitScanOfAnExcludedRootFailsInsteadOfClaimingAnEmptyInventory() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(mapOf(sub to emptyList()))
+        assertThat(runCatching { FileScanner(gateway, records, checkpoints, excludedDirectory = { it == sub }).scan(sub) }.isFailure).isTrue()
+        assertThat(checkpoints.get(sub.raw())).isNull()
+        assertThat(gateway.listCount).isEmpty()
+    }
+    @Test fun restoredQueuesDoNotRetryDeclaredPrivateContainers() = runTest {
+        val records = FakeFileRecordDao()
+        val checkpoints = FakeCheckpointDao()
+        val gateway = TreeGateway(mapOf(root to listOf(FileEntry(sub, "sub", true, root))), failOnList = sub)
+        try { FileScanner(gateway, records, checkpoints).scan(root) { throw CancellationException("pause") } }
+        catch (_: CancellationException) { }
+        FileScanner(gateway, records, checkpoints, excludedDirectory = { it == sub }).scan(root)
+        assertThat(checkpoints.get(root.raw())!!.status).isEqualTo(ScanStatus.COMPLETED)
+        assertThat(gateway.listCount[sub]).isNull()
+    }
+
     private fun FileRef.raw(): String = (this as FileRef.Direct).absolutePath
 
     private fun file(
@@ -416,6 +501,10 @@ class FileScannerInterruptionTest {
 
         override suspend fun removeAllScopeTags(scopeRootRef: String) {
             scopes.removeAll { it.scopeRoot == scopeRootRef }
+        }
+
+        override suspend fun removeScopeTagsUnder(scopeRootRef: String, folderRef: String, folderSlash: String) {
+            scopes.removeAll { it.scopeRoot == scopeRootRef && (it.fileRef == folderRef || it.fileRef.startsWith(folderSlash)) }
         }
 
         override suspend fun copyScopeTagsUnder(libraryScope: String, newScope: String, folderRef: String, folderSlash: String) {

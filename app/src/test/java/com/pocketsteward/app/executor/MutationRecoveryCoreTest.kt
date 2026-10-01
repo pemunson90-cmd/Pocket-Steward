@@ -223,6 +223,7 @@ class MutationRecoveryCoreTest {
 
         assertThat(harness.record.status).isEqualTo(MutationStatus.COMMITTED)
         assertThat(harness.record.undoState).isEqualTo(UndoState.AVAILABLE)
+        assertThat(harness.task.status).isEqualTo(TaskRunStatus.UNDO_PARTIAL)
     }
 
     @Test

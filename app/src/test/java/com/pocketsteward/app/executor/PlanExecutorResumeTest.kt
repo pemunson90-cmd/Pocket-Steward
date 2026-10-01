@@ -27,6 +27,9 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -296,6 +299,95 @@ class PlanExecutorResumeTest {
         assertThat(taskDao.current.id).isEqualTo(1L)
     }
 
+    @Test
+    fun singleRestoreMarksTaskBusyBeforeInvalidationAndReleasesItAfterRestore() = runTest {
+        val taskDao = idleTaskDao()
+        val operation = PlannedOperation.Move(sourceA, destinationA, "move")
+        taskDao.current = taskDao.current.copy(planJson = DurablePlanCodec.encode("move", listOf(operation)))
+        val record = MutationRecord(
+            id = 11, taskRunId = taskDao.current.id, sequence = 0,
+            operationType = MutationOperationType.MOVE,
+            sourceBefore = FileRefJournalCodec.encode(sourceA), destinationAfter = FileRefJournalCodec.encode(destinationA),
+            sourceFingerprint = null, status = MutationStatus.COMMITTED, executedAt = 1,
+            undoState = UndoState.AVAILABLE, undoAttemptedAt = null, error = null, undoError = null,
+        )
+        val mutations = FakeMutationDao(mutableListOf(record))
+        val gateway = FakeGateway(mutableSetOf(destinationA, FileRef.Direct("/Download")))
+        var queued = false
+        val undo = UndoExecutor(FakeFileRecordDao(), taskDao, mutations, { gateway },
+            onUndoActivated = { mode, operations ->
+                assertThat(taskDao.busyCount()).isEqualTo(1)
+                assertThat(gateway.exists(destinationA)).isTrue()
+                assertThat(mode).isEqualTo(StorageAccessMode.DIRECT)
+                assertThat(operations).containsExactly(operation)
+                queued = true
+            })
+        assertThat(undo.undoSingleMutation(record.id)).isInstanceOf(MutationResult.Success::class.java)
+        assertThat(queued).isTrue()
+        assertThat(gateway.moveCalls).containsExactly(destinationA to sourceA)
+        assertThat(mutations.records.single().undoState).isEqualTo(UndoState.UNDONE)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.UNDONE)
+        assertThat(taskDao.busyCount()).isEqualTo(0)
+    }
+
+    @Test
+    fun occupiedOriginalDuringSingleRestoreKeepsJournalRetryableAndReleasesBusyState() = runTest {
+        val taskDao = idleTaskDao()
+        val mutations = FakeMutationDao(mutableListOf(MutationRecord(
+            id = 11, taskRunId = taskDao.current.id, sequence = 0,
+            operationType = MutationOperationType.MOVE,
+            sourceBefore = FileRefJournalCodec.encode(sourceA), destinationAfter = FileRefJournalCodec.encode(destinationA),
+            sourceFingerprint = null, status = MutationStatus.COMMITTED, executedAt = 1,
+            undoState = UndoState.AVAILABLE, undoAttemptedAt = null, error = null, undoError = null,
+        )))
+        val gateway = FakeGateway(mutableSetOf(sourceA, destinationA))
+        val undo = UndoExecutor(FakeFileRecordDao(), taskDao, mutations, { gateway })
+        assertThat(undo.undoSingleMutation(11)).isInstanceOf(MutationResult.Failure::class.java)
+        assertThat(gateway.moveCalls).isEmpty()
+        assertThat(mutations.records.single().undoState).isEqualTo(UndoState.BLOCKED)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.UNDO_PARTIAL)
+        assertThat(taskDao.busyCount()).isEqualTo(0)
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun secondRunnerAndRecoveryCannotReplayOrReclassifyAnActiveMove() = runTest {
+        val taskDao = idleTaskDao()
+        val operation = PlannedOperation.Move(sourceA, destinationA, "move")
+        taskDao.current = taskDao.current.copy(status = TaskRunStatus.RUNNING,
+            planJson = DurablePlanCodec.encode("move", listOf(operation)))
+        val mutations = FakeMutationDao(mutableListOf())
+        val files = FakeFileRecordDao().apply { seed(fileRecord(sourceA), "/Download") }
+        val finishMove = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val gateway = FakeGateway(mutableSetOf(sourceA, FileRef.Direct("/Documents")),
+            beforeMove = { finishMove.await() })
+        val gate = MutationRunnerGate()
+        val first = async {
+            PlanExecutor(gateway, files, taskDao, mutations, runnerGate = gate).resume(taskDao.current.id)
+        }
+        runCurrent()
+        assertThat(mutations.records.single().status).isEqualTo(MutationStatus.PENDING)
+        val recovery = launch { MutationRecovery(mutations, taskDao, gate) { gateway }.recoverAll() }
+        val second = async {
+            runCatching { PlanExecutor(gateway, files, taskDao, mutations, runnerGate = gate).resume(taskDao.current.id) }
+        }
+        val retiredPause = async {
+            MutationRecovery(mutations, taskDao, gate) { gateway }
+                .pauseInterruptedTask(taskDao.current.id, 2, "retired runner")
+        }
+        runCurrent()
+        assertThat(recovery.isCompleted).isFalse()
+        assertThat(second.isCompleted).isFalse()
+        assertThat(retiredPause.isCompleted).isFalse()
+        assertThat(mutations.records.single().status).isEqualTo(MutationStatus.PENDING)
+        finishMove.complete(Unit)
+        first.await(); recovery.join()
+        assertThat(retiredPause.await()).isEqualTo(0)
+        assertThat(second.await().exceptionOrNull()?.message).contains("not resumable")
+        assertThat(gateway.moveCalls).containsExactly(sourceA to destinationA)
+        assertThat(mutations.records.single().status).isEqualTo(MutationStatus.COMMITTED)
+        assertThat(taskDao.current.status).isEqualTo(TaskRunStatus.COMPLETED)
+    }
+
     private fun fileRecord(ref: FileRef.Direct) = FileRecord(
         stableRef = ref.absolutePath,
         displayName = ref.absolutePath.substringAfterLast('/'),
@@ -314,6 +406,7 @@ class PlanExecutorResumeTest {
     private class FakeGateway(
         private val existing: MutableSet<FileRef>,
         private val failMoveAfterCreatingDestination: Boolean = false,
+        private val beforeMove: suspend () -> Unit = {},
     ) : StorageGateway {
         val moveCalls = mutableListOf<Pair<FileRef, FileRef>>()
         val sizes = mutableMapOf<FileRef, Long>()
@@ -355,6 +448,7 @@ class PlanExecutorResumeTest {
             error("not used")
 
         override suspend fun move(source: FileRef, destination: FileRef): MutationResult {
+            beforeMove()
             moveCalls += source to destination
             if (source !in existing) return MutationResult.Failure("source missing")
             if (destination in existing) return MutationResult.Failure("destination exists")
@@ -582,6 +676,10 @@ class PlanExecutorResumeTest {
 
         override suspend fun removeAllScopeTags(scopeRootRef: String) {
             scopes.removeAll { it.scopeRoot == scopeRootRef }
+        }
+
+        override suspend fun removeScopeTagsUnder(scopeRootRef: String, folderRef: String, folderSlash: String) {
+            scopes.removeAll { it.scopeRoot == scopeRootRef && (it.fileRef == folderRef || it.fileRef.startsWith(folderSlash)) }
         }
 
         override suspend fun copyScopeTagsUnder(libraryScope: String, newScope: String, folderRef: String, folderSlash: String) {

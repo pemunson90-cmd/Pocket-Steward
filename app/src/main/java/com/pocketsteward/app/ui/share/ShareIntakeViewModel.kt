@@ -83,7 +83,7 @@ class ShareIntakeViewModel(application: Application) : AndroidViewModel(applicat
         try {
             container.startForegroundTask(id)
         } catch (failure: Exception) {
-            container.database.taskRunDao().markRunningPaused(id, System.currentTimeMillis(), "Import queued safely; foreground task did not start. Resume from Tasks.")
+            container.mutationRecovery.pauseInterruptedTask(id, System.currentTimeMillis(), "Import queued safely; foreground task did not start. Resume from Tasks.")
             throw failure
         }
     }

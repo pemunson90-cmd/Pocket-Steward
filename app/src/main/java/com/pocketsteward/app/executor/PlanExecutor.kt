@@ -93,6 +93,9 @@ class PlanExecutor(
     private val fileRecordDao: FileRecordDao,
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
+    private val onPlanActivated: suspend (List<PlannedOperation>) -> Unit = {},
+    private val runnerGate: MutationRunnerGate = MutationRunnerGate(),
+    private val beforeRun: suspend () -> Unit = {},
 ) {
     /**
      * Revalidates the user's selected operations and durably records the
@@ -159,6 +162,14 @@ class PlanExecutor(
         // against in that case. Left null, this behaves exactly as before.
         index: FileIndex? = null,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+    ): ExecutionSummary = runnerGate.run {
+        beforeRun()
+        executeLocked(plan, scopeRootRef, storageAccessMode, index, onProgress)
+    }
+
+    private suspend fun executeLocked(
+        plan: AgentPlan, scopeRootRef: String, storageAccessMode: StorageAccessMode,
+        index: FileIndex?, onProgress: (Int, Int) -> Unit,
     ): ExecutionSummary {
         val effectiveIndex = index ?: InMemoryFileIndex(fileRecordDao.getAllUnderScopeRoot(scopeRootRef))
         val validated = PlanValidator.validate(plan.operations, effectiveIndex)
@@ -179,6 +190,8 @@ class PlanExecutor(
                 undoCompletedAt = null,
             ),
         )
+
+        prepareInventoryRefresh(validated.accepted)
 
         var foldersCreated = 0
         var filesMoved = 0
@@ -405,6 +418,13 @@ class PlanExecutor(
         taskRunId: Long,
         shouldPause: () -> Boolean = { false },
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+    ): ExecutionSummary = runnerGate.run {
+        beforeRun()
+        resumeLocked(taskRunId, shouldPause, onProgress)
+    }
+
+    private suspend fun resumeLocked(
+        taskRunId: Long, shouldPause: () -> Boolean, onProgress: (Int, Int) -> Unit,
     ): ExecutionSummary {
         var task = taskRunDao.getById(taskRunId) ?: error("Unknown task run: $taskRunId")
         require(task.status == TaskRunStatus.RUNNING || task.status == TaskRunStatus.CANCELLED) {
@@ -434,6 +454,7 @@ class PlanExecutor(
             completedAt = null,
         )
         taskRunDao.activateWhenIdle(task)
+        prepareInventoryRefresh(operations)
 
         var foldersCreated = 0
         var filesMoved = 0
@@ -713,6 +734,12 @@ class PlanExecutor(
      * the index in step with the live file and so cannot detect an edit made
      * after review.
      */
+    private suspend fun prepareInventoryRefresh(operations: List<PlannedOperation>) {
+        try { onPlanActivated(operations) }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* A derived-index scheduling failure cannot change the approved mutation plan. */ }
+    }
+
     private suspend fun captureApprovalPreconditions(
         operations: List<PlannedOperation>,
         reviewedSources: Map<String, SourcePrecondition>,

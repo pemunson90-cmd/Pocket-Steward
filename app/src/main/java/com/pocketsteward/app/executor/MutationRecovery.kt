@@ -19,9 +19,21 @@ import com.pocketsteward.app.storage.StorageGateway
 class MutationRecovery(
     private val mutationRecordDao: MutationRecordDao,
     private val taskRunDao: TaskRunDao,
+    private val runnerGate: MutationRunnerGate = MutationRunnerGate(),
     private val gatewayFor: (StorageAccessMode) -> StorageGateway,
 ) {
-    suspend fun recoverAll() {
+    suspend fun recoverAll() = runnerGate.run { recoverForRunner() }
+
+    /** A retired worker must not pause a different runner currently using the same task. */
+    suspend fun pauseInterruptedTask(id: Long, completedAt: Long, summary: String): Int = runnerGate.run {
+        try { recoverForRunner() }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { /* Retain PENDING rows for recovery after access is restored. */ }
+        taskRunDao.markRunningPaused(id, completedAt, summary)
+    }
+
+    /** Caller already holds the shared runner gate. */
+    internal suspend fun recoverForRunner() {
         recoverForwardMutations()
         recoverUndoMutations()
         refreshTaskStatuses()
@@ -296,6 +308,9 @@ class MutationRecovery(
                 task.status == TaskRunStatus.UNDOING &&
                     records.filter { it.undoState != UndoState.NOT_AVAILABLE }.all { it.undoState == UndoState.UNDONE } ->
                     TaskRunStatus.UNDONE
+
+                // A recovered partial undo must release the busy state and allow a reviewed retry.
+                task.status == TaskRunStatus.UNDOING -> TaskRunStatus.UNDO_PARTIAL
 
                 // New durable tasks know how many approved operations were
                 // still waiting when the process died. Missing journal rows

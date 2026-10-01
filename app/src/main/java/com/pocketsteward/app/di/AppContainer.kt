@@ -34,6 +34,7 @@ import com.pocketsteward.app.storage.DirectStorageGateway
 import com.pocketsteward.app.storage.SafStorageGateway
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
+import com.pocketsteward.app.storage.child
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
@@ -81,6 +82,27 @@ class AppContainer(context: Context) {
         com.pocketsteward.app.projects.ProjectKnowledge(database.fileRecordDao(), directStorageGateway)
     }
 
+    val inventoryInvalidations by lazy { com.pocketsteward.app.library.DirectoryInvalidationStore(java.io.File(appContext.noBackupFilesDir, "inventory-invalidations.json")) }
+
+    private suspend fun queueMutationInventory(operations: List<com.pocketsteward.app.plan.PlannedOperation>, undo: Boolean = false) {
+        val trashSources = operations.mapNotNull { operation -> when (operation) {
+            is com.pocketsteward.app.plan.PlannedOperation.Trash -> operation.source.takeUnless { undo }
+            is com.pocketsteward.app.plan.PlannedOperation.Copy -> operation.destination.takeIf { undo }
+            is com.pocketsteward.app.plan.PlannedOperation.WriteTextFile -> if (undo) operation.parent.child(operation.name) else null
+            else -> null
+        } }.distinct()
+        val trashDestinations = mutableListOf<com.pocketsteward.app.storage.FileRef>()
+        var full = operations.isEmpty()
+        for (source in trashSources) {
+            try { trashDestinations += directStorageGateway.trashDestination(source) }
+            catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+            catch (_: Exception) { full = true }
+        }
+        val paths = com.pocketsteward.app.library.MutationInventoryPolicy.directories(operations, trashDestinations)
+        val saved = if (full || paths.isEmpty()) inventoryInvalidations.markFull() else inventoryInvalidations.mark(paths)
+        com.pocketsteward.app.service.LibraryRefreshWorker.afterMutation(appContext, fullFallback = !saved)
+    }
+
     val directStorageGateway: StorageGateway by lazy { DirectStorageGateway(appContext) }
     val safStorageGateway: StorageGateway by lazy { SafStorageGateway(appContext) }
 
@@ -91,7 +113,10 @@ class AppContainer(context: Context) {
     }
 
     fun fileScanner(mode: StorageAccessMode): FileScanner =
-        FileScanner(gatewayFor(mode), database.fileRecordDao(), database.scanCheckpointDao())
+        FileScanner(gatewayFor(mode), database.fileRecordDao(), database.scanCheckpointDao()) { ref ->
+            mode == StorageAccessMode.DIRECT && com.pocketsteward.app.scan.ScanReadPolicy.excludedPrivateDirectory(
+                android.os.Environment.getExternalStorageDirectory().absolutePath, ref)
+        }
 
     fun contentInspector(mode: StorageAccessMode): ContentInspector =
         ContentInspector(
@@ -133,8 +158,13 @@ class AppContainer(context: Context) {
         return ContentSearchDatabase.delete(appContext)
     }
 
+    private val mutationRunnerGate = com.pocketsteward.app.executor.MutationRunnerGate()
+
     fun planExecutor(mode: StorageAccessMode): PlanExecutor =
-        PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao())
+        PlanExecutor(gatewayFor(mode), database.fileRecordDao(), database.taskRunDao(), database.mutationRecordDao(),
+            onPlanActivated = { operations -> if (mode == StorageAccessMode.DIRECT) queueMutationInventory(operations) },
+            runnerGate = mutationRunnerGate,
+            beforeRun = { mutationRecovery.recoverForRunner() })
 
     val undoExecutor: UndoExecutor by lazy {
         UndoExecutor(
@@ -142,6 +172,9 @@ class AppContainer(context: Context) {
             database.taskRunDao(),
             database.mutationRecordDao(),
             ::gatewayFor,
+            onUndoActivated = { mode, operations -> if (mode == StorageAccessMode.DIRECT) queueMutationInventory(operations, undo = true) },
+            runnerGate = mutationRunnerGate,
+            beforeRun = { mutationRecovery.recoverForRunner() },
         )
     }
 
@@ -181,7 +214,7 @@ class AppContainer(context: Context) {
     }
 
     val mutationRecovery: MutationRecovery by lazy {
-        MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), ::gatewayFor)
+        MutationRecovery(database.mutationRecordDao(), database.taskRunDao(), mutationRunnerGate, ::gatewayFor)
     }
 
     fun startForegroundTask(taskRunId: Long) {
@@ -208,6 +241,8 @@ class AppContainer(context: Context) {
             request,
         )
     }
+
+    suspend fun <T> withLibraryRefresh(block: suspend () -> T): T = mutationRunnerGate.run(block)
 
     fun pauseForegroundTask() {
         // Record explicit user intent durably. A system kill leaves RUNNING so

@@ -47,16 +47,22 @@ class FileScanner(
     private val gateway: StorageGateway,
     private val fileRecordDao: FileRecordDao,
     private val scanCheckpointDao: ScanCheckpointDao,
+    private val excludedDirectory: (FileRef) -> Boolean = { false },
 ) {
-    suspend fun scan(root: FileRef, onProgress: (ScanProgress) -> Unit = {}) {
-        val scopeKey = root.rawValue()
+    suspend fun scan(root: FileRef, onProgress: (ScanProgress) -> Unit = {}) = scanIntoScope(root, root.rawValue(), onProgress)
+
+    suspend fun scanRefreshSlice(root: FileRef, onProgress: (ScanProgress) -> Unit = {}) = scanIntoScope(root, refreshScopeKey(root), onProgress)
+
+    private suspend fun scanIntoScope(root: FileRef, scopeKey: String, onProgress: (ScanProgress) -> Unit) {
+        require(!excludedDirectory(root)) { "This folder is excluded from the reachable shared-storage inventory. Choose an accessible folder." }
         val existing = scanCheckpointDao.get(scopeKey)
 
         // Bound once as a local so the smart cast holds through both branches
         // below — the previous shape needed `!!` twice to convince the
         // compiler of something already guaranteed by this check.
         val resumable = existing?.takeIf { it.status.isResumable() }
-        val previousRootGeneration = fileRecordDao.getByStableRef(scopeKey)?.lastScannedAt ?: 0L
+        val existingRoot = fileRecordDao.getByStableRef(root.rawValue())
+        val previousRootGeneration = existingRoot?.lastScannedAt ?: 0L
         val startedAt = resumable?.startedAt ?: maxOf(
             System.currentTimeMillis(),
             (existing?.updatedAt ?: 0L) + 1L,
@@ -85,7 +91,7 @@ class FileScanner(
             // as its own record (parentRef null — it has no parent within
             // this scope) closes that for every future check against it,
             // not just this one plan.
-            val rootRecord = gateway.stat(root).toFileRecord(parent = null, scanGeneration = startedAt)
+            val rootRecord = gateway.stat(root).toFileRecord(parent = null, scanGeneration = startedAt).copy(parentRef = existingRoot?.parentRef)
             fileRecordDao.upsertFromScan(rootRecord)
             fileRecordDao.insertScopeTag(FileScope(rootRecord.stableRef, scopeKey))
             queue.add(root)
@@ -103,6 +109,12 @@ class FileScanner(
                 // checkpoint still contains this directory and resume safely
                 // replays this one idempotent unit of work.
                 val directory = queue.first()
+                if (excludedDirectory(directory)) {
+                    // Old checkpoints may still contain a now-declared private Android subtree.
+                    queue.removeFirst()
+                    persistCheckpoint(scopeKey, queue, processedCount, ScanStatus.RUNNING, startedAt)
+                    continue
+                }
                 val children = gateway.listChildren(directory)
                 val discoveredDirectories = mutableListOf<FileRef>()
 
@@ -111,7 +123,7 @@ class FileScanner(
                     val batch = chunk.map { entry ->
                         currentCoroutineContext().ensureActive()
                         val meta = gateway.stat(entry.ref)
-                        if (meta.isDirectory) discoveredDirectories += entry.ref
+                        if (meta.isDirectory && !excludedDirectory(entry.ref)) discoveredDirectories += entry.ref
                         meta.toFileRecord(parent = directory, scanGeneration = startedAt)
                     }
                     fileRecordDao.upsertAllFromScan(batch)
@@ -167,6 +179,10 @@ class FileScanner(
             onProgress(ScanProgress(processedCount, null, ScanPhase.FAILED))
             throw t
         }
+    }
+
+    companion object {
+        fun refreshScopeKey(root: FileRef): String = "library-refresh:${root.rawValue()}"
     }
 
     private suspend fun persistCheckpoint(

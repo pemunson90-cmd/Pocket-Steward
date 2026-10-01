@@ -543,10 +543,11 @@ fun SettingsScreen(
                     Text("Last change noticed: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(at))}",
                         style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Refreshes names, sizes and dates. Content inspection follows your privacy and charging settings. Moves need your review.",
+                Text("Inbox changes refresh the affected folders. Scheduled and manual refresh reconcile the full library. Content inspection follows your privacy and charging settings. Moves need your review.",
                     style = MaterialTheme.typography.bodySmall)
             }
         }
+        Text("Full-file inventory excludes private Android app folders (Android/data and Android/obb).", style = MaterialTheme.typography.bodySmall)
         val libraryStatus by viewModel.libraryStatus.collectAsState()
         val librarySettings by viewModel.librarySettings.collectAsState()
         val libraryRefreshing by viewModel.libraryRefreshing.collectAsState()

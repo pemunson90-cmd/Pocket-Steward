@@ -10,6 +10,7 @@ Use JDK 21, Android SDK with platform 36 and Build Tools 36.1.0, and the checked
 ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 python3 tools/verify_content_scope_sql.py
 python3 tools/verify_project_knowledge_sql.py
+python3 tools/verify_library_refresh_sql.py
 ```
 
 Instrumentation compilation does not execute tests on a phone/emulator. Keep device acceptance separate from the build receipt.
