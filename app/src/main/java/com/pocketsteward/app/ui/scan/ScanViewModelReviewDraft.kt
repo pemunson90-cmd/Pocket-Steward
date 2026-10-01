@@ -14,10 +14,10 @@ internal fun ScanViewModel.initializeReviewDraftPersistence() {
         val generation = draftGeneration
         try {
             val draft = withContext(Dispatchers.IO) { reviewDraftStore.load() }
-            val mode = settingsRepository.storageAccessState.first().mode
-            if (draft != null && mode == draft.mode && generation == draftGeneration && _preview.value == null) {
+            val access = settingsRepository.storageAccessState.first()
+            if (draft != null && ReviewDraftPolicy.hasCurrentAccess(draft.preview, access.mode, access.safTreeUri) && generation == draftGeneration && _preview.value == null) {
                 // A death between enqueue and deleting the draft leads to Tasks, not another approval.
-                val tasks = container.database.taskRunDao().observeAll().first().filter { it.id > draft.preview.taskHistoryWatermark }.mapNotNull { task ->
+                val tasks = container.database.taskRunDao().plansAfter(draft.preview.taskHistoryWatermark).mapNotNull { task ->
                     DurablePlanCodec.decodeOrNull(task.planJson)?.let { task.id to it.operations }
                 }
                 val consumed = ReviewDraftPolicy.wasQueued(draft.preview, tasks)

@@ -154,6 +154,9 @@ internal class ReviewDraftStore(private val file: File) {
 }
 
 internal object ReviewDraftPolicy {
+    fun hasCurrentAccess(preview: ScanUiState.PlanPreview, mode: StorageAccessMode?, grant: String?): Boolean =
+        preview.storageMode == mode && mode != null && (mode != StorageAccessMode.SAF || (grant != null && preview.storageGrantIdentity == grant))
+
     fun wasQueued(preview: ScanUiState.PlanPreview, tasks: List<Pair<Long, List<PlannedOperation>>>): Boolean {
         val selected = com.pocketsteward.app.plan.PlanSelection.selectedOperations(preview.accepted, preview.selectedIndices)
         return selected.isNotEmpty() && tasks.any { (id, operations) -> id > preview.taskHistoryWatermark && operations == selected }

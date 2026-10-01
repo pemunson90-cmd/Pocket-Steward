@@ -63,7 +63,8 @@ def main():
     with zipfile.ZipFile(destination / f'{prefix}.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.write(apk, f'{prefix}-arm64.apk')
         archive.write(receipt, receipt.name)
-        for guide in ('DEV7_USER_GUIDE.md', 'APP_COMPLETION_PROGRESS.md'):
+        guide_name = f'DEV{version[2].rsplit("dev", 1)[1]}_USER_GUIDE.md' if re.search(r'dev\d+$', version[2]) else 'USER_GUIDE.md'
+        for guide in (guide_name, 'APP_COMPLETION_PROGRESS.md'):
             archive.write(ROOT / guide, guide)
     print(destination / f'{prefix}.zip')
 

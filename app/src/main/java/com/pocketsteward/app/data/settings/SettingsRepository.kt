@@ -88,6 +88,29 @@ class SettingsRepository(private val context: Context) {
         const val MAX_SAVED_SEARCHES = 20
     }
 
+    /** One DataStore snapshot; no access grants, scan checkpoints, keys or pending tasks. */
+    suspend fun exportPortableSettings(): Map<String, String> = context.dataStore.data.first().asMap()
+        .filterKeys { it.name in com.pocketsteward.app.backup.PortableSettingsPolicy.allowedKeys }
+        .mapKeys { it.key.name }.mapValues { it.value.toString() }
+
+    /** Validates the whole snapshot before one atomic preference transaction. */
+    suspend fun restorePortableSettings(values: Map<String, String>) {
+        val normalized = com.pocketsteward.app.backup.PortableSettingsPolicy.normalize(values)
+        context.dataStore.edit { prefs ->
+            for (name in com.pocketsteward.app.backup.PortableSettingsPolicy.booleanKeys) {
+                val key = booleanPreferencesKey(name)
+                normalized[name]?.let { prefs[key] = it.toBooleanStrict() } ?: prefs.remove(key)
+            }
+            for (name in com.pocketsteward.app.backup.PortableSettingsPolicy.stringKeys) {
+                val key = stringPreferencesKey(name)
+                normalized[name]?.let { prefs[key] = it } ?: prefs.remove(key)
+            }
+            prefs[Keys.LIBRARY_BACKGROUND] = false
+            prefs[Keys.SCHEDULED_CLEANUP] = ScheduledCleanupCodec.encode(ScheduledCleanupCodec.decode(normalized["scheduled_cleanup"]).copy(enabled = false))
+            prefs.remove(Keys.PENDING_CLEANUP_SUGGESTION)
+        }
+    }
+
     private object Keys {
         val STORAGE_MODE = stringPreferencesKey("storage_access_mode")
         val SAF_TREE_URI = stringPreferencesKey("saf_tree_uri")

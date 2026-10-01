@@ -26,6 +26,8 @@ object DurablePlanCodec {
     private const val HEADER_V1 = "@psplan\t1"
     private const val HEADER_V2 = "@psplan\t2"
     private const val HEADER_V3 = "@psplan\t3"
+    private const val HEADER_V4 = "@psplan\t4"
+    private const val GOAL_PREFIX = "@psgoal\t"
     private const val OP_PREFIX = "@psop\t"
     private const val PRECONDITION_PREFIX = "@pspre\t"
     private const val BINARY_VERSION = 1
@@ -36,16 +38,17 @@ object DurablePlanCodec {
         operations: List<PlannedOperation>,
         sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
     ): String = buildString {
-        appendLine(goal)
-        appendLine(HEADER_V3)
+        appendLine(humanLine(goal))
+        appendLine(HEADER_V4)
+        appendLine(GOAL_PREFIX + encodeToken(goal))
         operations.forEachIndexed { sequence, operation ->
-            appendLine("$sequence\t${operation.typeLabel()}\t${operation.reason}")
+            appendLine("$sequence\t${operation.typeLabel()}\t${humanLine(operation.reason)}")
             appendLine("$OP_PREFIX$sequence\t${encodeOperation(operation)}")
             sourcePreconditions[sequence]?.let { precondition ->
                 appendLine(
                     "$PRECONDITION_PREFIX$sequence\t${precondition.sizeBytes}\t" +
                         (precondition.modifiedAtEpochMs?.toString() ?: "null") + "\t" +
-                        (precondition.directoryDigest ?: "null") + "\t" + precondition.directoryEntryCount,
+                        (precondition.directoryDigest?.let(::encodeToken) ?: "null") + "\t" + precondition.directoryEntryCount,
                 )
             }
         }
@@ -53,19 +56,23 @@ object DurablePlanCodec {
 
     fun decodeOrNull(text: String): DurablePlan? = runCatching {
         val lines = text.lineSequence().toList()
+        require(lines.count { it in setOf(HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4) } == 1) { "Ambiguous durable plan headers." }
         val version = when {
+            HEADER_V4 in lines -> 4
             HEADER_V3 in lines -> 3
             HEADER_V2 in lines -> 2
             HEADER_V1 in lines -> 1
             else -> return null
         }
 
+        val headerIndex = lines.indexOf("@psplan\t$version")
+        require(lines.take(headerIndex).none { it.startsWith(OP_PREFIX) || it.startsWith(PRECONDITION_PREFIX) || it.startsWith(GOAL_PREFIX) }) { "Machine record precedes plan header." }
         val indexed = lines.mapNotNull { line ->
             if (!line.startsWith(OP_PREFIX)) return@mapNotNull null
             val fields = line.split('\t', limit = 3)
             require(fields.size == 3) { "Malformed durable operation line." }
             fields[1].toInt() to decodeOperation(fields[2])
-        }.sortedBy { it.first }
+        }
 
         require(indexed.isNotEmpty()) { "Durable plan has no operations." }
         require(indexed.map { it.first } == indexed.indices.toList()) {
@@ -73,7 +80,7 @@ object DurablePlanCodec {
         }
 
         val preconditions = if (version >= 2) {
-            lines.mapNotNull { line ->
+            val entries = lines.mapNotNull { line ->
                 if (!line.startsWith(PRECONDITION_PREFIX)) return@mapNotNull null
                 val fields = line.split('\t')
                 require(fields.size == if (version >= 3) 6 else 4) { "Malformed source-precondition line." }
@@ -82,10 +89,12 @@ object DurablePlanCodec {
                 val modified = fields[3].takeUnless { it == "null" }?.toLong()
                 sequence to SourcePrecondition(
                     sizeBytes, modified,
-                    if (version >= 3) fields[4].takeUnless { it == "null" } else null,
+                    if (version >= 3) fields[4].takeUnless { it == "null" }?.let { if (version >= 4) decodeToken(it) else it } else null,
                     if (version >= 3) fields[5].toInt() else 0,
                 )
-            }.toMap()
+            }
+            require(entries.map { it.first }.distinct().size == entries.size) { "Duplicate source preconditions." }
+            entries.toMap()
         } else {
             emptyMap()
         }
@@ -93,15 +102,35 @@ object DurablePlanCodec {
             "Source precondition references an operation outside the durable plan."
         }
 
+        val goal = if (version >= 4) {
+            val goals = lines.filter { it.startsWith(GOAL_PREFIX) }
+            require(goals.size == 1) { "Missing or duplicate durable goal." }
+            decodeToken(goals.single().removePrefix(GOAL_PREFIX))
+        } else lines.firstOrNull().orEmpty()
         DurablePlan(
-            goal = lines.firstOrNull().orEmpty(),
+            goal = goal,
             operations = indexed.map { it.second },
             sourcePreconditions = preconditions,
         )
     }.getOrNull()
 
     fun isDurable(text: String): Boolean =
-        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 || it == HEADER_V3 }
+        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 || it == HEADER_V3 || it == HEADER_V4 }
+
+    private fun humanLine(value: String): String = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+
+    private fun encodeToken(value: String): String {
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        require(bytes.size <= MAX_STRING_BYTES)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun decodeToken(value: String): String {
+        require(value.length <= MAX_STRING_BYTES * 2)
+        val bytes = Base64.getUrlDecoder().decode(value)
+        require(bytes.size <= MAX_STRING_BYTES)
+        return String(bytes, StandardCharsets.UTF_8)
+    }
 
     private fun encodeOperation(operation: PlannedOperation): String {
         val bytes = ByteArrayOutputStream()

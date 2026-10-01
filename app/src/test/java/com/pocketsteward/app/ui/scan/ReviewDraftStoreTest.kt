@@ -95,5 +95,11 @@ class ReviewDraftStoreTest {
         assertThat(ReviewDraftPolicy.wasQueued(preview, listOf(18L to emptyList()))).isFalse()
         assertThat(ReviewDraftPolicy.wasQueued(preview.copy(selectedIndices = emptySet()), listOf(18L to preview.accepted))).isFalse()
     }
+    @Test fun changedTreeGrantCannotRestoreOrApproveAnOldReview() {
+        val preview = draft().preview.copy(storageGrantIdentity = "content://provider/tree/A")
+        assertThat(ReviewDraftPolicy.hasCurrentAccess(preview, StorageAccessMode.SAF, "content://provider/tree/A")).isTrue()
+        assertThat(ReviewDraftPolicy.hasCurrentAccess(preview, StorageAccessMode.SAF, "content://provider/tree/B")).isFalse()
+        assertThat(ReviewDraftPolicy.hasCurrentAccess(preview, StorageAccessMode.DIRECT, null)).isFalse()
+    }
 
 }

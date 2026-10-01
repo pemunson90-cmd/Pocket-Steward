@@ -173,6 +173,7 @@ fun SettingsScreen(
             .padding(horizontal = 20.dp, vertical = 24.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
+        BackupSettingsCard()
 
         SectionTitle("Storage")
         Card(modifier = Modifier.fillMaxWidth()) {

@@ -163,7 +163,11 @@ object TaskManifest {
      * left-untouched header, or a rejected operation, none of which have a
      * journal row to attach to.
      */
-    fun reasonsBySequence(planJson: String): Map<Int, String> = planJson.lineSequence()
+    fun reasonsBySequence(planJson: String): Map<Int, String> {
+        com.pocketsteward.app.plan.DurablePlanCodec.decodeOrNull(planJson)?.let { plan ->
+            return plan.operations.mapIndexed { index, operation -> index to operation.reason }.toMap()
+        }
+        return planJson.lineSequence()
         .mapNotNull { line ->
             val fields = line.split('\t')
             if (fields.size < 3) return@mapNotNull null
@@ -171,6 +175,8 @@ object TaskManifest {
             sequence to fields.drop(2).joinToString("\t")
         }
         .toMap()
+
+    }
 
     /** A filename that will not collide with an earlier export in the same folder. */
     fun fileName(taskRunId: Long, exportedAtEpochMs: Long): String =

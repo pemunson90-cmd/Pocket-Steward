@@ -34,6 +34,15 @@ interface TaskRunDao {
     @Query("SELECT * FROM task_runs WHERE id = :id")
     suspend fun getById(id: Long): TaskRun?
 
+    @Query("SELECT COALESCE(MAX(id), 0) FROM task_runs")
+    suspend fun latestTaskId(): Long
+
+    @Query("SELECT id, planJson FROM task_runs WHERE id > :afterId ORDER BY id ASC")
+    suspend fun plansAfter(afterId: Long): List<QueuedPlanIdentity>
+
+    @Query("SELECT substr(requestText, 1, 20000) AS request, status, startedAt, completedAt, substr(summary, 1, 20000) AS summary FROM task_runs ORDER BY startedAt DESC LIMIT 1000")
+    suspend fun portableSummaries(): List<com.pocketsteward.app.backup.ArchivedTaskSummary>
+
     @Query("SELECT * FROM task_runs ORDER BY startedAt DESC")
     fun observeAll(): Flow<List<TaskRun>>
 
@@ -54,3 +63,5 @@ interface TaskRunDao {
     @Query("SELECT * FROM task_runs WHERE status IN ('RUNNING', 'NEEDS_REVIEW', 'UNDOING', 'UNDO_PARTIAL') ORDER BY startedAt ASC")
     suspend fun getRunsNeedingRecovery(): List<TaskRun>
 }
+
+data class QueuedPlanIdentity(val id: Long, val planJson: String)

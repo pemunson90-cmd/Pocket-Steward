@@ -223,6 +223,7 @@ sealed interface ScanUiState {
         /** Optional richer explanation for Inbox Filing plans. */
         val filingPresentation: FilingReviewPresentation? = null,
         val storageMode: StorageAccessMode? = null,
+        val storageGrantIdentity: String? = null,
         val taskHistoryWatermark: Long = 0,
     ) : ScanUiState {
         init {
@@ -1253,7 +1254,8 @@ class ScanViewModel(
             goal = goal,
             accepted = validated.accepted,
             storageMode = mode,
-            taskHistoryWatermark = container.database.taskRunDao().observeAll().first().maxOfOrNull { it.id } ?: 0,
+            storageGrantIdentity = settingsRepository.storageAccessState.first().safTreeUri.takeIf { mode == StorageAccessMode.SAF },
+            taskHistoryWatermark = container.database.taskRunDao().latestTaskId(),
             rejected = validated.rejected,
             scopes = scopes,
             acceptedScopeLabels = validated.accepted.map { operation ->
@@ -1359,7 +1361,8 @@ class ScanViewModel(
             goal = goal,
             accepted = validated.accepted,
             storageMode = mode,
-            taskHistoryWatermark = container.database.taskRunDao().observeAll().first().maxOfOrNull { it.id } ?: 0,
+            storageGrantIdentity = settingsRepository.storageAccessState.first().safTreeUri.takeIf { mode == StorageAccessMode.SAF },
+            taskHistoryWatermark = container.database.taskRunDao().latestTaskId(),
             rejected = validated.rejected,
             scopes = listOf(scope),
             acceptedScopeLabels = List(validated.accepted.size) { scope.label },
@@ -1394,7 +1397,7 @@ class ScanViewModel(
                     return@launch
                 }
                 require(preview == _preview.value) { "This review was replaced. Open the current review before approving." }
-                require(preview.storageMode == mode) { "Storage access changed. Rebuild this review with the current access." }
+                require(ReviewDraftPolicy.hasCurrentAccess(preview, mode, accessState.safTreeUri)) { "Storage access changed. Rebuild this review with the current access." }
                 val executor = container.planExecutor(mode)
 
                 val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)

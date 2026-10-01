@@ -28,7 +28,7 @@ Updated 2026-10-01. This is an implementation checkpoint, not a declaration that
 
 The synthetic 16,000-file test covers project ownership, probable supporting assets and selection. Separate cases cover competing cohorts, checkpoint retention, scanner resume, metadata freshness, templates, sharing, protection and collisions beyond the old destination cutoff. This is not a measurement of all indexing/IO/UI stages on the user's phone.
 
-## Next update implementation (not yet released)
+## Implemented for dev8
 
 - Private, atomic review drafts restore selections, original source baselines, rich filing presentation and project assignments after process death. No draft is automatically approved or executed. Exact-selection task matching closes the enqueue/delete crash window; stale asynchronous writes cannot recreate cleared drafts. Saving streams JSON to avoid duplicating a large draft in memory. Storage-mode changes invalidate restoration.
 - Baselines now cover unresolved loose files too. A later assignment cannot silently recapture changed evidence as its initial review baseline. Selecting an Uncertain root directly works in direct mode; a SAF grant limited to Uncertain explains why it cannot move files out of the checkpoint.
@@ -36,7 +36,11 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 - Derived content database migration 2→3 adds multiple root memberships without changing the authoritative mutation database. Reuse attaches each observed root; pruning one root retains other memberships and text. Root-filtered search returns a file once and keeps every matching membership.
 - Bulk filing uses a bounded extraction profile: 12,000 text characters, eight PDF pages, at most two OCR pages per PDF, and at most 40 fresh PDFs per review. New PDFs precede failed cached PDFs. Full indexing expands filing caches separately. Partial/unverified coverage is recorded and shown. Office archive draining has decoded-byte/entry budgets; PDF source copying enforces a real byte limit and cancellation propagates. OCR bitmap recycling waits for the ML task to complete.
 
-505 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for this checkpoint. Instrumentation was compiled, not run. The actual derived migration/search SQL passed SQLite tests for overlapping roots, scope removal, legacy coverage flags and FK cascade. Signed release and target-phone acceptance for these changes remain pending.
+516 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev8 (48). Instrumentation was compiled, not run. The actual derived migration/search SQL passed SQLite tests for overlapping roots, scope removal, legacy coverage flags and FK cascade. Canonical signed release verification and target-phone acceptance for these changes remain pending.
+
+- Backup/restore now exports a verified settings artifact and up to 1,000 read-only task summaries. The entire input is bounded/validated before a single atomic preference restore. Storage grants, signing/provider keys, active tasks, mutation journals, previews and file contents are excluded. Imported summaries stay separate from live history and expose no execution/undo actions. Background refresh and scheduled reviews stay off after restore. Partial history-save failures are reported separately.
+- Durable plan format v4 separates the exact goal from single-line display text, escapes display reasons, and encodes digest tokens. Decoding enforces operation encounter order, rejects machine records before the header and duplicate preconditions, and preserves normal v1–v3 compatibility. Tests demonstrate that goal/reason newlines cannot introduce extra unapproved operations. Task reports recover exact reasons from structured records.
+- Review restoration checks the current tree grant as well as storage mode. Draft watermarks and backup histories use metadata-only queries instead of loading all historical operation plans.
 
 ## Remaining completion work
 
@@ -44,7 +48,7 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
 - Expanded archive formats where safe; richer grounded image descriptions and project/topic template coverage.
 - Persistent storage-wide project knowledge and responsive inbox observation with permission-aware background fallback.
-- Backup/restore of app configuration and safe history; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.
+- Target-phone acceptance of settings backup/restore; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.
 - AppFunctions maturity decision and any viable bounded integration; remaining shortcut/integration coverage.
 - Current-phone acceptance: full 16k corpus timing and memory, navigation/restart/cancel, Fold/split/accessibility, revoked grants, low storage, thermal/battery, reboot/recovery, migrations and cross-root undo.
 - Reproducible release/CI automation and final end-to-end tutorial updates.
