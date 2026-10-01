@@ -27,6 +27,7 @@ import com.pocketsteward.app.filing.FilingReviewPresentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
@@ -87,6 +88,21 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
         if (preview == null) {
             EmptyState("Nothing proposed.", contentModifier)
             return@ScanFlowScaffold
+        }
+
+        val sourceOperationIndices = remember(preview.accepted) {
+            buildMap<String, Int> {
+                preview.accepted.forEachIndexed { index, operation ->
+                    val source = when (operation) {
+                        is PlannedOperation.Move -> operation.source
+                        is PlannedOperation.Copy -> operation.source
+                        is PlannedOperation.Rename -> operation.source
+                        is PlannedOperation.Trash -> operation.source
+                        else -> null
+                    }
+                    source?.rawValue()?.let { putIfAbsent(it, index) }
+                }
+            }
         }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
@@ -237,6 +253,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             FilingDestinationCard(
                                 group = group,
                                 preview = preview,
+                                sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
                                 onApplyDestination = { root, name ->
                                     viewModel.editPlanDestinationGroup(
@@ -255,16 +272,16 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             FilingDestinationCard(
                                 group = group,
                                 preview = preview,
+                                sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
                                 onApplyDestination = { _, _ -> },
                             )
                         }
                     }
-                    val withoutCheckpoint = filing.unresolved.filter { item ->
-                        filing.checkpointGroups.none { group -> group.items.any { it.sourceRef == item.sourceRef } }
-                    }
+                    val checkpointSourceRefs = filing.checkpointGroups.asSequence().flatMap { it.items.asSequence() }.map { it.sourceRef }.toHashSet()
+                    val withoutCheckpoint = filing.unresolved.filterNot { it.sourceRef in checkpointSourceRefs }
                     if (withoutCheckpoint.isNotEmpty()) {
-                        item { SectionHeader("Cannot move to Uncertain") }
+                        item { SectionHeader(if (filing.reviewingUncertain) "Still uncertain · stays here" else "Cannot move to Uncertain") }
                         items(withoutCheckpoint, key = { it.sourceRef }) { item ->
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Row(
@@ -602,19 +619,22 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
     val probable = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.PROBABLE }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
-            Text("Organize Downloads", style = MaterialTheme.typography.titleMedium)
+            Text(if (filing.reviewingUncertain) "Sort Uncertain" else "Organize Downloads", style = MaterialTheme.typography.titleMedium)
             Text(
                 buildString {
                     append(strong).append(" ready to file")
                     if (probable > 0) append(" · ").append(probable).append(" need review")
                     if (filing.checkpointCount > 0) append(" · ").append(filing.checkpointCount).append(" to Uncertain")
+                    if (filing.reviewingUncertain && filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" stay in Uncertain")
                     if (filing.skippedInboxFolders > 0) append(" · ").append(filing.skippedInboxFolders).append(" existing folders left")
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
             Text(
-                if (filing.skippedInboxFolders > 0) {
+                if (filing.reviewingUncertain) {
+                    "Review project matches from the checkpoint. Anything still unresolved stays exactly where it is."
+                } else if (filing.skippedInboxFolders > 0) {
                     "Loose files are grouped by project or moved to Uncertain. Existing folders stay put until they can be reviewed safely."
                 } else {
                     "Files are grouped by project. Unmatched files go to the inbox's Uncertain folder for later review."
@@ -631,10 +651,11 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
 private fun FilingDestinationCard(
     group: com.pocketsteward.app.filing.FilingReviewGroup,
     preview: ScanUiState.PlanPreview,
+    sourceOperationIndices: Map<String, Int>,
     onSetSelected: (Int, Boolean) -> Unit,
     onApplyDestination: (String, String) -> Unit,
 ) {
-    var expanded by remember(group.destinationPath) { mutableStateOf(true) }
+    var expanded by remember(group.destinationPath) { mutableStateOf(false) }
     var editing by remember(group.destinationPath) { mutableStateOf(false) }
     var destinationRoot by remember(group.destinationPath) {
         mutableStateOf(group.destinationPath.substringBeforeLast('/', missingDelimiterValue = group.projectHomePath))
@@ -644,7 +665,7 @@ private fun FilingDestinationCard(
     }
     val totalBytes = group.items.sumOf { it.sizeBytes }
     val selectedFiles = group.items.count { item ->
-        operationIndexForSource(preview, item.sourceRef)?.let { it in preview.selectedIndices } == true
+        sourceOperationIndices[item.sourceRef]?.let { it in preview.selectedIndices } == true
     }
 
     Card(modifier = Modifier.fillMaxWidth().animateContentSize()) {
@@ -687,40 +708,42 @@ private fun FilingDestinationCard(
             }
 
             if (expanded) {
-                group.items.forEach { item ->
-                    val operationIndex = operationIndexForSource(preview, item.sourceRef)
-                    val checked = operationIndex?.let { it in preview.selectedIndices } == true
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
-                            enabled = operationIndex != null,
-                        )
-                        FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef, size = 28.dp)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                buildString {
-                                    append(if (group.isUncertainCheckpoint) "Uncertain · review later" else if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
-                                    append(" · ").append(formatBytes(item.sizeBytes))
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (item.confidence == FilingConfidence.STRONG) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.tertiary
-                                },
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    items(group.items, key = { it.sourceRef }) { item ->
+                        val operationIndex = sourceOperationIndices[item.sourceRef]
+                        val checked = operationIndex?.let { it in preview.selectedIndices } == true
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.tight),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
+                                enabled = operationIndex != null,
                             )
-                            item.evidence.take(3).forEach { reason ->
+                            FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef, size = 28.dp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "• $reason",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    buildString {
+                                        append(if (group.isUncertainCheckpoint) "Uncertain · review later" else if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
+                                        append(" · ").append(formatBytes(item.sizeBytes))
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (item.confidence == FilingConfidence.STRONG) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.tertiary
+                                    },
                                 )
+                                item.evidence.take(3).forEach { reason ->
+                                    Text(
+                                        "• $reason",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
@@ -760,19 +783,6 @@ private fun FilingDestinationCard(
             }
         }
     }
-}
-
-private fun operationIndexForSource(preview: ScanUiState.PlanPreview, sourceRef: String): Int? {
-    val index = preview.accepted.indexOfFirst { operation ->
-        when (operation) {
-            is PlannedOperation.Move -> operation.source.rawValue() == sourceRef
-            is PlannedOperation.Copy -> operation.source.rawValue() == sourceRef
-            is PlannedOperation.Rename -> operation.source.rawValue() == sourceRef
-            is PlannedOperation.Trash -> operation.source.rawValue() == sourceRef
-            else -> false
-        }
-    }
-    return index.takeIf { it >= 0 }
 }
 
 private fun friendlyPath(path: String): String {

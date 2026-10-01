@@ -35,6 +35,7 @@ data class FilingReviewPresentation(
     val unresolved: List<FilingReviewItem>,
     val checkpointGroups: List<FilingReviewGroup> = emptyList(),
     val skippedInboxFolders: Int = 0,
+    val reviewingUncertain: Boolean = false,
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size
@@ -54,6 +55,7 @@ object InboxFilingPlanAdapter {
         result: InboxFilingResult,
         storageRoot: FileRef.Direct,
         existingDirectories: Set<String>,
+        retainedUncertainSourceRefs: Set<String> = emptySet(),
     ): InboxFilingPlan {
         val existing = existingDirectories.mapTo(linkedSetOf()) { it.trimEnd('/').lowercase() }
         val operations = mutableListOf<PlannedOperation>()
@@ -166,6 +168,7 @@ object InboxFilingPlanAdapter {
 
         val unresolved = result.unresolved.map(::reviewItem)
         val checkpointGroups = result.unresolved
+            .filterNot { it.artifact.stableRef in retainedUncertainSourceRefs }
             .groupBy { it.artifact.parentRef?.trimEnd('/') }
             .mapNotNull { (inboxPath, decisions) ->
                 if (inboxPath == null || !inboxPath.startsWith("$rootPath/", ignoreCase = true)) {
@@ -225,6 +228,7 @@ object InboxFilingSafPlanAdapter {
         scopeRoot: FileRef,
         existingHomes: Map<String, FileRef>,
         scopeLabel: String,
+        retainedUncertainSourceRefs: Set<String> = emptySet(),
     ): InboxFilingPlan {
         val operations = mutableListOf<PlannedOperation>()
         val plannedDirectories = linkedSetOf<String>()
@@ -311,7 +315,8 @@ object InboxFilingSafPlanAdapter {
             )
         }
 
-        val checkpointGroups = if (result.unresolved.isEmpty()) {
+        val checkpointDecisions = result.unresolved.filterNot { it.artifact.stableRef in retainedUncertainSourceRefs }
+        val checkpointGroups = if (checkpointDecisions.isEmpty()) {
             emptyList()
         } else {
             val checkpointRef = scopeRoot.child("Uncertain")
@@ -320,7 +325,7 @@ object InboxFilingSafPlanAdapter {
                 name = "Uncertain",
                 reason = "Create or reuse the uncertain checkpoint inside the granted inbox.",
             )
-            result.unresolved.forEach { decision ->
+            checkpointDecisions.forEach { decision ->
                 operations += PlannedOperation.Move(
                     source = parseFileRef(decision.artifact.stableRef),
                     destination = checkpointRef.child(decision.artifact.displayName),
@@ -335,7 +340,7 @@ object InboxFilingSafPlanAdapter {
                     destinationPath = "$scopeLabel › Uncertain",
                     existingProjectHome = true,
                     release = null,
-                    items = result.unresolved.map { decision ->
+                    items = checkpointDecisions.map { decision ->
                         FilingReviewItem(
                             sourceRef = decision.artifact.stableRef,
                             displayName = decision.artifact.displayName,

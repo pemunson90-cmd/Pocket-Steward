@@ -239,6 +239,11 @@ fun HomeScreen(
             onClick = { onQuickAction(PostScanAction.INBOX_FILING) },
         )
         HomeQuickAction(
+            title = "Sort Uncertain",
+            supporting = "Revisit files already in the checkpoint. Review project matches; anything still unsure stays there.",
+            onClick = { onQuickAction(PostScanAction.UNCERTAIN_FILING) },
+        )
+        HomeQuickAction(
             title = "Tidy Downloads locally",
             supporting = "Keep everything inside Downloads and organize only the loose files there.",
             onClick = { onQuickAction(PostScanAction.SMART_CLEANUP) },

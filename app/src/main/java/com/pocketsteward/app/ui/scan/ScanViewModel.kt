@@ -432,6 +432,7 @@ enum class ScanRoute(val route: String) {
  */
 enum class PostScanAction {
     INBOX_FILING,
+    UNCERTAIN_FILING,
     SMART_CLEANUP,
     FIND_DUPLICATES,
     FIND_LARGEST,
@@ -729,7 +730,7 @@ class ScanViewModel(
 
     /** Home entry for Inbox filing. Direct mode scans all configured inboxes;
      * SAF mode is necessarily bounded to the one granted tree. */
-    fun startConfiguredInboxFiling() {
+    fun startConfiguredInboxFiling(checkpointOnly: Boolean = false) {
         if (autoStarted) return
         autoStarted = true
         viewModelScope.launch {
@@ -743,12 +744,12 @@ class ScanViewModel(
                         .map { path -> ScanTarget.CustomFolder(path) }
                     startScan(
                         targets = targets.ifEmpty { listOf(ScanTarget.Downloads) },
-                        thenRun = PostScanAction.INBOX_FILING,
+                        thenRun = if (checkpointOnly) PostScanAction.UNCERTAIN_FILING else PostScanAction.INBOX_FILING,
                     )
                 }
                 StorageAccessMode.SAF -> startScan(
                     target = ScanTarget.GrantedFolder("Granted inbox"),
-                    thenRun = PostScanAction.INBOX_FILING,
+                    thenRun = if (checkpointOnly) PostScanAction.UNCERTAIN_FILING else PostScanAction.INBOX_FILING,
                 )
                 null -> _uiState.value = ScanUiState.Error("No storage access granted yet.")
             }
@@ -1003,6 +1004,7 @@ class ScanViewModel(
             when (thenRun) {
                 null -> Unit
                 PostScanAction.INBOX_FILING -> proposeInboxFiling(summary)
+                PostScanAction.UNCERTAIN_FILING -> proposeInboxFiling(summary, checkpointOnly = true)
                 PostScanAction.SMART_CLEANUP -> proposeSmartCleanup(summary)
                 PostScanAction.FIND_DUPLICATES -> findDuplicates(summary)
                 PostScanAction.FIND_LARGEST -> findLargestFiles(summary)

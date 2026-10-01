@@ -10,6 +10,7 @@ import com.pocketsteward.app.filing.FilingArtifact
 import com.pocketsteward.app.filing.FilingConfidence
 import com.pocketsteward.app.filing.FilingEvidence
 import com.pocketsteward.app.filing.FilingEvidenceKind
+import com.pocketsteward.app.filing.InboxFilingIntake
 import com.pocketsteward.app.filing.InboxFilingResult
 import com.pocketsteward.app.filing.InboxFilingEngine
 import com.pocketsteward.app.filing.InboxFilingPlanAdapter
@@ -29,7 +30,7 @@ import kotlinx.coroutines.withContext
 private val GENERIC_TOP_LEVEL_FOLDERS = setOf(
     "android", "download", "downloads", "documents", "pictures", "movies", "music",
     "dcim", "alarms", "notifications", "ringtones", "podcasts", "audiobooks",
-    "pocketsteward", "trash",
+    "pocketsteward", "trash", "uncertain",
 )
 
 /**
@@ -37,7 +38,7 @@ private val GENERIC_TOP_LEVEL_FOLDERS = setOf(
  * from Smart cleanup: the source root is an inbox and the destination may be
  * elsewhere in authorized shared storage.
  */
-internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
+internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, checkpointOnly: Boolean = false) {
     viewModelScope.launch {
         _uiState.value = ScanUiState.Working(
             label = "Planning inbox filing",
@@ -48,22 +49,22 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             val mode = settingsRepository.storageAccessState.first().mode
                 ?: error("No storage access mode is active.")
             if (mode == StorageAccessMode.SAF) {
-                proposeInboxFilingSaf(summary)
+                proposeInboxFilingSaf(summary, checkpointOnly)
                 return@launch
             }
 
             val sourceRootKeys = summary.scopes.map { it.root.rawValue().trimEnd('/') }.toSet()
             val scannedRecords = allRecordsForScopes(summary.scopes)
-            val records = scannedRecords
-                .filter { record ->
-                    record.parentRef?.trimEnd('/') in sourceRootKeys &&
-                        !record.displayName.equals("Uncertain", ignoreCase = true)
-                }
+            val intake = InboxFilingIntake.select(
+                scannedRecords, sourceRootKeys, checkpointOnly, includeDirectories = true,
+            )
+            val records = intake.records
             val skippedFolders = 0
 
             if (records.isEmpty()) {
                 _uiState.value = ScanUiState.Error(
-                    "No loose files are waiting in the selected inbox. $skippedFolders existing folder(s) were left alone.",
+                    if (checkpointOnly) "No files are waiting in an Uncertain checkpoint under the configured inboxes."
+                    else "No loose files are waiting in the selected inbox. $skippedFolders existing folder(s) were left alone.",
                 )
                 return@launch
             }
@@ -215,6 +216,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
                     result = result,
                     storageRoot = storageRoot,
                     existingDirectories = existingDirectories,
+                    retainedUncertainSourceRefs = intake.retainedUncertainSourceRefs,
                 )
             }
 
@@ -229,7 +231,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             val notes = buildList {
                 add("The selected landing folder is being treated as an inbox, not a permanent category tree.")
                 add("Project ownership outranks file type. APK, ZIP, notes, and supporting assets can travel together when their evidence agrees.")
-                add("Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
+                add(if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Anything still unresolved stays in its existing Uncertain checkpoint."
+                    else "Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
                 add("Existing project homes are preferred over creating near-duplicate folders.")
                 add("Existing folders move intact. Their contents are checked again before execution; changed folders require a fresh review.")
                 if (skippedFolders > 0) {
@@ -238,13 +241,13 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
             }
 
             showPlanPreview(
-                goal = "Inbox filing",
+                goal = if (checkpointOnly) "Sort Uncertain" else "Inbox filing",
                 operations = plan.operations,
                 scopes = summary.scopes,
                 scopeNotes = notes,
                 authorizedDestinationRoots = plan.authorizedDestinationRoots,
                 defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
-                filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders),
+                filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -253,7 +256,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary) {
 }
 
 
-private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Summary) {
+private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Summary, checkpointOnly: Boolean) {
     val scope = summary.scopes.singleOrNull() ?: run {
         _uiState.value = ScanUiState.Error(
             "Selected-folder filing currently needs one granted tree at a time.",
@@ -266,11 +269,14 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         record.isDirectory && record.parentRef?.trimEnd('/') == rootKey &&
             !record.displayName.equals("Uncertain", ignoreCase = true)
     }
-    val records = scannedRecords
-        .filter { !it.isDirectory && it.parentRef?.trimEnd('/') == rootKey }
+    val intake = InboxFilingIntake.select(
+        scannedRecords, setOf(rootKey), checkpointOnly, includeDirectories = false,
+    )
+    val records = intake.records
     if (records.isEmpty()) {
         _uiState.value = ScanUiState.Error(
-            "No loose files are waiting at the top of the granted inbox. $skippedFolders existing folder(s) were left alone.",
+            if (checkpointOnly) "No files are waiting in an Uncertain checkpoint inside the granted inbox."
+            else "No loose files are waiting at the top of the granted inbox. $skippedFolders existing folder(s) were left alone.",
         )
         return
     }
@@ -349,6 +355,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             scopeRoot = scope.root,
             existingHomes = existingHomeRefs,
             scopeLabel = scope.label,
+            retainedUncertainSourceRefs = intake.retainedUncertainSourceRefs,
         )
     }
     if (plan.operations.isEmpty()) {
@@ -358,16 +365,17 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         return
     }
     showPlanPreview(
-        goal = "Inbox filing",
+        goal = if (checkpointOnly) "Sort Uncertain" else "Inbox filing",
         operations = plan.operations,
         scopes = summary.scopes,
         scopeNotes = listOf(
             "Selected-folder access can file only inside this granted tree; it cannot discover project homes elsewhere on the device.",
-            "Strong matches are selected by default. Probable matches wait for review. Unresolved loose files move to Uncertain after review.",
+            if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Unresolved files stay in their existing checkpoint."
+            else "Strong matches are selected by default. Probable matches wait for review. Unresolved loose files move to Uncertain after review.",
             "$skippedFolders existing folder(s) remain in the inbox; this pass does not move folder contents without a reviewed snapshot.",
         ),
         defaultSelectedSourceRefs = plan.defaultSelectedSourceRefs,
-        filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders),
+        filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly),
     )
 }
 

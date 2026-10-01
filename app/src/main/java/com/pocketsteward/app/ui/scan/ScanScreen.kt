@@ -69,6 +69,7 @@ fun ScanScreen(
                 !autoWorkflowId.isNullOrBlank() -> viewModel.startSavedWorkflow(autoWorkflowId)
                 !autoRequest.isNullOrBlank() -> viewModel.startScanThenRequest(ScanTarget.Downloads, autoRequest)
                 autoAction == PostScanAction.INBOX_FILING -> viewModel.startConfiguredInboxFiling()
+                autoAction == PostScanAction.UNCERTAIN_FILING -> viewModel.startConfiguredInboxFiling(checkpointOnly = true)
                 autoAction != null -> viewModel.startScanThen(ScanTarget.Downloads, autoAction)
                 else -> viewModel.restoreCachedScanOnEntry()
             }
