@@ -1534,7 +1534,7 @@ private fun ImageAnalysisReview(
         }
 
         if (state.insights.isEmpty()) {
-            item { EmptyState("No usable image labels were produced.") }
+            item { EmptyState("No usable image evidence was produced.") }
         }
 
         items(state.insights, key = { it.stableRef }) { insight ->
@@ -1558,11 +1558,26 @@ private fun ImageAnalysisReview(
                     )
                     if (insight.likelyScreenshot) {
                         Text(
-                            "Likely screenshot",
+                            insight.screenshotEvidence ?: "Likely screenshot",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = Spacing.hairline),
                         )
+                    }
+                    if (insight.description.isNotBlank()) {
+                        Text(insight.description, style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = Spacing.hairline))
+                    }
+                    Text(when {
+                        !insight.textInspectionEnabled -> "Image text inspection is off. Enable Content inspection to read text locally."
+                        !insight.textInspectionComplete -> "Image text recognition was unavailable; visual labels remain usable."
+                        insight.textTruncated -> "Text evidence is limited to the first 4,000 characters."
+                        insight.detectedText.isBlank() -> "No readable text detected."
+                        else -> "Text detected locally; OCR can contain mistakes."
+                    }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (insight.detectedText.isNotBlank()) {
+                        Text(insight.detectedText.take(1_200), style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = Spacing.hairline))
                     }
                     if (insight.labels.isNotEmpty()) {
                         Text(

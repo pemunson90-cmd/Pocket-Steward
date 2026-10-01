@@ -168,7 +168,9 @@ class AppContainer(context: Context) {
     }
 
     val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
-    val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext) }
+    val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext) { ref ->
+        contentInspector(if (ref.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).observeMetadata(ref)
+    } }
     val scheduledCleanupCoordinator: ScheduledCleanupCoordinator by lazy { ScheduledCleanupCoordinator(appContext) }
     val runtimeDiagnostics: RuntimeDiagnostics by lazy {
         RuntimeDiagnostics(

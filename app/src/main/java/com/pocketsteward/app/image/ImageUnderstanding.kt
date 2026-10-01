@@ -13,6 +13,12 @@ import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.similarity.ImageDHash
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import com.google.android.gms.tasks.Task
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.pocketsteward.app.storage.FileMetadata
 import java.io.File
 
 data class ImageLabelScore(
@@ -25,6 +31,14 @@ data class ImageInsight(
     val displayName: String,
     val labels: List<ImageLabelScore>,
     val likelyScreenshot: Boolean,
+    val width: Int = 0,
+    val height: Int = 0,
+    val detectedText: String = "",
+    val textInspectionEnabled: Boolean = false,
+    val textInspectionComplete: Boolean = false,
+    val textTruncated: Boolean = false,
+    val screenshotEvidence: String? = null,
+    val description: String = "",
 )
 
 /**
@@ -33,76 +47,106 @@ data class ImageInsight(
  */
 class ImageUnderstanding(
     private val context: Context,
+    private val observeMetadata: suspend (String) -> FileMetadata,
 ) {
-    suspend fun analyze(record: FileRecord): ImageInsight? {
-        if (record.isDirectory) return null
-        val uri = when {
-            record.stableRef.startsWith("content://") -> Uri.parse(record.stableRef)
-            else -> {
-                val file = File(record.stableRef)
-                if (!file.isFile) return null
-                Uri.fromFile(file)
-            }
-        }
-
-        readCache(record)?.let { return it }
-        // Decode a bounded bitmap instead of holding a full camera photo in memory.
-        val bitmap = runCatching {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    suspend fun analyze(record: FileRecord, inspectText: Boolean = false): ImageInsight? {
+        currentCoroutineContext().ensureActive()
+        if (record.isDirectory || record.sizeBytes > 64L * 1024 * 1024) return null
+        fun matches(live: FileMetadata) = !live.isDirectory && live.displayName == record.displayName &&
+            live.sizeBytes == record.sizeBytes && live.modifiedAtEpochMs == record.modifiedAt
+        try { if (!matches(observeMetadata(record.stableRef))) return null }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { return null }
+        readCache(record, inspectText)?.let { return it }
+        val uri = if (record.stableRef.startsWith("content://")) Uri.parse(record.stableRef) else Uri.fromFile(File(record.stableRef))
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val bitmap = try {
             context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || maxOf(bounds.outWidth, bounds.outHeight) > 100_000) return null
             var sample = 1
-            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+            val maximum = if (inspectText) 1600 else 1024
+            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maximum) sample *= 2
+            currentCoroutineContext().ensureActive()
             context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
             }
-        }.getOrNull() ?: return null
-        val task = labeler.process(InputImage.fromBitmap(bitmap, 0))
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { null } ?: return null
+        var pending: Task<*>? = null
         return try {
-            val labels = task.await()
-                .sortedByDescending { it.confidence }.take(MAX_LABELS)
+            val input = InputImage.fromBitmap(bitmap, 0)
+            val labeling = labeler.process(input).also { pending = it }
+            val labels = labeling.await().sortedByDescending { it.confidence }.take(MAX_LABELS)
                 .map { ImageLabelScore(it.text, it.confidence) }
-            ImageInsight(record.stableRef, record.displayName, labels, ImageDHash.likelyScreenshot(record.displayName))
-                .also { writeCache(record, it) }
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (_: Exception) {
-            null
-        } finally {
-            if (task.isComplete) bitmap.recycle() else task.addOnCompleteListener { bitmap.recycle() }
+            var text = ""
+            var textComplete = false
+            if (inspectText) {
+                try {
+                    currentCoroutineContext().ensureActive()
+                    text = recognizer.process(input).also { pending = it }.await().text
+                    textComplete = true
+                } catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { /* Labels remain useful if OCR is unavailable. */ }
+            }
+            currentCoroutineContext().ensureActive()
+            if (!matches(observeMetadata(record.stableRef))) return null
+            val bounded = ImageEvidencePolicy.boundedText(text)
+            val screenshot = ImageEvidencePolicy.screenshotEvidence(record.displayName, bounds.outWidth, bounds.outHeight, bounded)
+            ImageInsight(record.stableRef, record.displayName, labels, screenshot != null,
+                bounds.outWidth, bounds.outHeight, bounded, inspectText, textComplete,
+                text.length > ImageEvidencePolicy.MAX_TEXT_CHARS, screenshot,
+                ImageEvidencePolicy.description(bounds.outWidth, bounds.outHeight, labels, screenshot, bounded))
+                .also { if (!inspectText || textComplete) writeCache(record, it, inspectText) }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { null }
+        finally {
+            val task = pending
+            if (task == null || task.isComplete) bitmap.recycle() else task.addOnCompleteListener { bitmap.recycle() }
         }
     }
+
+    private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     private val labeler by lazy {
         ImageLabeling.getClient(ImageLabelerOptions.Builder().setConfidenceThreshold(MIN_CONFIDENCE).build())
     }
-    private fun cacheFile(record: FileRecord): File {
+    private fun cacheFile(record: FileRecord, inspectText: Boolean): File {
         val key = MessageDigest.getInstance("SHA-256").digest(record.stableRef.toByteArray()).joinToString("") { "%02x".format(it) }
-        return File(File(context.cacheDir, "image-evidence-v1"), "$key.json")
+        return File(File(context.cacheDir, "image-evidence-v2"), "$key-${if (inspectText) "text" else "labels"}.json")
     }
-    private fun readCache(record: FileRecord): ImageInsight? = runCatching {
+    private fun readCache(record: FileRecord, inspectText: Boolean): ImageInsight? = runCatching {
         if (record.modifiedAt == null) return null
-        val file = cacheFile(record)
+        val file = cacheFile(record, inspectText)
         if (!file.isFile || file.length() > 32_768) return null
         val json = JSONObject(file.readText())
         if (json.getLong("size") != record.sizeBytes || json.getLong("modified") != record.modifiedAt) return null
         val labels = json.getJSONArray("labels")
         require(labels.length() <= MAX_LABELS)
-        ImageInsight(record.stableRef, record.displayName, (0 until labels.length()).map {
+        val scores = (0 until labels.length()).map {
             val value = labels.getJSONObject(it)
-            ImageLabelScore(value.getString("label"), value.getDouble("confidence").toFloat())
-        }, ImageDHash.likelyScreenshot(record.displayName))
+            ImageLabelScore(value.getString("label").take(160), value.getDouble("confidence").toFloat())
+        }
+        require(scores.all { it.confidence.isFinite() && it.confidence in MIN_CONFIDENCE..1f })
+        val text = if (inspectText) ImageEvidencePolicy.boundedText(json.optString("text")) else ""
+        val width = json.getInt("width")
+        val height = json.getInt("height")
+        require(width in 1..100_000 && height in 1..100_000)
+        val screenshot = ImageEvidencePolicy.screenshotEvidence(record.displayName, width, height, text)
+        ImageInsight(record.stableRef, record.displayName, scores, screenshot != null, width, height, text,
+            inspectText, inspectText, inspectText && json.optBoolean("textTruncated"), screenshot,
+            ImageEvidencePolicy.description(width, height, scores, screenshot, text))
     }.getOrNull()
-    private fun writeCache(record: FileRecord, insight: ImageInsight) {
+    private fun writeCache(record: FileRecord, insight: ImageInsight, inspectText: Boolean) {
         if (record.modifiedAt == null) return
         runCatching {
             val labels = JSONArray()
             insight.labels.forEach { labels.put(JSONObject().put("label", it.label).put("confidence", it.confidence.toDouble())) }
-            val file = cacheFile(record)
+            val file = cacheFile(record, inspectText)
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, "${file.name}.${java.util.UUID.randomUUID()}.tmp")
             try {
-                temporary.writeText(JSONObject().put("size", record.sizeBytes).put("modified", record.modifiedAt).put("labels", labels).toString())
+                temporary.writeText(JSONObject().put("size", record.sizeBytes).put("modified", record.modifiedAt).put("labels", labels).put("width", insight.width).put("height", insight.height)
+                    .put("text", if (inspectText) insight.detectedText else "").put("textTruncated", insight.textTruncated).toString())
                 java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             } finally { temporary.delete() }
         }

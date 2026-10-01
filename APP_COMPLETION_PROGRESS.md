@@ -61,15 +61,24 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 
 564 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev10 (50). Both project-layout and overlapping-root SQLite checks passed. Instrumentation was compiled, not run. Canonical signed dev10 release assembly passed; its certificate matches the installed-app pin, version is 1.4.0-dev10 (50), and INTERNET permission remains absent. Target-phone acceptance remains open.
 
+## Implemented for dev11
+
+- Local image evidence now reports observed dimensions/orientation, label observations, bounded readable text and explained screenshot hints. Pixel proportions plus several detected interface terms and a status indicator can support a screenshot suggestion; dimensions alone cannot. This is grounded evidence description, not generative scene captioning or identity recognition.
+- Bundled Latin OCR runs only when both Image analysis and Content inspection are enabled. Text evidence is bounded to 4,000 characters, visual-only/text-enabled caches are separate, and UI distinguishes disabled, unavailable, empty and truncated text. Metadata checks precede reuse and follow new inspection. Decode dimensions/source bytes are bounded; bitmap recycling waits for the active ML task even after cancellation.
+- Filing uses OCR project fields, known homes and configured keywords as probable supporting evidence. OCR-only proposals remain unchecked even when several OCR signals agree. Competing OCR owners stay unresolved. Existing saved-review artifacts without the new optional OCR field remain readable.
+- Image and archive roles precede manuscript/draft/notes words; APK/AAB builds use Versions. Custom role-folder mappings remain effective. This fixes manuscript-cover.jpg being proposed into Manuscript and notes-backup.zip into Notes.
+
+578 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev11 (51). Instrumentation was compiled, not run. The tracked signing helper and BUILD_AND_RELEASE.md make local canonical signing/provenance repeatable; The reusable helper completed the canonical signed release and verified signer continuity, version 1.4.0-dev11 (51), arm64 ABI and absent INTERNET permission. Six publication safety checks passed for changed APKs, forged receipts, duplicate ZIP entries, signing identity and remote app-tree drift. Public publication verification is in progress. Actual Android ML execution and the full phone workflow remain unverified.
+
 ## Remaining completion work
 
 - Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
-- Expanded archive formats where safe; richer grounded image descriptions and project/topic template coverage.
+- Expanded archive formats where safe; optional generative image captions, bounded large-image batch acceptance and project/topic template coverage.
 - Broader selected-tree project knowledge and custom-role discovery; target-phone acceptance of project discovery and inbox observation with its permission-aware fallback.
 - Target-phone acceptance of settings backup/restore; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.
 - AppFunctions maturity review completed: official releases remain alpha-only (1.0.0-alpha12). Production integration is conditionally deferred; see APPFUNCTIONS_DECISION.md. Remaining shortcut/integration coverage stays open.
 - Current-phone acceptance: full 16k corpus timing and memory, navigation/restart/cancel, Fold/split/accessibility, revoked grants, low storage, thermal/battery, reboot/recovery, migrations and cross-root undo.
-- Reproducible release/CI automation and final end-to-end tutorial updates.
+- Final end-to-end tutorial/device acceptance updates. Reproducible local signing, source publication, packaging and verified-download helpers are now tracked; GitHub CI independently checks unsigned source builds.
 
 No emulator or target-phone run was available in this environment. Every remaining row stays open until implemented and verified or explicitly resolved with the user.

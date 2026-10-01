@@ -706,7 +706,7 @@ fun SettingsScreen(
             )
             SettingsSwitchRow(
                 label = "Image analysis",
-                supporting = "Local image labels, screenshot hints, and perceptual similarity. Nothing leaves the device.",
+                supporting = "Local image descriptions, labels, screenshot evidence and similarity. Text recognition also needs Content inspection. Nothing leaves the device.",
                 checked = privacy.imageAnalysisEnabled,
                 onCheckedChange = viewModel::setImageAnalysisEnabled,
             )

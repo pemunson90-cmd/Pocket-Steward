@@ -93,7 +93,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             }
 
             val freshRecords = records.map { enriched.getValue(it.stableRef).record }
-            val imageLabels = prepareFilingImages(freshRecords)
+            val imageEvidence = prepareFilingImages(freshRecords)
             val content = prepareFilingContent(freshRecords, summary)
             val indexedText = content.text
 
@@ -184,7 +184,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     apkVersionCode = metadata.apkVersionCode,
                     archiveSample = metadata.archiveSample,
             captureDate = metadata.captureDate, mediaArtist = metadata.mediaArtist, mediaAlbum = metadata.mediaAlbum,
-                    imageLabels = imageLabels[updated.stableRef].orEmpty(),
+                    imageLabels = imageEvidence[updated.stableRef]?.let { insight -> insight.labels.map { it.label } + if (insight.likelyScreenshot) listOf("screenshot") else emptyList() }.orEmpty(),
+                    imageText = imageEvidence[updated.stableRef]?.detectedText.orEmpty(),
                     indexedText = indexedText[updated.stableRef].orEmpty(),
                     isDirectory = updated.isDirectory,
                 )
@@ -312,7 +313,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         }.toMap()
     }
     val freshRecords = records.map { enriched.getValue(it.stableRef).record }
-    val imageLabels = prepareFilingImages(freshRecords)
+    val imageEvidence = prepareFilingImages(freshRecords)
     val content = prepareFilingContent(freshRecords, summary)
     val indexedText = content.text
 
@@ -348,7 +349,8 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             apkVersionCode = metadata.apkVersionCode,
             archiveSample = metadata.archiveSample,
             captureDate = metadata.captureDate, mediaArtist = metadata.mediaArtist, mediaAlbum = metadata.mediaAlbum,
-            imageLabels = imageLabels[updated.stableRef].orEmpty(),
+            imageLabels = imageEvidence[updated.stableRef]?.let { insight -> insight.labels.map { it.label } + if (insight.likelyScreenshot) listOf("screenshot") else emptyList() }.orEmpty(),
+                    imageText = imageEvidence[updated.stableRef]?.detectedText.orEmpty(),
             indexedText = indexedText[updated.stableRef].orEmpty(),
         )
     }
@@ -511,15 +513,16 @@ private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>
     return FilingContent(text, reused, extracted, unavailable, deferredPdf = deferredPdf, partial = partial)
 }
 
-private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>): Map<String, List<String>> {
-    if (!settingsRepository.privacySettings.first().imageAnalysisEnabled) return emptyMap()
+private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>): Map<String, com.pocketsteward.app.image.ImageInsight> {
+    val privacy = settingsRepository.privacySettings.first()
+    if (!privacy.imageAnalysisEnabled) return emptyMap()
     val candidates = records.filter { !it.isDirectory && it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "heic") }
-    val result = linkedMapOf<String, List<String>>()
+    val result = linkedMapOf<String, com.pocketsteward.app.image.ImageInsight>()
     for ((index, record) in candidates.withIndex()) {
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         _uiState.value = ScanUiState.Working("Reading local image evidence", "${index + 1} of ${candidates.size} · ${record.displayName}", processed = index, total = candidates.size)
-        val insight = withContext(Dispatchers.IO) { container.imageUnderstanding.analyze(record) }
-        if (insight != null) result[record.stableRef] = insight.labels.map { it.label } + if (insight.likelyScreenshot) listOf("screenshot") else emptyList()
+        val insight = withContext(Dispatchers.IO) { container.imageUnderstanding.analyze(record, inspectText = privacy.contentInspectionEnabled) }
+        if (insight != null) result[record.stableRef] = insight
     }
     return result
 }

@@ -354,7 +354,7 @@ internal fun ScanViewModel.analyzeImages(summary: ScanUiState.Summary) {
                     total = selected.size,
                 )
                 val insight = withContext(Dispatchers.IO) {
-                    container.imageUnderstanding.analyze(record)
+                    container.imageUnderstanding.analyze(freshEvidenceRecord(record, summary.mode), inspectText = privacy.contentInspectionEnabled)
                 }
                 if (insight != null) insights += insight
             }
@@ -365,6 +365,8 @@ internal fun ScanViewModel.analyzeImages(summary: ScanUiState.Summary) {
                 attempted = selected.size,
                 limited = records.size > selected.size,
             )
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
         }

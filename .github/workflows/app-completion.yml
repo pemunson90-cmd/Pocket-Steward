@@ -27,6 +27,8 @@ jobs:
         run: python tools/verify_content_scope_sql.py
       - name: Verify scoped project knowledge in SQLite
         run: python tools/verify_project_knowledge_sql.py
+      - name: Verify release publication safety
+        run: python -m unittest discover -s tools -p test_release_tools.py
       - name: Release build
         run: ./gradlew assembleRelease --stacktrace
       - name: Enforce offline-core APK invariant

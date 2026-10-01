@@ -7,6 +7,61 @@ import com.pocketsteward.app.saved.ProjectHierarchyStrategy
 import org.junit.Test
 
 class InboxFilingEngineTest {
+    @Test fun coverImagesAndArchiveBundlesKeepTheirRolesDespiteDocumentWords() {
+        val home = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
+            roleFolders = mapOf("Images" to "Artwork", "Archive" to "Bundles", "Versions" to "Builds"))
+        val expectations = mapOf("Lilith-manuscript-cover.jpg" to "Artwork", "Lilith-draft-preview.svg" to "Artwork",
+            "Lilith-notes-backup.zip" to "Bundles", "Lilith-manuscript.tar" to "Bundles", "Lilith-notes-v2.apk" to "Builds")
+        for ((name, role) in expectations) {
+            val file = artifact(name, name.substringAfterLast('.'), 1000).copy(indexedText = "Manuscript\nLilith")
+            assertThat(InboxFilingEngine.destinationFor(home, "2", file)).isEqualTo("${home.path}/$role")
+        }
+    }
+
+    @Test fun imageOcrProjectFieldsCanSuggestANewHomeButCannotSelectAMove() {
+        val file = artifact("IMG_31415.png", "png", 1000).copy(imageText = "Project: Lilith\nNotes")
+        val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.projectHome?.path).isEqualTo("/storage/emulated/0/Documents/Lilith")
+        assertThat(decision.destinationDirectory).isEqualTo("/storage/emulated/0/Documents/Lilith/Images")
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.PROBABLE)
+        assertThat(decision.evidence.single().kind).isEqualTo(FilingEvidenceKind.IMAGE_TEXT)
+    }
+
+    @Test fun severalOcrSignalsStillCannotSelectAMove() {
+        val home = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val file = artifact("IMG_31415.png", "png", 1000).copy(imageText = "Project: Lilith\nLilith notes")
+        val decision = InboxFilingEngine.resolve(listOf(file), listOf(home), emptyList(), listOf(ProjectKeyword("Lilith", "Lilith")), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.PROBABLE)
+        assertThat(decision.evidence.size).isAtLeast(2)
+    }
+
+    @Test fun competingOcrProjectHomesRemainUnresolved() {
+        val homes = listOf("Lilith", "NSTL").map { ProjectHomeCandidate(it, "/storage/emulated/0/Documents/$it", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES) }
+        val file = artifact("IMG_31415.png", "png", 1000).copy(imageText = "Lilith and NSTL")
+        val decision = InboxFilingEngine.resolve(listOf(file), homes, emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
+    @Test fun imageProjectTextCannotBeReassignedByAnotherProjectsDownloadTiming() {
+        val homes = listOf("Lilith", "NSTL").map { ProjectHomeCandidate(it, "/storage/emulated/0/Documents/$it", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES) }
+        val file = artifact("IMG_31415.png", "png", 1000).copy(imageText = "Project: Lilith")
+        val decisions = InboxFilingEngine.resolve(listOf(artifact("NSTL-manuscript.txt", "txt", 1000), file),
+            homes, emptyList(), emptyList(), emptyList(), "/storage/emulated/0").decisions
+        assertThat(decisions.last().projectName).isEqualTo("Lilith")
+        assertThat(decisions.last().confidence).isEqualTo(FilingConfidence.PROBABLE)
+        assertThat(decisions.last().evidence.any { it.kind == FilingEvidenceKind.IMAGE_TEXT }).isTrue()
+    }
+
+    @Test fun missingLegacyOcrFieldDoesNotPreventRestoredArtifactMatching() {
+        val file = artifact("Lilith-notes.txt", "txt", 1000).copy(imageText = null)
+        val home = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        assertThat(InboxFilingEngine.resolve(listOf(file), listOf(home), emptyList(), emptyList(), emptyList(), "/storage/emulated/0")
+            .decisions.single().projectHome).isEqualTo(home)
+    }
+
     @Test fun numericProjectTitlesRemainDistinct() {
         val homes = (1..200).map { number -> ProjectHomeCandidate("Project $number", "/storage/emulated/0/Documents/Project $number",
             hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES, persisted = true) }

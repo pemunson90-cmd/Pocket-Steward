@@ -259,6 +259,26 @@ object InboxFilingEngine {
             }
         }
 
+        // OCR is noisy supporting evidence. It can suggest a home, but cannot alone select a move.
+        val imageText = artifact.imageText.orEmpty().take(4_000)
+        if (imageText.isNotBlank()) {
+            homes.forEach { home ->
+                if ((listOf(home.name) + home.aliases).any { it.isNotBlank() && ProjectEvidenceTerms.containsTerm(imageText, it) })
+                    add(home, FilingEvidenceKind.IMAGE_TEXT, "detected image text mentions ${home.name}; confirm ownership", 70)
+            }
+            projectKeywords.forEach { keyword ->
+                if (ProjectEvidenceTerms.containsTerm(imageText, keyword.term)) {
+                    homes.matchingNamed(keyword.projectFolder).ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot)) }
+                        .forEach { add(it, FilingEvidenceKind.IMAGE_TEXT, "detected image text matches project mapping “${keyword.term}”; confirm ownership", 74) }
+                }
+            }
+            explicitContentProject(imageText)?.let { title ->
+                homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot)) }.forEach {
+                    add(it, FilingEvidenceKind.IMAGE_TEXT, "detected image text names project “$title”; confirm OCR and ownership", 80)
+                }
+            }
+        }
+
         artifact.apkLabel?.takeIf { isUsefulLabel(it) }?.let { label ->
             val candidates = homes.matchingNamed(label).ifEmpty { listOf(syntheticHome(label, storageRoot)) }
             candidates.forEach { home -> add(home, FilingEvidenceKind.APK_LABEL, "APK metadata identifies “$label”", 112) }
@@ -347,6 +367,7 @@ object InboxFilingEngine {
         }
         val release = releaseOf(artifact)
         val confidence = when {
+            evidence.all { it.kind == FilingEvidenceKind.IMAGE_TEXT } && score >= PROBABLE_SCORE -> FilingConfidence.PROBABLE
             score >= STRONG_SCORE && (release != null || home.hierarchy != ProjectHierarchyStrategy.VERSIONED) -> FilingConfidence.STRONG
             score >= STRONG_SCORE -> FilingConfidence.PROBABLE
             score >= PROBABLE_SCORE -> FilingConfidence.PROBABLE
@@ -412,14 +433,15 @@ object InboxFilingEngine {
         val heading = artifact.indexedText.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(160).lowercase(Locale.ROOT)
         val extension = artifact.extension.lowercase(Locale.ROOT)
         return when {
+            com.pocketsteward.app.scan.classifyByExtension(extension) == com.pocketsteward.app.scan.FileCategory.IMAGE -> "Images"
+            com.pocketsteward.app.scan.classifyByExtension(extension) == com.pocketsteward.app.scan.FileCategory.ARCHIVE -> "Archive"
+            extension in setOf("apk", "aab") -> "Versions"
             manuscriptRole.containsMatchIn(name) -> "Manuscript"
             draftRole.containsMatchIn(name) -> "Drafts"
             notesRole.containsMatchIn(name) -> "Notes"
             manuscriptRole.containsMatchIn(heading) -> "Manuscript"
             draftRole.containsMatchIn(heading) -> "Drafts"
             notesRole.containsMatchIn(heading) -> "Notes"
-            extension in setOf("png", "jpg", "jpeg", "webp", "gif", "heic") -> "Images"
-            extension in setOf("zip", "7z", "rar", "tar", "gz") -> "Archive"
             release != null -> "Versions"
             else -> null
         }

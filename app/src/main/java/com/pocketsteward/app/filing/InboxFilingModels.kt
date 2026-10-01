@@ -25,6 +25,7 @@ enum class FilingEvidenceKind {
     PROJECT_AMBIGUITY,
     MEDIA_METADATA,
     IMAGE_CONTENT,
+    IMAGE_TEXT,
 }
 
 data class FilingEvidence(
@@ -52,6 +53,7 @@ data class FilingArtifact(
     val mediaArtist: String? = null,
     val mediaAlbum: String? = null,
     val imageLabels: List<String> = emptyList(),
+    val imageText: String? = null,
 )
 
 data class ProjectHomeCandidate(
