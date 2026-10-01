@@ -26,14 +26,7 @@ object InboxFilingEngine {
 
     private val headingMarker = Regex("""(?i)\b(project|manuscript|drafts?|notes|outline)\b""")
 
-    private val genericTokens = setOf(
-        "app", "application", "apk", "source", "src", "build", "release", "debug",
-        "final", "copy", "handoff", "notes", "note", "readme", "master", "private",
-        "signed", "canonical", "arm64", "universal", "bundle", "zip", "file", "files",
-        "image", "img", "photo", "picture", "track", "song", "audio", "video", "screenshot", "android", "version", "ver", "dev",
-        "manuscript", "manuscripts", "novel", "chapter", "chapters", "draft", "drafts",
-        "revision", "revisions", "research", "outline", "cover", "artwork",
-    )
+    private val genericTokens = ProjectEvidenceTerms.generic
 
     fun resolve(
         artifacts: List<FilingArtifact>,
@@ -195,17 +188,19 @@ object InboxFilingEngine {
         }
 
         correctionRules.forEach { rule ->
-            if (artifact.displayName.contains(rule.term, ignoreCase = true)) {
-                val home = homes.bestNamed(rule.destinationFolder)
-                    ?: syntheticHome(rule.destinationFolder, storageRoot)
-                add(home, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder}", 120)
+            if (ProjectEvidenceTerms.containsTerm(artifact.displayName, rule.term)) {
+                val candidates = homes.matchingNamed(rule.destinationFolder)
+                    .ifEmpty { listOf(syntheticHome(rule.destinationFolder, storageRoot)) }
+                candidates.forEach { home ->
+                    add(home, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder}", 120)
+                }
             }
         }
 
         projectKeywords.forEach { keyword ->
-            val filenameHit = artifact.displayName.contains(keyword.term, ignoreCase = true)
-            val contentHit = !filenameHit && artifact.indexedText.contains(keyword.term, ignoreCase = true)
-            val archiveHit = !filenameHit && artifact.archiveSample.any { it.contains(keyword.term, ignoreCase = true) }
+            val filenameHit = ProjectEvidenceTerms.containsTerm(artifact.displayName, keyword.term)
+            val contentHit = !filenameHit && ProjectEvidenceTerms.containsTerm(artifact.indexedText, keyword.term)
+            val archiveHit = !filenameHit && artifact.archiveSample.any { ProjectEvidenceTerms.containsTerm(it, keyword.term) }
             if (filenameHit || contentHit || archiveHit) {
                 val home = homes.bestNamed(keyword.projectFolder)
                     ?: syntheticHome(keyword.projectFolder, storageRoot)
@@ -240,10 +235,10 @@ object InboxFilingEngine {
             if (packageName != null && home.packageIds.any { it.equals(packageName, ignoreCase = true) }) {
                 add(home, FilingEvidenceKind.APK_PACKAGE, "APK package $packageName is registered to ${home.name}", 140)
             }
-            if (labels.any { label -> artifact.archiveSample.any { entry -> entry.contains(label, ignoreCase = true) } }) {
+            if (labels.any { label -> artifact.archiveSample.any { entry -> ProjectEvidenceTerms.containsTerm(entry, label) } }) {
                 add(home, FilingEvidenceKind.ARCHIVE_ENTRY, "archive entries mention ${home.name}", 78)
             }
-            if (artifact.indexedText.isNotBlank() && labels.any { artifact.indexedText.contains(it, ignoreCase = true) }) {
+            if (artifact.indexedText.isNotBlank() && labels.any { ProjectEvidenceTerms.containsTerm(artifact.indexedText, it) }) {
                 val heading = artifact.indexedText.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
                 val headingTokens = meaningfulTokens(heading).toSet()
                 val titleMarker = heading.trimStart().startsWith("#") || headingMarker.containsMatchIn(heading)
@@ -254,6 +249,13 @@ object InboxFilingEngine {
                 add(home, FilingEvidenceKind.INDEXED_CONTENT,
                     if (identifiesTitle) "document heading identifies ${home.name}" else "indexed document content mentions ${home.name}",
                     if (identifiesTitle) 94 else 70)
+            }
+        }
+
+        explicitContentProject(artifact.indexedText)?.let { title ->
+            val candidates = homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot)) }
+            candidates.forEach { home ->
+                add(home, FilingEvidenceKind.INDEXED_CONTENT, "document explicitly names project “$title”", 94)
             }
         }
 
@@ -283,7 +285,15 @@ object InboxFilingEngine {
             }
         }
 
-        val ranked = evidenceByHome.entries.sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
+        val mapped = evidenceByHome.entries.filter { (_, evidence) -> evidence.any { it.kind == FilingEvidenceKind.USER_MAPPING } }
+        // Remembered user intent takes priority; two remembered owners require an explicit choice.
+        if (mapped.size > 1) {
+            return FilingDecision(artifact, null, null, releaseOf(artifact), null, FilingConfidence.UNRESOLVED,
+                mapped.flatMap { it.value.filter { evidence -> evidence.kind == FilingEvidenceKind.USER_MAPPING } } +
+                    FilingEvidence(FilingEvidenceKind.PROJECT_AMBIGUITY, "Remembered mappings identify competing homes; choose a project home.", 200))
+        }
+        val ranked = mapped.ifEmpty { evidenceByHome.entries.toList() }
+            .sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
         val best = ranked.firstOrNull()
         if (best == null) {
             NonProjectMediaFiling.propose(artifact, storageRoot)?.let { return it }
@@ -425,6 +435,25 @@ object InboxFilingEngine {
             hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
             persisted = false,
         )
+    }
+
+    /** Only a bounded explicit project field can introduce a home from content alone. */
+    private fun explicitContentProject(text: String): String? {
+        val labels = text.lineSequence().take(16).mapNotNull { line ->
+            val title = explicitProjectField.matchEntire(line.take(160))?.groupValues?.get(1)?.trim()?.trim('"', '\'')
+                ?: return@mapNotNull null
+            title.takeIf { sanitizeSegment(it) == it && meaningfulTokens(it).isNotEmpty() }
+        }.distinct().take(2).toList()
+        return labels.singleOrNull()
+    }
+
+    private val explicitProjectField = Regex("(?i)\\s*(?:#{1,3}\\s*)?(?:project(?:\\s+title)?|series)\\s*[:—-]\\s*(.+?)\\s*")
+
+    private fun List<ProjectHomeCandidate>.matchingNamed(label: String): List<ProjectHomeCandidate> {
+        val scored = map { home -> home to (listOf(home.name) + home.aliases).maxOf { textMatchScore(label, it) } }
+            .filter { it.second >= 62 }
+        val best = scored.maxOfOrNull { it.second } ?: return emptyList()
+        return scored.filter { it.second == best }.map { it.first }.distinctBy { normalize(it.path) }
     }
 
     private fun List<ProjectHomeCandidate>.bestNamed(label: String): ProjectHomeCandidate? =

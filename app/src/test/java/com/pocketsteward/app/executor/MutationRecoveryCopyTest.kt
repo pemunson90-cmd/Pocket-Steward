@@ -163,6 +163,11 @@ class MutationRecoveryCopyTest {
             current.takeIf { it.id == id }
 
         override suspend fun latestTaskId(): Long = current.id
+        override suspend fun busyCount(): Int =
+            if (current.status == TaskRunStatus.RUNNING || current.status == TaskRunStatus.UNDOING) 1 else 0
+        override fun observeBusyCount(): Flow<Int> = flowOf(
+            if (current.status == TaskRunStatus.RUNNING || current.status == TaskRunStatus.UNDOING) 1 else 0,
+        )
         override suspend fun plansAfter(afterId: Long): List<com.pocketsteward.app.data.db.QueuedPlanIdentity> =
             if (current.id > afterId) listOf(com.pocketsteward.app.data.db.QueuedPlanIdentity(current.id, current.planJson)) else emptyList()
         override suspend fun portableSummaries(): List<com.pocketsteward.app.backup.ArchivedTaskSummary> =

@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         lifecycleScope.launch {
             val container = (application as PocketStewardApplication).container
+            container.inboxObservation.refreshPermissions()
             val state = container.settingsRepository.storageAccessState.first()
             if (state.mode == null) return@launch
 

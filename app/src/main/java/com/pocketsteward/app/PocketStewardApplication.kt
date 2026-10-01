@@ -20,6 +20,7 @@ class PocketStewardApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.inboxObservation.start()
 
         // Resolve any write-ahead rows left by process death before the next
         // user-initiated task relies on journal/history state. Recovery is

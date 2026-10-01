@@ -56,6 +56,10 @@ class AppContainer(context: Context) {
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
 
+    val inboxObservation: com.pocketsteward.app.library.InboxObservation by lazy {
+        com.pocketsteward.app.library.InboxObservation(appContext, settingsRepository, database.taskRunDao(), appScope)
+    }
+
     /** One walker per scan root, shared by the background library and manual scans. */
     val scanLocks: com.pocketsteward.app.library.ScanLocks by lazy { com.pocketsteward.app.library.ScanLocks() }
 

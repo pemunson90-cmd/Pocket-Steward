@@ -7,6 +7,30 @@ import com.pocketsteward.app.rules.ProjectKeyword
 import org.junit.Test
 
 class SemanticGroupingEngineTest {
+    @Test fun conflictingLearnedMappingsStayUnresolvedInsteadOfChoosingTheFirst() {
+        val record = record("/Download/Lilith_NSTL.md", "Lilith_NSTL.md")
+        val decisions = SemanticGroupingEngine.decide(listOf(record), emptyList(),
+            listOf(com.pocketsteward.app.saved.CorrectionRule("Lilith", "Lilith"),
+                com.pocketsteward.app.saved.CorrectionRule("NSTL", "NSTL")), emptyMap(),
+            listOf(SemanticSuggestion(record.stableRef, CoherenceClass.QUESTIONABLE, "Model guess")))
+        assertThat(decisions).isEmpty()
+    }
+
+    @Test fun conflictingContentKeywordsDoNotYieldAnArbitraryModelDestination() {
+        val record = record("/Download/document.md", "document.md")
+        val decisions = SemanticGroupingEngine.decide(listOf(record),
+            listOf(ProjectKeyword("Lilith", "Lilith"), ProjectKeyword("NSTL", "NSTL")),
+            indexedTextByRef = mapOf(record.stableRef to "Comparison of Lilith and NSTL"),
+            modelSuggestions = listOf(SemanticSuggestion(record.stableRef, CoherenceClass.QUESTIONABLE, "Model guess")))
+        assertThat(decisions).isEmpty()
+    }
+
+    @Test fun genericExportNamesDoNotInventAProjectCluster() {
+        val records = (1..20).map { record("/Download/ChatGPT_export_$it.md", "ChatGPT_export_$it.md") }
+        assertThat(SemanticGroupingEngine.decide(records, emptyList(), indexedTextByRef = emptyMap(), modelSuggestions = emptyList()))
+            .isEmpty()
+    }
+
     @Test
     fun explicitProjectKeywordWinsOverFilenameClusterAndModel() {
         val records = listOf(

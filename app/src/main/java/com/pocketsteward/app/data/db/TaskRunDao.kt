@@ -37,6 +37,12 @@ interface TaskRunDao {
     @Query("SELECT COALESCE(MAX(id), 0) FROM task_runs")
     suspend fun latestTaskId(): Long
 
+    @Query("SELECT COUNT(*) FROM task_runs WHERE status IN ('RUNNING', 'UNDOING')")
+    suspend fun busyCount(): Int
+
+    @Query("SELECT COUNT(*) FROM task_runs WHERE status IN ('RUNNING', 'UNDOING')")
+    fun observeBusyCount(): Flow<Int>
+
     @Query("SELECT id, planJson FROM task_runs WHERE id > :afterId ORDER BY id ASC")
     suspend fun plansAfter(afterId: Long): List<QueuedPlanIdentity>
 

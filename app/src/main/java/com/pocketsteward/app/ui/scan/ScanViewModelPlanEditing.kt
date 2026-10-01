@@ -594,32 +594,8 @@ internal fun ScanViewModel.editPlanDestinationGroup(
     }
 }
 
-internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? {
-    if (names.isEmpty()) return null
-    val generic = setOf(
-        "final", "copy", "file", "document", "download", "notes", "note",
-        "image", "img", "screenshot", "scan", "new",
-    )
-    val tokenSets = names.map { name ->
-        name.substringBeforeLast('.', name)
-            .lowercase()
-            .split(Regex("""[^a-z0-9]+"""))
-            .filter { token ->
-                token.length >= 3 &&
-                    token !in generic &&
-                    token.any { it.isLetter() }
-            }
-            .toSet()
-    }
-    val minimum = if (tokenSets.size == 1) 1 else (tokenSets.size + 1) / 2
-    return tokenSets
-        .flatten()
-        .groupingBy { it }
-        .eachCount()
-        .filterValues { it >= minimum }
-        .maxWithOrNull(compareBy<Map.Entry<String, Int>> { it.value }.thenBy { it.key.length })
-        ?.key
-}
+internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? =
+    com.pocketsteward.app.filing.ProjectEvidenceTerms.learnFilenameTerm(names)
 
 internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolean) {
     val current = _preview.value ?: return

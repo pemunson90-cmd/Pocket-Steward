@@ -102,6 +102,7 @@ fun SettingsScreen(
     val modelStatus by viewModel.modelStatus.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
     val diagnosticsStatus by viewModel.diagnosticsStatus.collectAsState()
+    val inboxObservation by container.inboxObservation.status.collectAsState()
 
     var notificationsGranted by remember {
         mutableStateOf(
@@ -533,6 +534,19 @@ fun SettingsScreen(
 
         HorizontalDivider(modifier = Modifier.padding(top = 24.dp))
         SectionTitle("Background library")
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Inbox monitoring", style = MaterialTheme.typography.titleMedium)
+                Text(inboxObservation.message)
+                inboxObservation.watchedFolders.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                inboxObservation.lastChangeAt?.let { at ->
+                    Text("Last change noticed: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(at))}",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text("Refreshes names, sizes and dates. Content inspection follows your privacy and charging settings. Moves need your review.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
         val libraryStatus by viewModel.libraryStatus.collectAsState()
         val librarySettings by viewModel.librarySettings.collectAsState()
         val libraryRefreshing by viewModel.libraryRefreshing.collectAsState()

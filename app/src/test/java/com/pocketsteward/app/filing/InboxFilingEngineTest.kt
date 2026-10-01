@@ -7,6 +7,56 @@ import com.pocketsteward.app.saved.ProjectHierarchyStrategy
 import org.junit.Test
 
 class InboxFilingEngineTest {
+    @Test fun explicitProjectFieldCanResolveAGenericFileWithoutARegisteredHome() {
+        val file = artifact("ChatGPT_export_1.txt", "txt", 1000).copy(indexedText = "Project: NSTL\nManuscript\nChapter One")
+        val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.projectHome?.path).isEqualTo("/storage/emulated/0/Documents/NSTL")
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.STRONG)
+        assertThat(decision.createsProjectHome).isTrue()
+    }
+
+    @Test fun conflictingExplicitProjectFieldsStayUnresolved() {
+        val file = artifact("export.txt", "txt", 1000).copy(indexedText = "Project: Lilith\nProject: NSTL")
+        val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(), emptyList(),
+            "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
+    @Test fun genericHeadingAndIncidentalMentionsCannotInventAProjectHome() {
+        for (text in listOf("# Chapter One\nSomeone mentioned Lilith.", "Project: Untitled", "Project: ../Lilith")) {
+            val file = artifact("export.txt", "txt", 1000).copy(indexedText = text)
+            val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(), emptyList(),
+                "/storage/emulated/0").decisions.single()
+            assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+        }
+    }
+
+    @Test fun rememberedOwnerWinsOverUnrelatedFilenameAndContentSignals() {
+        val lilithHome = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val nstlHome = lilithHome.copy(name = "NSTL", path = "/storage/emulated/0/Documents/NSTL")
+        val file = artifact("Lilith_notes.txt", "txt", 1000).copy(indexedText = "# Lilith Notes\nProject: Lilith")
+        val decision = InboxFilingEngine.resolve(listOf(file), listOf(lilithHome, nstlHome), emptyList(), emptyList(),
+            listOf(CorrectionRule("Lilith", "NSTL")), "/storage/emulated/0").decisions.single()
+        assertThat(decision.projectHome?.path).isEqualTo(nstlHome.path)
+    }
+
+    @Test fun competingRememberedOwnersStayUnresolvedRegardlessOfOtherWeights() {
+        val file = artifact("Lilith_NSTL_notes.txt", "txt", 1000).copy(indexedText = "Project: Lilith")
+        val decision = InboxFilingEngine.resolve(listOf(file), emptyList(), emptyList(), emptyList(),
+            listOf(CorrectionRule("Lilith", "Lilith"), CorrectionRule("NSTL", "NSTL")), "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
+    @Test fun aRememberedProjectTitleCannotChooseBetweenTwoMatchingHomes() {
+        val one = ProjectHomeCandidate("Lilith", "/storage/emulated/0/Documents/Lilith", hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES)
+        val two = one.copy(path = "/storage/emulated/0/Projects/Lilith")
+        val file = artifact("Lilith_notes.txt", "txt", 1000)
+        val decision = InboxFilingEngine.resolve(listOf(file), listOf(one, two), emptyList(), emptyList(),
+            listOf(CorrectionRule("Lilith", "Lilith")), "/storage/emulated/0").decisions.single()
+        assertThat(decision.confidence).isEqualTo(FilingConfidence.UNRESOLVED)
+    }
+
     private val lilith = ProjectHomeCandidate(
         name = "Lilith Companion App",
         path = "/storage/emulated/0/Lilith Companion App",

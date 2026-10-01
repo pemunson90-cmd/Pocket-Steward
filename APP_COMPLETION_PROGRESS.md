@@ -42,14 +42,23 @@ The synthetic 16,000-file test covers project ownership, probable supporting ass
 - Durable plan format v4 separates the exact goal from single-line display text, escapes display reasons, and encodes digest tokens. Decoding enforces operation encounter order, rejects machine records before the header and duplicate preconditions, and preserves normal v1–v3 compatibility. Tests demonstrate that goal/reason newlines cannot introduce extra unapproved operations. Task reports recover exact reasons from structured records.
 - Review restoration checks the current tree grant as well as storage mode. Draft watermarks and backup histories use metadata-only queries instead of loading all historical operation plans.
 
+## Implemented for dev9
+
+- Process-lifetime inbox observation watches configured direct-access roots and their immediate Uncertain checkpoints. One conflated queue handles event bursts; a three-second quiet period and two-minute minimum interval bound library refreshes. It waits for active move/undo tasks and pending manual/observed refreshes. Background work respects battery/storage constraints, current access and the background switch; disabling it cancels pending observations. The Settings card lists actual watched paths and distinguishes SAF/scheduled fallback. Synthetic notices after startup cover missed events without falsely reporting a file change. No unattended mutation path was added.
+- Shared project vocabulary filters generic export/role/version/opaque-ID terms in inferred grouping and automatic correction learning. Learning requires 80% support and rejects equal-support alternatives. Whole-term mapping matches avoid substring false positives. Semantic grouping holds conflicting corrections/keywords; inbox filing gives remembered ownership priority and holds competing corrections or duplicate matching homes.
+- A bounded explicit Project/Project title/Series field can introduce a project home from document content alone. Generic headings, unsafe names, incidental mentions and competing fields remain unresolved. Existing templates and typed destination review remain in use.
+- Automated queue cases cover 16,000-notice bursts, refresh spacing, active-task waiting, cancellation, revoked access and recovery after scheduler failure. Physical Android event delivery and scheduler/permission acceptance remain unverified.
+
+543 unit tests, lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev9 (49). The existing overlapping-root SQLite checks also passed. Instrumentation was compiled, not run. Canonical signed dev9 release assembly passed; its signer matches the installed-app pin, its version is 1.4.0-dev9 (49), and INTERNET permission remains absent. Phone acceptance remains open.
+
 ## Remaining completion work
 
 - Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
 - Expanded archive formats where safe; richer grounded image descriptions and project/topic template coverage.
-- Persistent storage-wide project knowledge and responsive inbox observation with permission-aware background fallback.
+- Persistent storage-wide project knowledge; target-phone acceptance of the new inbox observation and its permission-aware fallback.
 - Target-phone acceptance of settings backup/restore; optional configured provider and compatible local-runtime adapters with a deliberate network-edition/privacy design.
-- AppFunctions maturity decision and any viable bounded integration; remaining shortcut/integration coverage.
+- AppFunctions maturity review completed: official releases remain alpha-only (1.0.0-alpha12). Production integration is conditionally deferred; see APPFUNCTIONS_DECISION.md. Remaining shortcut/integration coverage stays open.
 - Current-phone acceptance: full 16k corpus timing and memory, navigation/restart/cancel, Fold/split/accessibility, revoked grants, low storage, thermal/battery, reboot/recovery, migrations and cross-root undo.
 - Reproducible release/CI automation and final end-to-end tutorial updates.
 
