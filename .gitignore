@@ -17,3 +17,7 @@ app/build/
 SIGNING-CREDENTIALS.txt
 *.apk
 .env
+
+# Python release-tool caches.
+__pycache__/
+*.pyc
