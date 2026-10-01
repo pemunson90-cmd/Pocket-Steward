@@ -4,13 +4,19 @@ Requested outcome: organize a real Downloads library of approximately 16,000 fil
 
 Current baseline: signed 1.4.0-dev6, version code 46; tested application source `f19050817efcd776291d047eafc4e00ac0490e82`, tag `v1.4.0-dev6`. Its 413 unit tests and lint passed. That is not evidence of phone acceptance at 16,000 files. This document plans work; its items are not implemented in dev6.
 
-**1. Establish the reported failure before changing behavior**
+**1. Confirmed user symptom and first priority**
 
-The user reports approximately 16,000 files that will not sort out of Downloads. It is not yet known whether planning stalls, the app exits/errors, or a plan runs while most items remain. Capture the exact stage, displayed counts, error if any, storage mode, and whether the count includes descendants inside folders. The assistant has requested this distinction.
+The user clarified that approximately **16,000 files are already in Uncertain**. The immediate problem is inadequate useful classification and the missing bulk checkpoint workflow. A move into Uncertain is an accounted-for hold, not successful project organization. Planning stalls or an execution crash are not the reported symptom and must not be assumed.
 
-Add a local stage report with discovered file/folder counts, items covered by intact folders, eligible/protected/inaccessible counts, elapsed stage times, and task outcome. Keep filenames, paths, document content, and prompts out of the default diagnostic summary. A report containing such details should be an explicit separate export.
+Dev6 explicitly skips existing Uncertain contents during the top-level inbox pass. Repeating Organize Downloads therefore does not revisit these 16,000 files. The next release must accept the existing checkpoint directly and make it practical to resolve it in related groups.
 
-Reproduce with generated 16,000-file fixtures, including loose documents, mixed project bundles, generic filenames, images, archive files, existing Uncertain contents, destination collisions, protected subtrees, and nested directories. Test both full-storage and granted-tree access.
+The first deliverable is **Review and sort Uncertain**: discover the existing checkpoint, report its file/folder coverage, build meaningful project/topic proposals from available filename and content evidence, and let the user confirm groups rather than make 16,000 manual decisions. Preserve existing files until their reviewed destinations are approved. Conflicting or genuinely insufficient evidence remains visible in Uncertain; do not force a classification to inflate a success count.
+
+Still to establish during implementation: how much content is indexed, which file types dominate, whether the count includes descendants, and which stable project aliases already exist. These are diagnostic inputs, not reasons to postpone the checkpoint workflow.
+
+Add a local stage report with discovered file/folder counts, items covered by intact folders, eligible/protected/inaccessible counts, available content coverage, proposed project groups, remaining uncertain groups, elapsed stage times, and task outcome. Keep filenames, paths, document content, and prompts out of the default diagnostic summary. A report containing such details should be an explicit separate export.
+
+Reproduce with a populated **Uncertain containing 16,000 files**, not only a fresh Downloads inbox. Include generic filenames, mixed project documents/artwork, archives, existing project homes, conflicting projects, destination collisions, protected subtrees, and nested directories. Test both full-storage and granted-tree access.
 
 **2. Confirmed code issues and limits**
 
@@ -25,11 +31,21 @@ Reproduce with generated 16,000-file fixtures, including loose documents, mixed 
 | Selection/completion | Probable matches are unchecked; Strong only clears checkpoint selections; protected/colliding/changed items may remain | A successful selected subset is not an emptied Downloads folder; the app needs an explicit remaining-items account |
 | Scope and uncertainty | Full-storage filing treats immediate folders as intact units; granted-tree inbox filing excludes source folders; existing Uncertain is skipped | A count of all descendants differs from move units, and there is no dedicated bulk checkpoint reclassification workflow |
 
-These findings identify implementation weaknesses. They do not yet prove which one caused the user's exact phone symptom. There is no confirmed general 16,000-file ceiling in the scope-record query; bounded UI views and specific scan paths must not be confused with such a ceiling.
+These findings identify implementation weaknesses. The reported symptom is now checkpoint saturation; scale weaknesses still need fixing so that resolving this checkpoint is usable. The reason each file lacked confident project evidence still needs measurement. There is no confirmed general 16,000-file ceiling in the scope-record query; bounded UI views and specific scan paths must not be confused with such a ceiling.
 
 **3. Implementation order**
 
-**P0 — Make 16,000-file planning and review usable first**
+**P0 — Resolve the existing 16,000-file Uncertain checkpoint**
+
+Add a visible **Sort Uncertain** action on Home and from the checkpoint folder. Use that folder as an explicit reclassification scope rather than hiding it behind the parent Downloads pass. Track original inbox/checkpoint provenance and avoid creating Uncertain/Uncertain or re-quarantining the same files as apparent progress.
+
+Show content-index coverage before semantic enrichment. Reuse indexed text; incrementally extract supported unindexed documents with progress and cancellation. Combine distinctive project names, aliases, document titles/passages, archive entry samples, exact filename families, and explicit corrections. Use compatible on-device semantics where available and a clear evidence-based fallback where not. Generic filenames alone should not prevent content-backed grouping. Protect project ownership from broad topic or extension rules.
+
+Build related-file bundles first, then propose project homes and roles within those bundles. Keep attachments, images, drafts, notes, and versions together when evidence supports that relationship. Present a few group-level decisions with representative files and reasons, while allowing inspection of every member. A user can confirm a project, choose another, split a mistaken group, or hold it in Uncertain. Remember corrections only with explicit user intent. Groups with competing owners must remain held until resolved.
+
+The primary completion metric is useful, correct, user-confirmed filing out of the existing checkpoint, alongside clear remaining reasons. Merely moving unknown items into another hold folder does not pass this requirement.
+
+**P0 — Make 16,000-file planning and review usable**
 
 Create a durable filing session backed by paged database records rather than one enormous in-memory plan. Process discovery, cheap matching, optional enrichment, conflict checking, review, and execution as visible stages. Persist progress so a killed process or paused task can continue safely.
 
@@ -49,13 +65,13 @@ Retain mutation-boundary protection, no-overwrite checks, reviewed source snapsh
 
 Report moved, checkpointed, excluded, changed, inaccessible, collision-blocked, and still-pending files separately. A failed batch must not block unrelated eligible items indefinitely or silently mark the entire session complete. Pause/resume must not duplicate moves or invent new decisions.
 
-**P1 — Complete the project and checkpoint workflow**
+**P1 — Complete project setup and bundle handling**
 
 Add a plain-language project manager with folder pickers, aliases, and a visible layout choice. Users should not need `strategy=PROJECT_ROLES` or raw Android paths for ordinary setup. Discover existing projects in authorized Documents locations and show a proposed new project for approval when needed.
 
 Review by project bundles, not merely by extension. Make the reason for ownership distinct from the reason for a role. Preserve existing folder contents by default. Offer a separate, explicit reviewed merge/restructure workflow when the user wants to combine a bundle with an existing project hierarchy; do not scatter its contents as an incidental side effect.
 
-Add **Review Uncertain** as a first-class action. Allow selection of one item or a related group, project/topic assignment with a folder picker, optional remembered correction, and a fresh validated move plan. Keep project evidence, filenames, indexed text, and user corrections available during reclassification. Do not force users to move items back into Downloads to retry.
+Polish the P0 Uncertain workflow with accessible project/topic pickers, group search, saved review progress, and user corrections. Keep project evidence, filenames, indexed text, and user corrections available during reclassification. Do not force users to move items back into Downloads to retry.
 
 Use a complete reconciliation summary: every discovered source is either covered by a reviewed intact folder, assigned to a destination, assigned to Uncertain, intentionally excluded, or blocked with a reason. Give the user a review choice for probable matches: confirm the project destination, keep at the checkpoint, or explicitly leave in place. Show the remaining Downloads count before Run and after execution. Never claim the folder is clear while unaccounted items remain.
 
@@ -81,6 +97,7 @@ Connect the existing local image-analysis results to explicit, reviewable topic 
 
 **4. Release gates for dev7**
 
+- A pre-existing Uncertain checkpoint with 16,000 files can be reviewed and sorted directly, without moving files back to Downloads. Generic-named documents containing distinctive NSTL/Lilith/Stories/project-documentation evidence produce correct project proposals; ambiguous documents remain held. Related attachments are preserved.
 - Every source in a synthetic 16,000-file run is accounted for exactly once, including descendants covered by intact folders. Add a larger 50,000-file stress fixture to expose scale regressions; do not market that size as supported until measured.
 - A 16,000-item Uncertain group and a 16,000-item project group can open, scroll, select by group, and switch views without composing all rows at once or blocking the UI thread. Measure memory and responsiveness on a named reference phone; desktop unit tests alone cannot pass this gate.
 - Record timings for discovery, matching, enrichment, validation, review loading, and execution. Establish hardware baselines before publishing timing promises. Cheap matching must show bounded/indexed growth rather than all-pairs growth.
@@ -96,4 +113,4 @@ Connect the existing local image-analysis results to explicit, reviewable topic 
 
 Ship a dev7 candidate only after the P0 large-library and recovery gates pass, together with the coverage summary and bulk Uncertain review needed to finish a run. Include richer semantics only as far as they pass their fixture tests. Then schedule a separate follow-up for remaining P2 polish rather than hiding an unresolved 16,000-file filing failure behind new menus.
 
-The user's phone symptom and reference-device measurements remain open inputs. The tutorial and plan are published on the upgrade branch; they do not alter the installed dev6 APK or merge that development source into main.
+The confirmed phone symptom is 16,000 files in Uncertain. Content coverage, the reasons for low classification confidence, and reference-device measurements remain open inputs. The tutorial and plan are published on the upgrade branch; they do not alter the installed dev6 APK or merge that development source into main.
