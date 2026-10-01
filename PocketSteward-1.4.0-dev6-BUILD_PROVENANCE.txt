@@ -1,0 +1,29 @@
+Pocket Steward 1.4.0-dev6 update candidate
+Version code: 46
+Source commit: f19050817efcd776291d047eafc4e00ac0490e82
+Source branch: upgrade/smart-downloads-dev6
+GitHub release tag: v1.4.0-dev6
+GitHub source commit: f19050817efcd776291d047eafc4e00ac0490e82
+Built UTC: 2026-10-01T00:34:07.596433+00:00
+APK SHA-256: cdecb656cbf13b5f328c409cc49789f9b82db10eeab4ce8edc00fe9a8014f5a2
+Signer SHA-256: b9057dd649daea23390337f2c35892d0ef8591e57e9e9a27355e7cd11a841935
+Signer matches the supplied installed dev2 build provenance: yes
+Package: package: name='com.pocketsteward.app' versionCode='46' versionName='1.4.0-dev6' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+Validation: 413 unit tests passed; lintDebug passed; assembleRelease passed; apksigner verification passed.
+Device install and phone UI acceptance: not run; no connected Android device.
+
+Changes:
+- Organize Downloads home action and project-grouped review with proposed destinations and evidence.
+- Documents/<Project>/Manuscript, Notes, Drafts, Images, Versions and Archive role proposals.
+- Mixed filename families identify one project; existing project homes and indexed document evidence take priority.
+- Unresolved files and intact direct-storage folders use Downloads/Uncertain.
+- Folder-tree metadata snapshots are checked after review, before execution, and preserved for resume.
+- Filename topic suggestions for Images/Landscape, Portraits and Screenshots require review and are not learned as general projects.
+
+Use:
+Install this APK over the existing app, then select Organize Downloads. Review the groups and confirm probable matches before running the selected plan. Existing review, protection, no-overwrite, journal, history and undo controls remain in use.
+
+Limits:
+Image pixels are not classified. Whole folders keep their existing internal layout. Selected-folder access is limited to the Android-granted tree and currently files loose files only. Unchecked, protected, changed, inaccessible or colliding sources can remain in Downloads; only a successfully completed plan covering all eligible sources leaves just Uncertain there. This is a development update candidate, with phone acceptance still pending.
+
+Signing passwords and private keys are not included in these exported files.
