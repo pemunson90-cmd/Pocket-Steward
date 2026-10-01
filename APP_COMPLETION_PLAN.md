@@ -2,6 +2,14 @@
 
 Updated 2026-10-01. Audited baseline: dev6, source f19050817efcd776291d047eafc4e00ac0490e82. This supersedes the narrower dev7 plan. These are planned changes, not features already shipped.
 
+## Consolidated master-plan reconciliation
+
+The supplied 2026-09-30 master plan has now been compared section by section. [MASTER_PLAN_RECONCILIATION.md](MASTER_PLAN_RECONCILIATION.md) maps every numbered section, all evidence classes, frozen invariants and reported defects to this backlog and adds missing tasks. The supplied [master document](POCKET_STEWARD_MASTER_PLAN_2026-09-30.md) is retained verbatim. This reconciliation is part of the completion plan.
+
+New explicit work: Coherence-review regression retest; cancel/back/cache stabilization; freshness-keyed enrichment cache and suspicious-change detection; durable review state; unified evidence inspector; CATEGORY hierarchy reconciliation; release-convention preservation and release-folder/split-group editing; saved Inbox workflow; optional provider/local runtime adapters; battery/thermal/accessibility/backup and release automation.
+
+Optional configured network providers are now tracked from the master plan. Core organization remains offline and no-model capable; any provider-enabled build requires explicit configuration, data disclosure and a deliberate permission/privacy design. Rich project entities remain conditional on actual data-model needs.
+
 ## Definition of finished
 
 Organize Downloads and its existing Uncertain checkpoint into relevant sibling main folders and project subfolders, keeping related documents, images, release artifacts and existing folders together. Documents/<project> supports Manuscript, Notes, Drafts, Images, Versions and Archive. Non-project media has meaningful category homes. Downloads/Uncertain retains only files for which the app cannot justify a destination. Emptying it by inventing destinations is not success.
@@ -46,6 +54,7 @@ Confirmed source anchors:
 | Duplicate project-home consolidation | Planned extension | Review a proposed merged home, resolve same-name/different-content conflicts, preserve structure, execute and undo safely. |
 | Storage-wide project knowledge | Planned extension | Durable local registry of authorized project homes/evidence, incremental refresh, explicit incomplete coverage and permission revocation handling. |
 | Natural-language commands and follow-ups | Implemented; verify integration | All supported commands lead to useful results/plans; refer to current scan, respect destination scope and shared project evidence. Unsupported requests explain available alternatives. |
+| Optional provider and local-runtime models | Planned in consolidated master | Provider-independent bounded semantic adapters, explicit optional configuration/data disclosure, availability/failure fallback; no model filesystem authority. Offline core remains usable. |
 | On-device model and deterministic fallback | Implemented optional boundary; verify | Model availability/download/status visible; offline filename/metadata/content rules remain usable; model output passes typed validation. |
 | Search, Ask and inspection | Implemented; verify connected journey | Search/open/source citations remain useful; relevant selected results can enter supported reviewed organization flows without losing scope or provenance. Read-only factual answers remain intentional. |
 | File browser, multi-root inventory and protections | Implemented; verify | Direct/SAF selection, overlapping roots, favorites, protected folders, refresh and revoked permissions work consistently. |
@@ -64,6 +73,10 @@ Confirmed source anchors:
 | Phone usability and release readiness | Unverified for new completion build | Fold closed/open, split screen, accessibility, rotation, low storage, revoked/regranted access, reboot and background work; signed update installs over dev6 without losing state. |
 
 ## Delivery sequence
+
+### 0. Stabilize current journeys and preserve work
+
+Retest all five master-plan reported defects on the current build: Coherence-to-review crash, cancel/back restart, opening-screen dead space, unnecessary repeated work and lost review state on navigation. Fix reproduced regressions; record build/device cases for reports that do not reproduce. Verify foreground index progress, cached scan reuse, learned homes and cross-root undo before expanding those paths.
 
 ### 1. Complete the core organizing journey
 
