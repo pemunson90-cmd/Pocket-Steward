@@ -35,7 +35,7 @@ class ContentIndexScopesTest {
         assertThat(full.document.extractionProfile).isEqualTo("FULL")
         assertThat(full.document.coverageComplete).isTrue()
         assertThat(fixture.repository.ensureDocument(candidate, ContentInspectionBudget.FILING).reused).isTrue()
-        assertThat(fixture.reads).isEqualTo(2)
+        assertThat(fixture.reads).isEqualTo(7)
     }
     @Test fun rootFilterAcceptsEveryMembershipWithoutDuplicatingOneResult() {
         val row = IndexedSearchRow(1, "/Downloads/Uncertain/a.txt", "/Downloads", "a.txt", "/Downloads/Uncertain", "txt", "DOCUMENT", 12, 100, "PLAIN_TEXT", null, false, "Lilith", matchingSourceRoots = "/Downloads\n/Downloads/Uncertain", extractionProfile = "FILING")

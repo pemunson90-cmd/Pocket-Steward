@@ -52,6 +52,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.map
 import com.pocketsteward.app.ai.AskModelAnswer
 import com.pocketsteward.app.content.ask.AskPassage
 import com.pocketsteward.app.content.index.ContentSearchDatabase
@@ -75,6 +77,8 @@ fun AskScreen(onBack: () -> Unit) {
         },
     )
     val state by viewModel.state.collectAsState()
+    val contentEnabledFlow = remember(container) { container.settingsRepository.privacySettings.map { it.contentInspectionEnabled } }
+    val contentEnabled by contentEnabledFlow.collectAsState(initial = false)
     var question by rememberSaveable { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
     val submit = {
@@ -102,7 +106,8 @@ fun AskScreen(onBack: () -> Unit) {
                 .imePadding(),
         ) {
             Text(
-                "Answers come only from files already in your content index, with the passages they came from. Read-only.",
+                if (contentEnabled) "Answers use verified indexed passages. After updating, run Content search for the relevant folders to refresh older excerpts. Read-only."
+                else "Content inspection is off. Enable it in Settings to ask about file content.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

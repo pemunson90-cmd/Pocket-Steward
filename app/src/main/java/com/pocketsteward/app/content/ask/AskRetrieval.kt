@@ -27,6 +27,7 @@ data class AskCandidateRow(
     val body: String,
     val sizeBytes: Long? = null,
     val modifiedAt: Long? = null,
+    val quickFingerprint: String? = null,
 )
 
 /**

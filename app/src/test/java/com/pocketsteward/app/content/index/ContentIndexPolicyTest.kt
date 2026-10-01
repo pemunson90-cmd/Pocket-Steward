@@ -17,7 +17,7 @@ class ContentIndexPolicyTest {
             category = "DOCUMENT",
             sizeBytes = 10,
             modifiedAt = 20,
-            quickFingerprint = null,
+            quickFingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:fixture",
             contentKind = "PDF_TEXT",
             extractionStatus = "INDEXED",
             extractionError = null,
@@ -27,6 +27,7 @@ class ContentIndexPolicyTest {
         )
 
         assertThat(ContentIndexPolicy.canReuse(existing, record)).isTrue()
+        assertThat(ContentIndexPolicy.canReuse(existing.copy(quickFingerprint = null), record.copy(quickFingerprint = null))).isFalse()
         assertThat(ContentIndexPolicy.canReuse(existing.copy(modifiedAt = null), record.copy(modifiedAt = null))).isFalse()
         assertThat(ContentIndexPolicy.canReuse(existing.copy(quickFingerprint = "old"), record.copy(quickFingerprint = "new"))).isFalse()
     }
@@ -42,7 +43,7 @@ class ContentIndexPolicyTest {
             category = "DOCUMENT",
             sizeBytes = 10,
             modifiedAt = 20,
-            quickFingerprint = null,
+            quickFingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:fixture",
             contentKind = "PDF_TEXT",
             extractionStatus = "INDEXED",
             extractionError = null,
@@ -68,7 +69,7 @@ class ContentIndexPolicyTest {
             category = "DOCUMENT",
             sizeBytes = 10,
             modifiedAt = 20,
-            quickFingerprint = null,
+            quickFingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:fixture",
             contentKind = "PDF_TEXT",
             extractionStatus = "INDEXED",
             extractionError = null,
@@ -104,7 +105,7 @@ class ContentIndexPolicyTest {
             category = "DOCUMENT",
             sizeBytes = 10,
             modifiedAt = 20,
-            quickFingerprint = null,
+            quickFingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:fixture",
             contentKind = null,
             extractionStatus = IndexedExtractionStatus.FAILED.name,
             extractionError = "temporary read failure",
@@ -134,5 +135,6 @@ class ContentIndexPolicyTest {
         lastScannedAt = 1,
         isDirectory = false,
         isHidden = false,
+        quickFingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:fixture",
     )
 }

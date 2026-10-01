@@ -37,7 +37,7 @@ class ContentEvidenceVerifierTest {
     @Test fun missingAndRevokedSourcesDoNotBlockOtherDocuments() = runTest {
         val other = snapshot.copy(stableRef = "/Download/b.txt", name = "b.txt")
         val verifier = ContentEvidenceVerifier { path ->
-            if (path == ref) throw SecurityException("Permission revoked") else metadata(name = "b.txt")
+            if (path == ref) throw SecurityException("Permission revoked") else metadata(name = "b.txt").copy(ref = FileRef.Direct(other.stableRef))
         }
         assertThat(verifier.currentRefs(listOf(snapshot, other))).containsExactly(other.stableRef)
     }
@@ -53,23 +53,46 @@ class ContentEvidenceVerifierTest {
         assertThat(ContentEvidenceVerifier { metadata() }.currentRefs(listOf(snapshot, snapshot.copy(size = 200)))).isEmpty()
     }
 
-    @Test fun searchUsesTheLiveProofWithoutReadingContentsOrMutatingTheIndex() = runTest {
+    @Test fun searchChecksBoundedSamplesAndMetadataWithoutMutatingTheIndex() = runTest {
         var stats = 0
+        val bytes = ByteArray(100) { 65 }
+        val fingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.read(bytes.inputStream(), 100)
         val rows = listOf(
-            IndexedSearchRow(1, ref, "/Download", "a.txt", "/Download", "txt", "DOCUMENT", 100, 20, "TEXT", null, false, "Lilith"),
-            IndexedSearchRow(2, "/Download/b.txt", "/Download", "b.txt", "/Download", "txt", "DOCUMENT", 100, 20, "TEXT", null, false, "Old Lilith"),
+            IndexedSearchRow(1, ref, "/Download", "a.txt", "/Download", "txt", "DOCUMENT", 100, 20, "TEXT", null, false, "Lilith", quickFingerprint = fingerprint),
+            IndexedSearchRow(2, "/Download/b.txt", "/Download", "b.txt", "/Download", "txt", "DOCUMENT", 100, 20, "TEXT", null, false, "Old Lilith", quickFingerprint = fingerprint),
         )
         val dao = proxy<ContentIndexDao> { name, _ -> check(name == "searchRows"); rows }
         val gateway = proxy<StorageGateway> { name, args ->
-            check(name == "stat") { "Search must not read or mutate storage: $name" }
-            stats++
-            if (args[0] == FileRef.Direct(ref)) metadata() else metadata(name = "b.txt", date = 21)
+            when (name) {
+                "stat" -> { stats++; if (args[0] == FileRef.Direct(ref)) metadata() else metadata(name = "b.txt", date = 21) }
+                "openRead" -> { check(args[0] == FileRef.Direct(ref)); bytes.inputStream() }
+                else -> error("Search must not mutate storage: $name")
+            }
         }
         val result = ContentIndexRepository(dao, ContentInspector(gateway)).search("Lilith", listOf("/Download"))
         assertThat(result.map { it.stableRef }).containsExactly(ref)
-        assertThat(stats).isEqualTo(2)
+        assertThat(stats).isEqualTo(3)
     }
 
+    @Test fun sameMetadataWithDifferentSampleCannotSupplySearchOrAskEvidence() = runTest {
+        val fingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:old"
+        val verifier = ContentEvidenceVerifier(observeFingerprint = { fingerprint + "changed" }) { metadata() }
+        assertThat(verifier.currentRefs(listOf(snapshot.copy(quickFingerprint = fingerprint)))).isEmpty()
+    }
+    @Test fun legacyCachesMustBeReindexedBeforeSupplyingSampleVerifiedEvidence() = runTest {
+        var samples = 0
+        val verifier = ContentEvidenceVerifier(observeFingerprint = { samples++; "unused" }) { metadata() }
+        assertThat(verifier.currentRefs(listOf(snapshot))).isEmpty()
+        assertThat(samples).isEqualTo(0)
+    }
+    @Test fun sourceChangeAfterSampleCannotSupplyEvidence() = runTest {
+        val fingerprint = com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX + "prefix:unchanged"
+        var stats = 0
+        val verifier = ContentEvidenceVerifier(observeFingerprint = { fingerprint }) {
+            stats++; metadata(date = if (stats == 1) 20 else 21)
+        }
+        assertThat(verifier.currentRefs(listOf(snapshot.copy(quickFingerprint = fingerprint)))).isEmpty()
+    }
     private inline fun <reified T> proxy(crossinline handle: (String, Array<out Any?>) -> Any?): T =
         Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java)) { _, method, args -> handle(method.name, args ?: emptyArray()) } as T
 }

@@ -204,7 +204,7 @@ internal fun ScanViewModel.runCoherenceAudit(summary: ScanUiState.Summary) {
                 }
                 val canUseIndex =
                     summary.mode == StorageAccessMode.DIRECT &&
-                        ContentIndexPolicy.canReuse(existing, record) &&
+                        withContext(Dispatchers.IO) { repository.canReuse(com.pocketsteward.app.content.index.ContentIndexCandidate(record, summary.scopes.first().root.rawValue()), com.pocketsteward.app.content.ContentInspectionBudget.FULL) } &&
                         existing?.extractionStatus == IndexedExtractionStatus.INDEXED.name
 
                 val normalized = if (canUseIndex) {

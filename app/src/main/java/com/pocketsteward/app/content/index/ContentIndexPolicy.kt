@@ -3,7 +3,7 @@ package com.pocketsteward.app.content.index
 import com.pocketsteward.app.data.db.FileRecord
 
 object ContentIndexPolicy {
-    const val EXTRACTOR_VERSION: Int = 1
+    const val EXTRACTOR_VERSION: Int = 2
 
     fun canReuse(existing: IndexedDocument?, record: FileRecord, requestedProfile: String = "FULL"): Boolean {
         if (existing == null) return false
@@ -11,6 +11,7 @@ object ContentIndexPolicy {
         if (requestedProfile == "FULL" && existing.extractionProfile != "FULL") return false
         if (existing.extractorVersion != EXTRACTOR_VERSION) return false
         if (record.modifiedAt == null) return false
+        if (record.quickFingerprint?.startsWith(com.pocketsteward.app.evidence.EvidenceFingerprint.PREFIX) != true) return false
         if (existing.quickFingerprint != record.quickFingerprint) return false
         if (existing.sizeBytes != record.sizeBytes) return false
         if (existing.modifiedAt != record.modifiedAt) return false

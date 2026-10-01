@@ -29,6 +29,7 @@ data class ContentIndexInspection(val document: IndexedDocument, val reused: Boo
 class ContentIndexRepository(
     private val dao: ContentIndexDao,
     private val inspector: ContentInspector,
+    private val inspectionAllowed: suspend () -> Boolean = { true },
 ) {
     private companion object {
         const val STATE_CHECKPOINT_INTERVAL = 25
@@ -37,19 +38,37 @@ class ContentIndexRepository(
     /** Enrich one observed document without pruning unrelated rows or claiming a whole root is indexed. */
     suspend fun ensureDocument(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget = com.pocketsteward.app.content.ContentInspectionBudget.FULL): ContentIndexInspection {
         currentCoroutineContext().ensureActive()
-        val record = candidate.record
+        if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
+        var record = candidate.record
         val root = candidate.sourceRoot.trimEnd('/')
         require(root.isNotBlank() && !record.isDirectory)
         val existing = dao.getDocument(record.stableRef)
-        val freshnessFailure = observedFailure(record)
+        var freshnessFailure = observedFailure(record)
+        if (freshnessFailure == null) {
+            try {
+                record = record.copy(quickFingerprint = inspector.evidenceFingerprint(record))
+                freshnessFailure = observedFailure(record)
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (failure: Exception) { freshnessFailure = "Source cache sample could not be verified: ${failure.message ?: failure.javaClass.simpleName}" }
+        }
         if (freshnessFailure == null && ContentIndexPolicy.canReuse(existing, record, budget.profile)) {
+            if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
             dao.putScope(IndexedDocumentScope(record.stableRef, root))
             return ContentIndexInspection(requireNotNull(existing), reused = true)
         }
         val extraction = if (freshnessFailure != null) ContentExtraction.Failed(freshnessFailure) else {
             val observed = inspector.extract(record, budget)
             currentCoroutineContext().ensureActive()
-            val changedDuringRead = observedFailure(record)
+            var changedDuringRead = observedFailure(record)
+            if (changedDuringRead == null) {
+                try {
+                    if (inspector.evidenceFingerprint(record) != record.quickFingerprint) {
+                        changedDuringRead = "Source bytes changed during document inspection; rebuild the review."
+                    }
+                    if (changedDuringRead == null) changedDuringRead = observedFailure(record)
+                } catch (cancel: CancellationException) { throw cancel }
+                catch (failure: Exception) { changedDuringRead = "Source could not be verified after inspection: ${failure.message ?: failure.javaClass.simpleName}" }
+            }
             if (changedDuringRead == null) observed else ContentExtraction.Failed(changedDuringRead)
         }
         val segments = if (extraction is ContentExtraction.Text) extraction.toSegments(record.stableRef) else emptyList()
@@ -59,6 +78,7 @@ class ContentIndexRepository(
             is ContentExtraction.Failed -> record.toIndexedDocument(root, null, IndexedExtractionStatus.FAILED, extraction.reason, 0)
         }.copy(extractionProfile = budget.profile, coverageComplete = extraction is ContentExtraction.Text && !extraction.truncated)
         currentCoroutineContext().ensureActive()
+        if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
         dao.replaceDocument(document, segments)
         return ContentIndexInspection(document, reused = false)
     }
@@ -85,8 +105,17 @@ class ContentIndexRepository(
         return documents
     }
 
-    suspend fun canReuse(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget): Boolean =
-        ContentIndexPolicy.canReuse(dao.getDocument(candidate.record.stableRef), candidate.record, budget.profile)
+    suspend fun canReuse(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget): Boolean {
+        if (!inspectionAllowed()) return false
+        val record = candidate.record
+        val existing = dao.getDocument(record.stableRef) ?: return false
+        if (observedFailure(record) != null) return false
+        return try {
+            val sampled = record.copy(quickFingerprint = inspector.evidenceFingerprint(record))
+            inspectionAllowed() && observedFailure(record) == null && ContentIndexPolicy.canReuse(existing, sampled, budget.profile)
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { false }
+    }
 
     suspend fun excerpt(stableRef: String, maxChars: Int = 8_000): String =
         dao.getExcerptSegments(stableRef, 4).joinToString(" ") { it.body.take(maxChars.coerceIn(1, 8_000)) }
@@ -438,6 +467,7 @@ class ContentIndexRepository(
         sourceRoots: List<String>,
         limit: Int = 10_000,
     ): List<IndexedSearchRow> {
+        if (!inspectionAllowed()) return emptyList()
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         require(roots.isNotEmpty()) { "Indexed content search needs at least one source root." }
         val rows = dao.searchRows(
@@ -445,10 +475,12 @@ class ContentIndexRepository(
             sourceRoots = roots,
             limit = limit.coerceIn(1, 20_000),
         )
-        val current = ContentEvidenceVerifier(inspector::observeMetadata).currentRefs(rows.map { row ->
-            ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt)
+        val current = ContentEvidenceVerifier(observeFingerprint = { snapshot ->
+            inspector.evidenceFingerprint(snapshot.stableRef, requireNotNull(snapshot.size))
+        }, observe = inspector::observeMetadata).currentRefs(rows.map { row ->
+            ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt, row.quickFingerprint)
         })
-        return rows.filter { it.stableRef in current }
+        return if (inspectionAllowed()) rows.filter { it.stableRef in current } else emptyList()
     }
 
     suspend fun state(sourceRoot: String): ContentIndexState? =

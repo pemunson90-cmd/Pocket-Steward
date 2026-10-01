@@ -4,6 +4,7 @@ import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 
 /**
  * On-demand local content search. No extracted text is persisted to Room.
@@ -14,6 +15,17 @@ class ContentInspector(
 ) {
     suspend fun observeMetadata(stableRef: String): com.pocketsteward.app.storage.FileMetadata =
         gateway.stat(parseFileRef(stableRef))
+
+    suspend fun evidenceFingerprint(record: FileRecord): String = evidenceFingerprint(record.stableRef, record.sizeBytes)
+
+    suspend fun evidenceFingerprint(stableRef: String, sizeBytes: Long): String {
+        val context = kotlinx.coroutines.currentCoroutineContext()
+        return gateway.openRead(parseFileRef(stableRef)).use { input ->
+            com.pocketsteward.app.evidence.EvidenceFingerprint.read(input, sizeBytes) {
+                context.ensureActive()
+            }
+        }
+    }
 
     suspend fun extract(record: FileRecord, budget: ContentInspectionBudget = ContentInspectionBudget.FULL): ContentExtraction {
         if (record.isDirectory) return ContentExtraction.Unsupported("Directories do not have inspectable content.")

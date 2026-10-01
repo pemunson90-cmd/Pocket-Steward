@@ -517,7 +517,7 @@ private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>
         )
         val candidate = ContentIndexCandidate(record, sourceRootFor(record.stableRef, summary.scopes) ?: summary.scopes.first().root.rawValue())
         val budget = com.pocketsteward.app.content.ContentInspectionBudget.FILING
-        val reusable = !record.extension.equals("pdf", true) || com.pocketsteward.app.content.index.ContentIndexPolicy.canReuse(cachedPdfs[record.stableRef], record, budget.profile)
+        val reusable = !record.extension.equals("pdf", true) || withContext(Dispatchers.IO) { repository.canReuse(candidate, budget) }
         if (record.extension.equals("pdf", true) && !reusable) {
             if (freshPdf >= 40) { deferredPdf++; continue }
             freshPdf++

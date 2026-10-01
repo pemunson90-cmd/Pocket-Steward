@@ -47,7 +47,7 @@ class ContentIndexInspectionTest {
         assertThat(first.reused).isFalse()
         assertThat(repository.excerpt(record.stableRef)).contains("Lilith")
         assertThat(repository.ensureDocument(ContentIndexCandidate(record, "/inbox")).reused).isTrue()
-        assertThat(reads).isEqualTo(1)
+        assertThat(reads).isEqualTo(4)
         val other = record("/inbox/other.txt", bytes.size.toLong(), 1)
         repository.ensureDocument(ContentIndexCandidate(other, "/inbox"))
         bytes = "NSTL research outline".toByteArray()

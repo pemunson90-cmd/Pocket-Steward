@@ -131,9 +131,11 @@ class AppContainer(context: Context) {
         ContentIndexRepository(
             dao = ContentSearchDatabase.getInstance(appContext).contentIndexDao(),
             inspector = contentInspector(mode),
+            inspectionAllowed = { settingsRepository.privacySettings.first().contentInspectionEnabled },
         )
 
     suspend fun verifyAskCandidates(rows: List<com.pocketsteward.app.content.ask.AskCandidateRow>): List<com.pocketsteward.app.content.ask.AskCandidateRow> {
+        if (!settingsRepository.privacySettings.first().contentInspectionEnabled) return emptyList()
         val access = settingsRepository.storageAccessState.first()
         val mode = access.mode ?: return emptyList()
         val prefix = when (mode) {
@@ -141,11 +143,15 @@ class AppContainer(context: Context) {
             StorageAccessMode.SAF -> access.safTreeUri?.substringBefore("/document/")?.trimEnd('/')?.plus("/document/") ?: return emptyList()
         }
         val scoped = rows.filter { it.stableRef.startsWith(prefix) }
-        val current = com.pocketsteward.app.content.index.ContentEvidenceVerifier(contentInspector(mode)::observeMetadata)
+        val inspector = contentInspector(mode)
+        val current = com.pocketsteward.app.content.index.ContentEvidenceVerifier(observeFingerprint = { snapshot ->
+            if (!settingsRepository.privacySettings.first().contentInspectionEnabled) throw kotlinx.coroutines.CancellationException("Content inspection is off.")
+            inspector.evidenceFingerprint(snapshot.stableRef, requireNotNull(snapshot.size))
+        }, observe = inspector::observeMetadata)
             .currentRefs(scoped.map { row ->
-                com.pocketsteward.app.content.index.ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt)
+                com.pocketsteward.app.content.index.ContentEvidenceSnapshot(row.stableRef, row.displayName, row.sizeBytes, row.modifiedAt, row.quickFingerprint)
             })
-        return scoped.filter { it.stableRef in current }
+        return if (settingsRepository.privacySettings.first().contentInspectionEnabled) scoped.filter { it.stableRef in current } else emptyList()
     }
 
     suspend fun contentIndexOverview(): com.pocketsteward.app.content.index.ContentIndexOverview =

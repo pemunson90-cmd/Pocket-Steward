@@ -161,6 +161,7 @@ interface ContentIndexDao {
                d.category AS category,
                d.sizeBytes AS sizeBytes,
                d.modifiedAt AS modifiedAt,
+               d.quickFingerprint AS quickFingerprint,
                d.contentKind AS contentKind,
                d.coverageComplete AS coverageComplete,
                d.extractionProfile AS extractionProfile,
@@ -171,6 +172,8 @@ interface ContentIndexDao {
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
         INNER JOIN indexed_documents d ON d.stableRef = s.stableRef
         WHERE indexed_segments_fts MATCH :matchQuery
+          AND d.extractorVersion = :extractorVersion
+          AND d.quickFingerprint LIKE 'evidence-sample-v1:%'
           AND EXISTS (SELECT 1 FROM indexed_document_scopes scope WHERE scope.stableRef = d.stableRef AND scope.sourceRoot IN (:sourceRoots))
         LIMIT :limit
         """,
@@ -179,6 +182,7 @@ interface ContentIndexDao {
         matchQuery: String,
         sourceRoots: List<String>,
         limit: Int,
+        extractorVersion: Int = ContentIndexPolicy.EXTRACTOR_VERSION,
     ): List<IndexedSearchRow>
 
     /**
@@ -198,16 +202,20 @@ interface ContentIndexDao {
                s.ocr AS ocr,
                s.body AS body,
                d.sizeBytes AS sizeBytes,
-               d.modifiedAt AS modifiedAt
+               d.modifiedAt AS modifiedAt,
+               d.quickFingerprint AS quickFingerprint
         FROM indexed_segments_fts
         INNER JOIN indexed_segments s ON s.id = indexed_segments_fts.rowid
         INNER JOIN indexed_documents d ON d.stableRef = s.stableRef
         WHERE indexed_segments_fts MATCH :matchQuery
+          AND d.extractorVersion = :extractorVersion
+          AND d.quickFingerprint LIKE 'evidence-sample-v1:%'
         LIMIT :limit
         """,
     )
     suspend fun askCandidateRows(
         matchQuery: String,
         limit: Int,
+        extractorVersion: Int = ContentIndexPolicy.EXTRACTOR_VERSION,
     ): List<com.pocketsteward.app.content.ask.AskCandidateRow>
 }

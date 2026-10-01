@@ -246,7 +246,7 @@ fun SettingsScreen(
                 )
                 Text(
                     text = if (privacy.contentInspectionEnabled) {
-                        "Search content stays on this device. Unchanged files are reused on later searches."
+                        "Search content stays on this device. Unchanged files reuse saved text after a freshness check. After updating, run Content search for your folders to refresh older excerpts."
                     } else {
                         "Content inspection is off. Any existing local cache remains private until you clear it."
                     },
@@ -547,7 +547,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall)
             }
         }
-        Text("Full-file inventory excludes private Android app folders (Android/data and Android/obb).", style = MaterialTheme.typography.bodySmall)
+        Text("Direct-file inventory excludes private Android app folders (Android/data and Android/obb).", style = MaterialTheme.typography.bodySmall)
         val libraryStatus by viewModel.libraryStatus.collectAsState()
         val librarySettings by viewModel.librarySettings.collectAsState()
         val libraryRefreshing by viewModel.libraryRefreshing.collectAsState()

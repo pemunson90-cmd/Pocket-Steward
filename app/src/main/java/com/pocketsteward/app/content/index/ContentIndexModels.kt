@@ -140,6 +140,7 @@ data class IndexedSearchRow(
     val matchingSourceRoots: String = "",
     val coverageComplete: Boolean = false,
     val extractionProfile: String = "FULL",
+    val quickFingerprint: String? = null,
 )
 
 
