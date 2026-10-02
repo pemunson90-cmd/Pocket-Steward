@@ -103,9 +103,17 @@ Dev11 is published as a GitHub prerelease. The complete published app tree at `7
 
 655 app unit tests, six release-tool safety tests and all three exact SQLite checks passed. lintDebug, assembleDebug and assembleDebugAndroidTest passed for dev14 (54). Instrumentation was compiled, not executed. Canonical signed release assembly passed, preserving the installed signer, arm64 and absent INTERNET permission. Verified published source: `c967b176235f802c56710a8698e8ab1e5f4b8533`. Public ZIP and embedded APK hashes were retrieved and verified. APK SHA-256: `633a21a7ca8d1a92263217914dff1c4a59f4d55bbd5c2dbff1c93bb134ab735b`. Download: https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/eded53166abace1cf469c501ccbec6d53a6ef1cb/PocketSteward-1.4.0-dev14.zip . Independent GitHub validation passed on the matching source: https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36940517367 . Physical Android IO/provider/lifecycle and the actual corpus remain unverified. See DEV14_USER_GUIDE.md.
 
-## Remaining completion work
+## Implemented for dev15
 
 Dev15 stabilization repairs all eight dev14 audit findings before further feature work: no-replace/exclusive file destinations, safe failed-copy retention, filing cancellation and indexed selection dependencies, admitted/resumable/concurrent indexing, coordinated live cache clear, short-read duplicate hashing and preservation of latest review choices. The final host/Android-build gates passed 669 unit tests, lint with zero errors and 85 warnings, debug/instrumentation assembly, production native races, three SQLite tools and six release-tool tests. Instrumentation remains unexecuted. See DEV15_STABILIZATION_REPORT.md and DEV15_USER_GUIDE.md; phone crash/ANR, peak-memory/thermal and corpus acceptance remain open.
+
+Canonical signed dev15 (55) retains arm64 and absent INTERNET permission; APK 16 KiB ZIP alignment and the new native helper's 16 KiB ELF alignment passed. Published app source: `1bd275f5941f5727c244e1bef19567ddcd003ea4`, app tree `87587c83200f5d0efb63f27aa67d03b01de44698`. APK SHA-256: `ae8b28028b46ee8882b2685aec207570c25ee308c7838bd97c9c050914dfa547`. Public ZIP and embedded APK hashes were retrieved and verified. Download: https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/1052cbba654a5bb80720113ec109657e13f2325c/PocketSteward-1.4.0-dev15.zip . Independent validation: https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36955037550 (passed).
+
+## Dev16 stabilization follow-up
+
+Cancellation now retains service admission ownership through suspended cleanup. Late index requests are transferred to durable background work instead of being cleared by a retiring runner. Approved file-task admission stays exclusive through retirement as well. This addresses a final coroutine-state edge case found after the dev15 checkpoint; no phone crash is asserted. See DEV16_USER_GUIDE.md. 670 unit tests, lint (zero errors, 85 warnings), debug assembly and instrumentation compilation passed. Signing/publication is in progress.
+
+## Remaining completion work
 
 - Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.

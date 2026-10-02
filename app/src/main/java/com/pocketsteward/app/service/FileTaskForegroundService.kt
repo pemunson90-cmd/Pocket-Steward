@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class FileTaskForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pauseRequested = AtomicBoolean(false)
+    private val runnerAttached = AtomicBoolean(false)
     private var runningJob: Job? = null
     private var activeTaskRunId: Long? = null
 
@@ -69,7 +70,7 @@ class FileTaskForegroundService : Service() {
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
-                if (runningJob?.isActive == true) {
+                if (!runnerAttached.compareAndSet(false, true)) {
                     // One mutation runner per process. The durable task remains
                     // untouched if a second start request arrives.
                     return START_NOT_STICKY
@@ -85,10 +86,12 @@ class FileTaskForegroundService : Service() {
                 ) } catch (_: IllegalStateException) {
                     runCatching { container.enqueueFileTaskFallback(taskRunId) }
                     activeTaskRunId = null
+                    runnerAttached.set(false)
                     stopSelf(startId)
                     return START_NOT_STICKY
                 } catch (_: SecurityException) {
                     activeTaskRunId = null
+                    runnerAttached.set(false)
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
@@ -161,6 +164,7 @@ class FileTaskForegroundService : Service() {
             runningJob = null
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
+            runnerAttached.set(false)
         }
     }
 

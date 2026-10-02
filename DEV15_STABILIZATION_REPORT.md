@@ -49,3 +49,17 @@ The earlier targeted dev15 run measured 8–9 ms at 16k; dev14 audit measured 35
 | Competing creates, revoked permission, low storage, interruption and Undo | External bytes intact; recoverable source/journal; ambiguous partial destinations need explicit review. |
 
 ACCEPT-01 remains open. Device-discovered defects must be repaired before whole-app completion.
+
+## Signed checkpoint
+
+Dev15 (55) passed canonical certificate, arm64-only, absent INTERNET permission and APK 16 KiB ZIP-alignment checks. The production arm64 helper has 16 KiB ELF load-segment alignment. Published source `1bd275f5941f5727c244e1bef19567ddcd003ea4` matches local app tree `87587c83200f5d0efb63f27aa67d03b01de44698`. Private signing material remains outside source/artifacts.
+
+[Verified public ZIP](https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/1052cbba654a5bb80720113ec109657e13f2325c/PocketSteward-1.4.0-dev15.zip), containing APK, guide and provenance. Public ZIP SHA-256: `c4990b72b8bf6246e6aed8249f1b91ee5d041f4f004150c88dd041e43681459e`; APK SHA-256: `ae8b28028b46ee8882b2685aec207570c25ee308c7838bd97c9c050914dfa547`. Both hashes were independently retrieved and checked after publication. [Matching-source GitHub validation](https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36955037550) passed.
+
+## Dev16 follow-up: service retirement
+
+Final coroutine-state review identified a remaining admission edge case: Job.isActive becomes false when cancellation begins, before suspended cleanup finishes. A new request could start another runner, then be cleared/stopped by the older runner's finally block. This was a source/coroutine-state finding, not a reproduced phone crash.
+
+The index queue now owns admission until explicit retirement. Requests arriving during cleanup are transferred to the durable worker at retirement. Approved file-task service uses atomic ownership through the full cleanup phase too. A host regression cancels a real coroutine, holds its cleanup, admits a new root while isActive is false, verifies that a second runner cannot attach, and verifies handoff of that root before subsequent admission. Android service/process/timeout acceptance remains open.
+
+Dev16 full local gates passed: 670 unit tests (zero failures/errors/skips), lint (zero errors, 85 warnings), debug assembly and Android-test compilation. Device execution remains unverified.

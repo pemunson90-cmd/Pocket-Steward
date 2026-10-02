@@ -83,18 +83,18 @@ class ContentIndexForegroundService : Service() {
                     ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
                     ?: StorageAccessMode.DIRECT
                 requests.add(roots, mode)
-                if (runningJob?.isActive == true) return START_NOT_STICKY
+                if (!requests.attachRunner()) return START_NOT_STICKY
                 pauseRequested.set(false)
                 try {
                     startForegroundCompat(buildNotification("Pocket Steward is indexing", "Preparing searchable document content…", indeterminate = true))
                 } catch (_: IllegalStateException) {
-                    requests.drain().groupBy { it.mode }.forEach { (queuedMode, pending) ->
+                    requests.retireRunner().groupBy { it.mode }.forEach { (queuedMode, pending) ->
                         runCatching { container.enqueueContentIndexFallback(pending.map { it.root }, queuedMode) }
                     }
                     stopSelf(startId)
                     return START_NOT_STICKY
                 } catch (_: SecurityException) {
-                    requests.drain()
+                    requests.retireRunner()
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
@@ -150,7 +150,12 @@ class ContentIndexForegroundService : Service() {
         } finally {
             // Admission and completion both run on Main: a new request cannot be lost between
             // observing an empty queue and retiring the runner.
-            requests.drain()
+            val handoff = requests.retireRunner()
+            // New requests may arrive while cancellation cleanup is suspended. Transfer those
+            // to the durable worker instead of clearing them or starting a competing runner.
+            handoff.groupBy { it.mode }.forEach { (mode, pending) ->
+                runCatching { container.enqueueContentIndexFallback(pending.map { it.root }, mode) }
+            }
             activeRoot = null
             runningJob = null
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)

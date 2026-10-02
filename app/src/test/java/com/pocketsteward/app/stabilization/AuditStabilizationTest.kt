@@ -212,6 +212,33 @@ class AuditStabilizationTest {
         assertThat(f.job!!.status).isEqualTo("PAUSED")
     }
 
+    @Test fun cancelledRunnerHandsOffRequestsThatArriveDuringCleanup() = runTest {
+        val queue = ContentIndexRequestQueue()
+        queue.add(listOf("/A"), StorageAccessMode.DIRECT)
+        assertThat(queue.attachRunner()).isTrue()
+        val cleanupStarted = CompletableDeferred<Unit>(); val finishCleanup = CompletableDeferred<Unit>()
+        var handoff = emptyList<ContentIndexRequestQueue.Request>()
+        val runner = launch {
+            try { queue.take(); awaitCancellation() }
+            finally {
+                withContext(NonCancellable) {
+                    cleanupStarted.complete(Unit)
+                    finishCleanup.await()
+                    handoff = queue.retireRunner()
+                }
+            }
+        }
+        runCurrent(); runner.cancel(); cleanupStarted.await()
+        assertThat(runner.isActive).isFalse()
+        queue.add(listOf("/B"), StorageAccessMode.DIRECT)
+        assertThat(queue.attachRunner()).isFalse()
+        finishCleanup.complete(Unit); runner.join()
+        assertThat(handoff).containsExactly(ContentIndexRequestQueue.Request("/B", StorageAccessMode.DIRECT))
+        queue.add(listOf("/C"), StorageAccessMode.DIRECT)
+        assertThat(queue.attachRunner()).isTrue()
+        assertThat(queue.take()!!.root).isEqualTo("/C")
+    }
+
     @Test(timeout = 90_000) fun selectionTimingForLargeNewProjectPlans() {
         for (count in listOf(1_000, 4_000, 16_000)) {
             val ops = buildList<PlannedOperation> {
