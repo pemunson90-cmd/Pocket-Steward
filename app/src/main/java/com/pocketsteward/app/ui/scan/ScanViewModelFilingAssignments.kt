@@ -30,7 +30,7 @@ internal data class FilingSession(
     val originalSources: Map<String, com.pocketsteward.app.plan.SourcePrecondition>? = null,
 )
 
-internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null, releaseFolder: String? = null) {
+internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null, releaseFolder: String? = null, rememberChoice: Boolean = false) {
     if (filingEditJob?.isActive == true || busy.value != null) return
     val session = filingSession ?: return
     val current = _preview.value ?: return
@@ -59,6 +59,7 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
             val nextSession = session.copy(result = result, homes = (session.homes + home).distinctBy { it.path },
                 manualAssignments = session.manualAssignments.orEmpty() + result.decisions.filter { it.artifact.stableRef in sourceRefs }.associateBy { it.artifact.stableRef },
                 reviewId = java.util.UUID.randomUUID().toString())
+            val learning = if (rememberChoice) com.pocketsteward.app.saved.CorrectionApprovalPolicy.propose(allRecordsForScopes(current.scopes), plan.operations, sourceRefs, home.name, home.path.takeIf { it.startsWith('/') }) else emptyList()
             showPlanPreview(
                 current.goal, plan.operations, current.scopes, current.scopeNotes,
                 plan.authorizedDestinationRoots, plan.defaultSelectedSourceRefs,
@@ -67,6 +68,7 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                     indexedFolderDescendantCount = current.filingPresentation.indexedFolderDescendantCount,
                     intakeSnapshot = current.filingPresentation.intakeSnapshot),
                 previousReviewedSources = session.originalSources.orEmpty() + current.reviewedSources,
+                pendingCorrections = com.pocketsteward.app.saved.CorrectionApprovalPolicy.merge(current.pendingCorrections.orEmpty(), learning),
             )
             val edited = _uiState.value as? ScanUiState.PlanPreview ?: return@launch
             // Preserve previous deselections; only explicitly assigned sources are newly selected.
@@ -136,8 +138,9 @@ internal fun ScanViewModel.deferFilingFiles(sourceRefs: Set<String>) {
                 plan.authorizedDestinationRoots, plan.defaultSelectedSourceRefs,
                 plan.presentation.copy(reviewingUncertain = filing.reviewingUncertain, imageCoverage = filing.imageCoverage,
                     reviewSessionId = nextSession.reviewId, heldSourceRefs = filing.heldSourceRefs.orEmpty() - sourceRefs,
-                    indexedFolderDescendantCount = filing.indexedFolderDescendantCount),
-                previousReviewedSources = session.originalSources.orEmpty() + current.reviewedSources)
+                    indexedFolderDescendantCount = filing.indexedFolderDescendantCount, intakeSnapshot = filing.intakeSnapshot),
+                previousReviewedSources = session.originalSources.orEmpty() + current.reviewedSources,
+                pendingCorrections = current.pendingCorrections.orEmpty())
             val edited = _uiState.value as? ScanUiState.PlanPreview ?: return@launch
             val selectedRefs = current.selectedIndices.mapNotNullTo(hashSetOf()) { index ->
                 current.accepted.getOrNull(index)?.let(com.pocketsteward.app.plan.ReviewedSources::sourceOf)?.rawValue()

@@ -14,7 +14,7 @@ class InboxFilingEngineTest {
             "Lilith-notes-backup.zip" to "Bundles", "Lilith-manuscript.tar" to "Bundles", "Lilith-notes-v2.apk" to "Builds")
         for ((name, role) in expectations) {
             val file = artifact(name, name.substringAfterLast('.'), 1000).copy(indexedText = "Manuscript\nLilith")
-            assertThat(InboxFilingEngine.destinationFor(home, "2", file)).isEqualTo("${home.path}/$role")
+            assertThat(InboxFilingEngine.destinationFor(home, "2", file)).isEqualTo("${home.path}/Builds/2" + if (role == "Builds") "" else "/$role")
         }
     }
 
@@ -410,12 +410,12 @@ class InboxFilingEngineTest {
             storageRoot = "/storage/emulated/0",
         )
         assertThat(result.proposed.mapNotNull { it.destinationDirectory }).containsExactly(
-            "/storage/emulated/0/Documents/NSTL/Manuscript",
-            "/storage/emulated/0/Documents/NSTL/Drafts",
-            "/storage/emulated/0/Documents/NSTL/Notes",
-            "/storage/emulated/0/Documents/NSTL/Images",
-            "/storage/emulated/0/Documents/NSTL/Versions",
-            "/storage/emulated/0/Documents/NSTL/Archive",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0/Manuscript",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0/Drafts",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0/Notes",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0/Images",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0",
+            "/storage/emulated/0/Documents/NSTL/Versions/0.2.0/Archive",
         )
     }
 

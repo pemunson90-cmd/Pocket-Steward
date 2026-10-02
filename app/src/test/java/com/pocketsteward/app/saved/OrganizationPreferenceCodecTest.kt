@@ -25,6 +25,14 @@ class OrganizationPreferenceCodecTest {
             OrganizationPreferenceCodec.encodeCorrections(input),
         )).containsExactlyElementsIn(input).inOrder()
     }
+    @Test fun scopedCorrectionsRetainConflictsAndLegacyTwoFieldRulesMigrate() {
+        val rules = listOf(CorrectionRule("Lilith", "Lilith", "/Downloads", "/Documents/Lilith"),
+            CorrectionRule("Lilith", "Stories", "/Downloads", "/Documents/Stories"),
+            CorrectionRule("Lilith", "Lilith", "/Other"))
+        assertThat(OrganizationPreferenceCodec.decodeCorrections(OrganizationPreferenceCodec.encodeCorrections(rules))).containsExactlyElementsIn(rules).inOrder()
+        val legacy = OrganizationPreferenceCodec.encodeCorrections(listOf(CorrectionRule("NSTL", "NSTL"))).split(';').take(2).joinToString(";")
+        assertThat(OrganizationPreferenceCodec.decodeCorrections(legacy)).containsExactly(CorrectionRule("NSTL", "NSTL"))
+    }
 
     @Test
     fun projectHomesRoundTripAliasesPackagesAndStrategy() {

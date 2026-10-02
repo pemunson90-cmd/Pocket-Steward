@@ -208,7 +208,7 @@ object SemanticPlanAdapter {
         return trimmed
     }
 
-    private fun originatingRoot(
+    fun originatingRoot(
         record: FileRecord,
         roots: List<FileRef>,
     ): FileRef? {

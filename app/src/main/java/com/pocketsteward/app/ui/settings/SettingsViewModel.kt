@@ -158,6 +158,14 @@ class SettingsViewModel(
 
     val correctionRules: StateFlow<List<CorrectionRule>> = settingsRepository.correctionRules
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val correctionMessage = MutableStateFlow<String?>(null)
+
+    fun editCorrection(original: CorrectionRule, replacement: CorrectionRule?) {
+        viewModelScope.launch {
+            correctionMessage.value = runCatching { settingsRepository.editCorrectionRule(original, replacement) }
+                .fold({ if (replacement == null) "Correction removed." else "Correction saved." }, { it.message ?: "Could not save correction." })
+        }
+    }
 
     val projectHomes: StateFlow<List<ProjectHome>> = settingsRepository.projectHomes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -411,7 +419,7 @@ class SettingsViewModel(
                 }
             }
             .toList()
-        viewModelScope.launch { settingsRepository.setCorrectionRules(values) }
+        viewModelScope.launch { settingsRepository.setGlobalCorrectionRules(values); correctionMessage.value = "Global rules saved. Scoped rules retained." }
     }
 
     fun setProjectKeywordsFromText(text: String) {

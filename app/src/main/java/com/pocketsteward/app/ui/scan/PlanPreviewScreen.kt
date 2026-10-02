@@ -247,6 +247,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(Spacing.tight),
                 contentPadding = PaddingValues(bottom = Spacing.tight),
             ) {
+                if (preview.pendingCorrections.orEmpty().isNotEmpty()) item {
+                    Text("${preview.pendingCorrections.orEmpty().size} scoped ownership rule(s) will be remembered for matching selected actions after approval. Review or remove them later in Settings.", style = MaterialTheme.typography.bodySmall)
+                }
                 val destinationGroups = preview.accepted
                     .mapNotNull(::destinationEditGroup)
                     .distinctBy { it.directory }
@@ -321,7 +324,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 onDefer = viewModel::deferFilingFiles,
                                 onKeep = viewModel::keepFilingFiles,
                                 inventoryBySource = inventoryBySource,
-                                onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
+                                onAssign = { refs, title, role, homePath, release, learn -> viewModel.assignFilingFiles(refs, title, role, homePath, release, learn) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { root, name ->
                                     viewModel.editPlanDestinationGroup(
@@ -347,7 +350,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 onDefer = viewModel::deferFilingFiles,
                                 onKeep = viewModel::keepFilingFiles,
                                 inventoryBySource = inventoryBySource,
-                                onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
+                                onAssign = { refs, title, role, homePath, release, learn -> viewModel.assignFilingFiles(refs, title, role, homePath, release, learn) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { _, _ -> },
                             )
@@ -370,7 +373,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 count = matches.size,
                                 examples = matches.take(3).joinToString(" · ") { it.displayName },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
-                                onApply = { title, role, homePath, release -> viewModel.assignFilingFiles(matches.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath, release) },
+                                onApply = { title, role, homePath, release, learn -> viewModel.assignFilingFiles(matches.mapTo(hashSetOf()) { it.sourceRef }, title, role, homePath, release, learn) },
                             )
                         }
                     }
@@ -772,7 +775,7 @@ private fun FilingDestinationCard(
     onDefer: (Set<String>) -> Unit,
     onKeep: (Set<String>) -> Unit,
     inventoryBySource: Map<String, com.pocketsteward.app.filing.FilingInventoryEntry>,
-    onAssign: (Set<String>, String, com.pocketsteward.app.filing.FilingRole, String?, String?) -> Unit,
+    onAssign: (Set<String>, String, com.pocketsteward.app.filing.FilingRole, String?, String?, Boolean) -> Unit,
     knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
     onApplyDestination: (String, String) -> Unit,
 ) {
@@ -898,8 +901,8 @@ private fun FilingDestinationCard(
                 val assignmentItems = if (assignSelectedOnly) group.items.filter { item ->
                     sourceOperationIndices[item.sourceRef]?.let { it in preview.selectedIndices } == true
                 } else group.items
-                FilingAssignmentEditor(assignmentItems.size, assignmentItems.take(3).joinToString(" · ") { it.displayName }, knownProjects) { title, role, home, release ->
-                    onAssign(assignmentItems.mapTo(hashSetOf()) { it.sourceRef }, title, role, home, release)
+                FilingAssignmentEditor(assignmentItems.size, assignmentItems.take(3).joinToString(" · ") { it.displayName }, knownProjects) { title, role, home, release, learn ->
+                    onAssign(assignmentItems.mapTo(hashSetOf()) { it.sourceRef }, title, role, home, release, learn)
                 }
             }
 
@@ -912,7 +915,7 @@ private fun FilingDestinationCard(
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
-                    label = { Text(if (group.release != null) "Release folder" else "Folder name") },
+                    label = { Text(if (group.release != null && group.destinationPath.substringAfterLast('/') == group.release) "Release folder" else "Folder name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1273,12 +1276,13 @@ private fun FilingAssignmentEditor(
     count: Int,
     examples: String,
     knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
-    onApply: (String, com.pocketsteward.app.filing.FilingRole, String?, String?) -> Unit,
+    onApply: (String, com.pocketsteward.app.filing.FilingRole, String?, String?, Boolean) -> Unit,
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var releaseFolder by rememberSaveable { mutableStateOf("") }
     var role by rememberSaveable { mutableStateOf(com.pocketsteward.app.filing.FilingRole.AUTO) }
     var chosenHomePath by rememberSaveable { mutableStateOf<String?>(null) }
+    var rememberChoice by rememberSaveable { mutableStateOf(false) }
     var showChoices by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base), verticalArrangement = Arrangement.spacedBy(Spacing.tight)) {
@@ -1301,7 +1305,11 @@ private fun FilingAssignmentEditor(
             }
             Text("Role: ${role.label}. Existing folders remain intact. This changes the preview; files move only after approval.", style = MaterialTheme.typography.bodySmall)
             chosenHomePath?.let { Text("Selected home: $it", style = MaterialTheme.typography.bodySmall) }
-            Button(onClick = { onApply(title, role, chosenHomePath, releaseFolder.trim().takeIf { it.isNotEmpty() }) }, enabled = count > 0 && title.isNotBlank()) { Text("Apply assignment to preview") }
+            Row {
+                Checkbox(rememberChoice, { rememberChoice = it })
+                Column { Text("Remember project ownership after approval"); Text("Uses a clear shared filename term within each source folder. Generic names need a choice in each review.", style = MaterialTheme.typography.bodySmall) }
+            }
+            Button(onClick = { onApply(title, role, chosenHomePath, releaseFolder.trim().takeIf { it.isNotEmpty() }, rememberChoice) }, enabled = count > 0 && title.isNotBlank()) { Text("Apply assignment to preview") }
         }
     }
 }

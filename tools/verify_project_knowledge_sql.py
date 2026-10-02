@@ -10,7 +10,7 @@ block = dao.split('/** Project-layout observations')[1].split('suspend fun index
 sql = ''.join(json.loads(m.group()) for m in re.finditer(r'"(?:[^"\\]|\\.)*"', block))
 roles = ['manuscript', 'notes', 'drafts', 'images', 'versions', 'archive']
 sql = sql.replace('IN (:roleNames)', 'IN (' + ','.join(':'+str('role'+str(i)) for i in range(len(roles))) + ')')
-params = {'scopeRootRef': '/storage/emulated/0', 'limit': 201, **{'role'+str(i): name for i, name in enumerate(roles)}}
+params = {'scopeRootRef': '/storage/emulated/0', 'limit': 200, 'afterPath': '', **{'role'+str(i): name for i, name in enumerate(roles)}}
 db = sqlite3.connect(':memory:')
 db.execute('CREATE TABLE file_records(stableRef TEXT PRIMARY KEY,displayName TEXT,parentRef TEXT,isDirectory INTEGER,isHidden INTEGER)')
 db.execute('CREATE TABLE file_scopes(fileRef TEXT,scopeRoot TEXT,PRIMARY KEY(fileRef,scopeRoot))')
@@ -36,5 +36,14 @@ assert set(db.execute(sql,params).fetchone()[3].split('\n'))=={'Notes','notes','
 for i in range(1000):
     directory(f'/storage/emulated/0/Projects/Project {i}')
     directory(f'/storage/emulated/0/Projects/Project {i}/Notes')
-assert len(db.execute(sql,params).fetchall())==201
-print('Actual project-layout SQL passed scope filtering, grouping, role spelling, case ambiguity and bounded result tests.')
+assert len(db.execute(sql,params).fetchall())==200
+all_rows = []
+while True:
+    page = db.execute(sql, params).fetchall()
+    if not page:
+        break
+    assert all(row[0] > params['afterPath'] for row in page)
+    all_rows.extend(page)
+    params['afterPath'] = page[-1][0]
+assert len(all_rows) == 1001 and len({row[0] for row in all_rows}) == 1001
+print('Actual project-layout SQL passed scope filtering, grouping, role spelling, case ambiguity and complete keyset pagination tests.')

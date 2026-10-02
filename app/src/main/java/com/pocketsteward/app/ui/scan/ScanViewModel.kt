@@ -225,6 +225,8 @@ sealed interface ScanUiState {
         val storageMode: StorageAccessMode? = null,
         val storageGrantIdentity: String? = null,
         val taskHistoryWatermark: Long = 0,
+        /** Nullable for older Gson drafts. No learning occurs before task approval. */
+        val pendingCorrections: List<com.pocketsteward.app.saved.PendingCorrection>? = emptyList(),
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
@@ -1240,6 +1242,7 @@ class ScanViewModel(
         defaultSelectedSourceRefs: Set<String>? = null,
         filingPresentation: FilingReviewPresentation? = null,
         previousReviewedSources: Map<String, SourcePrecondition> = emptyMap(),
+        pendingCorrections: List<com.pocketsteward.app.saved.PendingCorrection> = emptyList(),
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
             ?: error("No storage access mode is active.")
@@ -1272,6 +1275,7 @@ class ScanViewModel(
             authorizedDestinationRoots = authorizedDestinationRoots,
             reviewedSources = com.pocketsteward.app.plan.ReviewBaselinePolicy.merge(validated.accepted, reviewedSources, previousReviewedSources),
             filingPresentation = filingPresentation,
+            pendingCorrections = pendingCorrections,
         )
     }
 
@@ -1456,6 +1460,7 @@ class ScanViewModel(
                 // started. A failed enqueue/start must not teach a mapping
                 // from a filing that never actually began.
                 rememberApprovedFilingHomes(preview, selectedOperations)
+                settingsRepository.addCorrectionRules(com.pocketsteward.app.saved.CorrectionApprovalPolicy.approved(preview.pendingCorrections.orEmpty(), selectedOperations))
 
                 _uiState.value = ScanUiState.ExecutionQueued(
                     taskRunId = taskRunId,

@@ -99,6 +99,7 @@ object InboxFilingEngine {
             .groupBy { normalize(requireNotNull(it.projectHome).path) to it.release }
             .values.map { TimedCohort(it) }
         val resolved = releaseResolved.map { decision ->
+            if (decision.evidence.any { it.kind in setOf(FilingEvidenceKind.DESTINATION_CONFLICT, FilingEvidenceKind.SOURCE_UNAVAILABLE, FilingEvidenceKind.PROJECT_AMBIGUITY) }) return@map decision
             val categoryOnly = decision.confidence == FilingConfidence.PROBABLE && decision.evidence.all { it.kind in setOf(FilingEvidenceKind.IMAGE_CONTENT, FilingEvidenceKind.MEDIA_METADATA) }
             if ((!categoryOnly && decision.confidence != FilingConfidence.UNRESOLVED) || !isSupportingArtifact(decision.artifact)) {
                 decision
@@ -187,8 +188,16 @@ object InboxFilingEngine {
             evidenceByHome.getOrPut(home) { mutableListOf() } += FilingEvidence(kind, detail, weight)
         }
 
-        correctionRules.forEach { rule ->
-            if (ProjectEvidenceTerms.containsTerm(artifact.displayName, rule.term)) {
+        val corrections = com.pocketsteward.app.saved.CorrectionRulePolicy.matching(correctionRules, artifact.stableRef, artifact.parentRef, artifact.displayName)
+        if (corrections.map { it.projectHomePath ?: it.destinationFolder.lowercase(Locale.ROOT) }.distinct().size > 1) return FilingDecision(artifact, null, null, null, null, FilingConfidence.UNRESOLVED,
+            listOf(FilingEvidence(FilingEvidenceKind.PROJECT_AMBIGUITY, "Remembered rules disagree: ${corrections.joinToString { it.destinationFolder }}. Edit the rules or choose a project for this review.", 200)))
+        corrections.forEach { rule ->
+            if (rule.projectHomePath != null) {
+                val candidates = homes.filter { it.path.trimEnd('/') == rule.projectHomePath }
+                if (candidates.isEmpty()) return FilingDecision(artifact, null, null, null, null, FilingConfidence.UNRESOLVED,
+                    listOf(FilingEvidence(FilingEvidenceKind.DESTINATION_CONFLICT, "Remembered home ${rule.projectHomePath} is unavailable; choose a current project home.", 120)))
+                candidates.forEach { add(it, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder} · ${rule.sourceFolder ?: "all folders"}", 120) }
+            } else {
                 val candidates = homes.matchingNamed(rule.destinationFolder)
                     .ifEmpty { listOf(syntheticHome(rule.destinationFolder, storageRoot)) }
                 candidates.forEach { home ->
@@ -389,9 +398,13 @@ object InboxFilingEngine {
     }
 
     fun releaseOf(artifact: FilingArtifact): String? {
-        artifact.apkVersionName?.trim()?.takeIf { isUsefulVersion(it) }?.let { return normalizeVersion(it) }
-        VERSION_REGEX.find(artifact.displayName)?.value?.let { return normalizeVersion(it) }
+        artifact.apkVersionName?.trim()?.takeIf { isUsefulVersion(it) }?.let { normalizeVersion(it) }
+            ?.takeIf { sanitizeSegment(it) == it }?.let { return it }
+        val filename = if (!artifact.isDirectory && artifact.extension.isNotBlank() && artifact.displayName.endsWith(".${artifact.extension}", true))
+            artifact.displayName.dropLast(artifact.extension.length + 1) else artifact.displayName
+        VERSION_REGEX.find(filename)?.value?.let { return normalizeVersion(it) }
         artifact.archiveSample.asSequence()
+            .map { entry -> if (entry.endsWith('/')) entry else entry.replace(Regex("\\.[A-Za-z][A-Za-z0-9]{0,9}$"), "") }
             .mapNotNull { VERSION_REGEX.find(it)?.value }
             .firstOrNull()
             ?.let { return normalizeVersion(it) }
@@ -411,12 +424,29 @@ object InboxFilingEngine {
         return when (home.hierarchy) {
             ProjectHierarchyStrategy.FLAT -> base
             ProjectHierarchyStrategy.VERSIONED -> sanitizeSegment(release)?.let { "$base/$it" } ?: base
-            ProjectHierarchyStrategy.PROJECT_ROLES -> roleFor(artifact, release)?.let { role ->
+            ProjectHierarchyStrategy.PROJECT_ROLES -> if (sanitizeSegment(release) != null) {
+                releaseDestination(home, requireNotNull(release), artifact)
+            } else roleFor(artifact, null)?.let { role ->
                 val folder = home.roleFolders[role] ?: role
                 if (folder.isBlank()) base else "$base/$folder"
             } ?: base
             ProjectHierarchyStrategy.CATEGORY -> "$base/${categoryFor(artifact.extension)}"
         }
+    }
+
+    /** One release owns its builds and supporting roles; Versions is never repeated below it. */
+    fun releaseDestination(home: ProjectHomeCandidate, release: String, artifact: FilingArtifact, role: FilingRole = FilingRole.AUTO): String {
+        require(sanitizeSegment(release) == release)
+        val base = home.path.trimEnd('/')
+        if (home.hierarchy == ProjectHierarchyStrategy.VERSIONED || home.hierarchy == ProjectHierarchyStrategy.FLAT) return "$base/$release"
+        if (home.hierarchy == ProjectHierarchyStrategy.CATEGORY) return "$base/$release/${categoryFor(artifact.extension)}"
+        val versions = (home.roleFolders["Versions"] ?: "Versions").trim('/')
+        val releaseRoot = base + if (versions.isBlank()) "/$release" else "/$versions/$release"
+        if (artifact.isDirectory || role == FilingRole.ROOT || role == FilingRole.VERSIONS) return releaseRoot
+        val roleName = if (role == FilingRole.AUTO) roleFor(artifact, release) else role.folder
+        if (roleName == null || roleName == "Versions") return releaseRoot
+        val folder = (home.roleFolders[roleName] ?: roleName).trim('/')
+        return releaseRoot + if (folder.isBlank()) "" else "/$folder"
     }
 
     private fun categoryFor(extension: String): String = when (extension.lowercase(Locale.ROOT)) {
@@ -561,6 +591,6 @@ object InboxFilingEngine {
     )
 
     private val VERSION_REGEX = Regex(
-        "(?i)(?<![A-Za-z0-9])v?\\d+(?:\\.\\d+){1,3}(?:[-_](?:dev|alpha|beta|rc|hb)[A-Za-z0-9.-]*)?(?![A-Za-z0-9])",
+        "(?i)(?<![A-Za-z0-9])v?\\d+(?:\\.\\d+){1,3}(?:[-_](?:(?:dev|alpha|beta|rc|hb)(?:[._-]?\\d+)?|build[._-]?\\d+)(?:[-_](?:dev|alpha|beta|rc|build|hb)[._-]?\\d+)*)?(?:\\+[a-z0-9]+(?:[.-][a-z0-9]+)*)?(?![A-Za-z0-9])",
     )
 }

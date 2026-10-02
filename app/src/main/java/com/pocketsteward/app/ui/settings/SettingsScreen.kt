@@ -99,6 +99,7 @@ fun SettingsScreen(
     val storedKeywords by viewModel.projectKeywords.collectAsState()
     val favoriteDestinations by viewModel.favoriteDestinations.collectAsState()
     val correctionRules by viewModel.correctionRules.collectAsState()
+    val correctionMessage by viewModel.correctionMessage.collectAsState()
     val projectHomes by viewModel.projectHomes.collectAsState()
     val inboxRoots by viewModel.inboxRoots.collectAsState()
     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
@@ -143,7 +144,7 @@ fun SettingsScreen(
     }
     LaunchedEffect(correctionRules) {
         if (correctionsText == null) {
-            correctionsText = correctionRules.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
+            correctionsText = correctionRules.filter { it.sourceFolder == null && it.projectHomePath == null }.joinToString("\n") { "${it.term}=${it.destinationFolder}" }
         }
     }
     LaunchedEffect(projectHomes) {
@@ -463,7 +464,7 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            text = "One per line as filename-term=group. These outrank project keywords and model suggestions.",
+            text = "Global rules: one per line as filename-term=project. A narrower source folder takes precedence. Competing owners require review.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
@@ -478,7 +479,11 @@ fun SettingsScreen(
             onClick = { viewModel.setCorrectionRulesFromText(correctionsText ?: "") },
             modifier = Modifier.padding(top = 8.dp),
         ) {
-            Text("Save correction rules")
+            Text("Save global correction rules")
+        }
+        correctionMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        correctionRules.forEach { rule ->
+            CorrectionRuleEditor(rule, onSave = { viewModel.editCorrection(rule, it) }, onRemove = { viewModel.editCorrection(rule, null) })
         }
 
         Text(
@@ -833,6 +838,34 @@ private fun libraryStatusLine(status: com.pocketsteward.app.library.LibraryStatu
         else -> "updated ${relativeAge(System.currentTimeMillis() - status.lastCompletedAt)}"
     }
     return parts.joinToString(" · ")
+}
+
+@Composable
+private fun CorrectionRuleEditor(rule: com.pocketsteward.app.saved.CorrectionRule, onSave: (com.pocketsteward.app.saved.CorrectionRule) -> Unit, onRemove: () -> Unit) {
+    var editing by remember(rule) { mutableStateOf(false) }
+    var term by remember(rule) { mutableStateOf(rule.term) }
+    var owner by remember(rule) { mutableStateOf(rule.destinationFolder) }
+    var source by remember(rule) { mutableStateOf(rule.sourceFolder.orEmpty()) }
+    var home by remember(rule) { mutableStateOf(rule.projectHomePath.orEmpty()) }
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("${rule.term} → ${rule.destinationFolder}", style = MaterialTheme.typography.titleSmall)
+            Text("Source: ${rule.sourceFolder ?: "all folders"}", style = MaterialTheme.typography.bodySmall)
+            rule.projectHomePath?.let { Text("Home: $it", style = MaterialTheme.typography.bodySmall) }
+            Row {
+                androidx.compose.material3.TextButton(onClick = { editing = !editing }) { Text(if (editing) "Close editor" else "Edit rule") }
+                androidx.compose.material3.TextButton(onClick = onRemove) { Text("Remove rule") }
+            }
+            if (editing) {
+                OutlinedTextField(term, { term = it }, label = { Text("Shared filename term") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(owner, { owner = it }, label = { Text("Project name") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(source, { source = it }, label = { Text("Source folder (blank for all folders)") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(home, { home = it }, label = { Text("Exact project home (optional)") }, modifier = Modifier.fillMaxWidth())
+                val edited = rule.copy(term = term, destinationFolder = owner, sourceFolder = source.takeIf { it.isNotBlank() }, projectHomePath = home.takeIf { it.isNotBlank() })
+                Button(onClick = { onSave(edited); editing = false }, enabled = com.pocketsteward.app.saved.CorrectionRulePolicy.clean(edited) != null) { Text("Save rule") }
+            }
+        }
+    }
 }
 
 private fun relativeAge(ms: Long): String {

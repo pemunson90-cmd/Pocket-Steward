@@ -109,6 +109,12 @@ internal object ReviewDraftCodec {
         val preview = draft.preview
         require(preview.scopes.isNotEmpty() && preview.scopes.size <= 100)
         require(preview.accepted.size <= 100_000 && preview.rejected.size <= 100_000)
+        require(preview.pendingCorrections.orEmpty().size <= 100)
+        preview.pendingCorrections.orEmpty().forEach { request ->
+            require(com.pocketsteward.app.saved.CorrectionRulePolicy.clean(request.rule) == request.rule)
+            require(request.sourceDestinations.size in 1..100_000)
+            require(request.sourceDestinations.keys.all { it in preview.reviewedSources })
+        }
         require(preview.acceptedScopeLabels.size == preview.accepted.size)
         require(preview.selectedIndices.all { it in preview.accepted.indices })
         require(preview.scopes.map { it.root.rawValue() }.distinct().size == preview.scopes.size)

@@ -429,6 +429,15 @@ internal fun ScanViewModel.proposeSemanticOrganization(
                     correctionRules = correctionRules,
                     indexedTextByRef = indexedEvidence,
                     modelSuggestions = modelSuggestions,
+                    destinationRootByRef = documentRecords.mapNotNull { record ->
+                        val root = SemanticPlanAdapter.originatingRoot(record, review.scopes.map { it.root }) ?: return@mapNotNull null
+                        val target = when (destinationPolicy) {
+                            DestinationPolicy.ROOT_LOCAL -> root
+                            DestinationPolicy.RECOMMENDED_DOCUMENTS -> documentsRoot
+                            DestinationPolicy.EXPLICIT_FOLDER -> explicitRoot
+                        } ?: return@mapNotNull null
+                        record.stableRef to target.rawValue()
+                    }.toMap(),
                 )
             }
             val result = withContext(Dispatchers.Default) {

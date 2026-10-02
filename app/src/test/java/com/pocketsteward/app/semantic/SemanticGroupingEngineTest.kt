@@ -7,6 +7,16 @@ import com.pocketsteward.app.rules.ProjectKeyword
 import org.junit.Test
 
 class SemanticGroupingEngineTest {
+    @Test fun scopedCorrectionUsesSharedPrecedenceAndRequiresItsExactConfiguredHome() {
+        val record = record("/Download/Lilith.md", "Lilith.md")
+        val rules = listOf(com.pocketsteward.app.saved.CorrectionRule("Lilith", "Elsewhere"),
+            com.pocketsteward.app.saved.CorrectionRule("Lilith", "Lilith", "/Download", "/Documents/Lilith"))
+        val model = listOf(SemanticSuggestion(record.stableRef, CoherenceClass.QUESTIONABLE, "Guess"))
+        assertThat(SemanticGroupingEngine.decide(listOf(record), emptyList(), rules, emptyMap(), model,
+            mapOf(record.stableRef to "/Documents")).single().suggestion.suggestedGroup).isEqualTo("Lilith")
+        assertThat(SemanticGroupingEngine.decide(listOf(record), emptyList(), rules, emptyMap(), model,
+            mapOf(record.stableRef to "/Other"))).isEmpty()
+    }
     @Test fun conflictingLearnedMappingsStayUnresolvedInsteadOfChoosingTheFirst() {
         val record = record("/Download/Lilith_NSTL.md", "Lilith_NSTL.md")
         val decisions = SemanticGroupingEngine.decide(listOf(record), emptyList(),

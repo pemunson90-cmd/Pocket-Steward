@@ -34,6 +34,16 @@ class ReviewDraftStoreTest {
         val original = draft()
         assertThat(ReviewDraftCodec.decode(ReviewDraftCodec.encode(original))).isEqualTo(original)
     }
+    @Test fun pendingLearningSurvivesRestartWithoutLearningUncheckedActions() {
+        val original = draft()
+        val operation = original.preview.accepted.single() as PlannedOperation.Copy
+        val pending = com.pocketsteward.app.saved.PendingCorrection(com.pocketsteward.app.saved.CorrectionRule("Lilith", "Lilith", original.preview.scopeRoot.rawValue()),
+            mapOf(operation.source.rawValue() to operation.destination.rawValue()))
+        val updated = original.copy(preview = original.preview.copy(pendingCorrections = listOf(pending)))
+        val restored = ReviewDraftCodec.decode(ReviewDraftCodec.encode(updated))!!
+        assertThat(restored).isEqualTo(updated)
+        assertThat(com.pocketsteward.app.saved.CorrectionApprovalPolicy.approved(restored.preview.pendingCorrections.orEmpty(), emptyList())).isEmpty()
+    }
 
     @Test fun explicitKeepsRetainedCheckpointAndFolderCountsSurviveRestart() {
         val original = draft()

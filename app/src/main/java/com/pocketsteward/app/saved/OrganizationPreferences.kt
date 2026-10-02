@@ -13,6 +13,8 @@ data class FavoriteDestination(
 data class CorrectionRule(
     val term: String,
     val destinationFolder: String,
+    val sourceFolder: String? = null,
+    val projectHomePath: String? = null,
 )
 
 enum class ProjectHierarchyStrategy {
@@ -58,17 +60,19 @@ object OrganizationPreferenceCodec {
 
     fun encodeCorrections(values: List<CorrectionRule>): String =
         values.joinToString("\n") { value ->
-            listOf(enc(value.term), enc(value.destinationFolder)).joinToString(";")
+            listOf(enc(value.term), enc(value.destinationFolder), enc(value.sourceFolder.orEmpty()), enc(value.projectHomePath.orEmpty())).joinToString(";")
         }
 
     fun decodeCorrections(raw: String?): List<CorrectionRule> {
         if (raw.isNullOrBlank()) return emptyList()
         return raw.lineSequence().mapNotNull { line ->
-            val parts = line.split(';', limit = 2)
-            if (parts.size != 2) return@mapNotNull null
-            runCatching { CorrectionRule(dec(parts[0]), dec(parts[1])) }.getOrNull()
+            val parts = line.split(';')
+            if (parts.size !in setOf(2, 4)) return@mapNotNull null
+            runCatching { CorrectionRule(dec(parts[0]), dec(parts[1]),
+                parts.getOrNull(2)?.let(::dec)?.takeIf { it.isNotBlank() },
+                parts.getOrNull(3)?.let(::dec)?.takeIf { it.isNotBlank() }) }.getOrNull()
         }.filter { it.term.isNotBlank() && it.destinationFolder.isNotBlank() }
-            .distinctBy { it.term.lowercase() }
+            .distinctBy(CorrectionRulePolicy::identity)
             .toList()
     }
 

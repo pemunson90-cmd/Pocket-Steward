@@ -34,6 +34,7 @@ object SemanticGroupingEngine {
         correctionRules: List<CorrectionRule> = emptyList(),
         indexedTextByRef: Map<String, String>,
         modelSuggestions: List<SemanticSuggestion>,
+        destinationRootByRef: Map<String, String> = emptyMap(),
     ): List<SemanticGroupingDecision> {
         val modelByRef = modelSuggestions
             .groupBy { it.stableRef }
@@ -52,12 +53,13 @@ object SemanticGroupingEngine {
             .eachCount()
 
         return records.mapNotNull { record ->
-            val corrections = correctionRules.filter { rule ->
-                ProjectEvidenceTerms.containsTerm(record.displayName, rule.term)
-            }.distinctBy { it.destinationFolder.trim().lowercase(java.util.Locale.ROOT) }
+            val corrections = com.pocketsteward.app.saved.CorrectionRulePolicy.matching(correctionRules, record.stableRef, record.parentRef, record.displayName)
+                .distinctBy { it.projectHomePath ?: it.destinationFolder.trim().lowercase(java.util.Locale.ROOT) }
             if (corrections.size > 1) return@mapNotNull null
             val learnedCorrection = corrections.singleOrNull()
             if (learnedCorrection != null) {
+                val root = destinationRootByRef[record.stableRef]?.trimEnd('/')
+                if (learnedCorrection.projectHomePath != null && (root == null || "$root/${learnedCorrection.destinationFolder}" != learnedCorrection.projectHomePath)) return@mapNotNull null
                 return@mapNotNull decision(
                     record,
                     learnedCorrection.destinationFolder,

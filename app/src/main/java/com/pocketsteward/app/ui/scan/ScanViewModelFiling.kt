@@ -235,16 +235,14 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             existingDirectories += observedHomes.map { it.path }
             existingDirectories += savedHomes.map { it.path }
             existingDirectories += favorites.map { it.path }
-            // Known release children matter for friendly "existing" UI;
-            // plan validation independently snapshots them live.
-            for (home in (savedHomes + favorites + observedHomes + discovered).distinctBy { it.path.lowercase() }.take(100)) {
-                val children = withContext(Dispatchers.IO) {
-                    runCatching { gateway.listChildren(FileRef.Direct(home.path)) }.getOrDefault(emptyList())
+            val releases = withContext(Dispatchers.IO) {
+                com.pocketsteward.app.filing.FilingReleaseDiscovery.discover(inferred, gateway) { done, total ->
+                    _uiState.value = ScanUiState.Working("Checking release layouts", "$done of $total relevant project homes checked", processed = done)
                 }
-                existingDirectories += children.filter { it.isDirectory }.map { it.ref.rawValue().trimEnd('/') }
             }
+            existingDirectories += releases.directories
 
-            val conventional = com.pocketsteward.app.filing.FilingReleaseConvention.reconcile(inferred, existingDirectories)
+            val conventional = com.pocketsteward.app.filing.FilingReleaseConvention.reconcile(inferred, existingDirectories, releases.unavailableHomes)
             val choices = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(conventional, continuation?.assignments.orEmpty()), unavailableSources)
             val result = resolveDirectDestinationCollisions(choices, gateway, storageRoot.absolutePath)
             val plan = withContext(Dispatchers.Default) {
@@ -291,6 +289,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
                     indexedFolderDescendantCount = intake.indexedFolderDescendantCount, intakeSnapshot = intakeSnapshot),
                 previousReviewedSources = originalSources,
+                pendingCorrections = continuation?.preview?.pendingCorrections.orEmpty(),
             )
             filingSession = nextSession
             if (scheduled != null && _uiState.value is ScanUiState.PlanPreview) settingsRepository.clearPendingCleanupSuggestion()
@@ -439,6 +438,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
             indexedFolderDescendantCount = intake.indexedFolderDescendantCount, intakeSnapshot = intakeSnapshot),
         previousReviewedSources = originalSources,
+        pendingCorrections = continuation?.preview?.pendingCorrections.orEmpty(),
     )
     filingSession = nextSession
 }

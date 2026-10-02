@@ -294,23 +294,6 @@ internal fun ScanViewModel.editSafPlanDestinationGroup(
 
             val records = allRecordsForScopes(current.scopes)
             val displayNameByRef = records.associate { it.stableRef to it.displayName }
-            val affectedSourceNames = current.accepted.mapNotNull { operation ->
-                val source = when (operation) {
-                    is PlannedOperation.Move -> operation.source
-                    is PlannedOperation.Copy -> operation.source
-                    else -> return@mapNotNull null
-                }
-                val destination = when (operation) {
-                    is PlannedOperation.Move -> operation.destination
-                    is PlannedOperation.Copy -> operation.destination
-                    else -> return@mapNotNull null
-                }
-                if (destination.knownParentOrNull()?.rawValue() == groupDirectory.rawValue()) {
-                    displayNameByRef[source.rawValue()]
-                } else {
-                    null
-                }
-            }
 
             val transformed = current.accepted.map { operation ->
                 when (operation) {
@@ -384,13 +367,10 @@ internal fun ScanViewModel.editSafPlanDestinationGroup(
                 },
                 selectedIndices = latest.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
+                pendingCorrections = com.pocketsteward.app.saved.CorrectionApprovalPolicy.merge(latest.pendingCorrections.orEmpty(),
+                    if (rememberForSimilarFiles) com.pocketsteward.app.saved.CorrectionApprovalPolicy.propose(records, validated.accepted,
+                        com.pocketsteward.app.saved.CorrectionApprovalPolicy.editedRefs(current.accepted, transformed), targetGroup) else emptyList()),
             )
-
-            if (rememberForSimilarFiles) {
-                learnableFilenameTerm(affectedSourceNames)?.let { term ->
-                    settingsRepository.addCorrectionRule(term, targetGroup)
-                }
-            }
         } catch (t: Throwable) {
             _error.value = t.message ?: t.javaClass.simpleName
         }
@@ -451,27 +431,6 @@ internal fun ScanViewModel.editPlanDestinationGroup(
             if (!targetExists) {
                 _error.value = "The selected destination root does not exist."
                 return@launch
-            }
-
-            val affectedSourceNames = current.accepted.mapNotNull { operation ->
-                val source = when (operation) {
-                    is PlannedOperation.Move -> operation.source
-                    is PlannedOperation.Copy -> operation.source
-                    else -> return@mapNotNull null
-                }
-                val destination = when (operation) {
-                    is PlannedOperation.Move -> operation.destination
-                    is PlannedOperation.Copy -> operation.destination
-                    else -> return@mapNotNull null
-                } as? FileRef.Direct ?: return@mapNotNull null
-
-                if (destination.absolutePath
-                        .substringBeforeLast('/', missingDelimiterValue = "") == oldDirectory
-                ) {
-                    (source as? FileRef.Direct)?.absolutePath?.substringAfterLast('/')
-                } else {
-                    null
-                }
             }
 
             val transformed = current.accepted.map { operation ->
@@ -552,13 +511,10 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                     groups = filing.groups.map { group ->
                         if (group.destinationPath.trimEnd('/') != oldDirectory) {
                             group
-                        } else if (group.release != null) {
+                        } else if (newDirectory.startsWith(group.projectHomePath.trimEnd('/') + "/")) {
                             group.copy(
-                                projectName = targetRoot.substringAfterLast('/').ifBlank { group.projectName },
-                                projectHomePath = targetRoot,
                                 destinationPath = newDirectory,
-                                existingProjectHome = true,
-                                release = targetGroup,
+                                release = if (oldDirectory.substringAfterLast('/') == group.release) targetGroup else group.release,
                                 items = group.items.map { it.copy(destinationPath = newDirectory) },
                             )
                         } else {
@@ -567,6 +523,7 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                                 projectHomePath = newDirectory,
                                 destinationPath = newDirectory,
                                 existingProjectHome = true,
+                                release = null,
                                 items = group.items.map { it.copy(destinationPath = newDirectory) },
                             )
                         }
@@ -605,9 +562,12 @@ internal fun ScanViewModel.editPlanDestinationGroup(
             )
             if (nextSession != null) filingSession = nextSession
             if (rememberForSimilarFiles) {
-                learnableFilenameTerm(affectedSourceNames)?.let { term ->
-                    settingsRepository.addCorrectionRule(term, targetGroup)
-                }
+                val records = allRecordsForScopes(current.scopes)
+                val affected = com.pocketsteward.app.saved.CorrectionApprovalPolicy.editedRefs(current.accepted, transformed)
+                val owner = nextSession?.result?.decisions?.firstOrNull { it.artifact.stableRef in affected }?.projectHome
+                val learning = com.pocketsteward.app.saved.CorrectionApprovalPolicy.propose(records, validated.accepted, affected,
+                    owner?.name ?: targetGroup, owner?.path ?: "$targetRoot/$targetGroup")
+                _preview.value = _preview.value?.let { it.copy(pendingCorrections = com.pocketsteward.app.saved.CorrectionApprovalPolicy.merge(it.pendingCorrections.orEmpty(), learning)) }
             }
         } catch (cancel: kotlinx.coroutines.CancellationException) {
             throw cancel

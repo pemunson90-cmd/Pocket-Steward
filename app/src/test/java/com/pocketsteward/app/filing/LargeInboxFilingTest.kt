@@ -17,8 +17,8 @@ class LargeInboxFilingTest {
         assertThat(result.decisions.take(8_001).all { it.confidence == FilingConfidence.STRONG }).isTrue()
         assertThat(result.decisions.drop(8_001).all { it.confidence == FilingConfidence.PROBABLE }).isTrue()
         assertThat(result.decisions.map { it.projectHome?.path }.distinct()).containsExactly(home.path)
-        assertThat(result.decisions[1].destinationDirectory).isEqualTo("${home.path}/Notes")
-        assertThat(result.decisions.last().destinationDirectory).isEqualTo("${home.path}/Images")
+        assertThat(result.decisions[1].destinationDirectory).isEqualTo("${home.path}/Versions/1.2.3/Notes")
+        assertThat(result.decisions.last().destinationDirectory).isEqualTo("${home.path}/Versions/1.2.3/Images")
         val plan = InboxFilingPlanAdapter.build(result, com.pocketsteward.app.storage.FileRef.Direct("/storage/emulated/0"), setOf(home.path, "${home.path}/Notes", "${home.path}/Images"))
         assertThat(plan.defaultSelectedSourceRefs).hasSize(8_001)
     }

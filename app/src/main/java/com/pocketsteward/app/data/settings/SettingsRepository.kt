@@ -260,27 +260,44 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun addCorrectionRule(term: String, destinationFolder: String) {
-        val cleanedTerm = term.trim().take(80)
-        val cleanedFolder = destinationFolder.trim().take(80)
-        if (cleanedTerm.isBlank() || cleanedFolder.isBlank()) return
+        addCorrectionRules(listOf(CorrectionRule(term, destinationFolder)))
+    }
+
+    suspend fun addCorrectionRules(values: List<CorrectionRule>) {
+        val cleaned = values.mapNotNull(com.pocketsteward.app.saved.CorrectionRulePolicy::clean)
+        if (cleaned.isEmpty()) return
         context.dataStore.edit { prefs ->
             val current = OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
-            val updated = (
-                listOf(CorrectionRule(cleanedTerm, cleanedFolder)) +
-                    current.filterNot { it.term.equals(cleanedTerm, ignoreCase = true) }
-                ).take(100)
+            val updated = (cleaned + current).distinctBy(com.pocketsteward.app.saved.CorrectionRulePolicy::identity).take(100)
             prefs[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(updated)
         }
     }
 
     suspend fun setCorrectionRules(values: List<CorrectionRule>) {
         val cleaned = values
-            .map { CorrectionRule(it.term.trim().take(80), it.destinationFolder.trim().take(80)) }
-            .filter { it.term.isNotBlank() && it.destinationFolder.isNotBlank() }
-            .distinctBy { it.term.lowercase() }
+            .mapNotNull(com.pocketsteward.app.saved.CorrectionRulePolicy::clean)
+            .distinctBy(com.pocketsteward.app.saved.CorrectionRulePolicy::identity)
             .take(100)
         context.dataStore.edit {
             it[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(cleaned)
+        }
+    }
+
+    suspend fun setGlobalCorrectionRules(values: List<CorrectionRule>) {
+        val cleaned = values.mapNotNull(com.pocketsteward.app.saved.CorrectionRulePolicy::clean)
+        context.dataStore.edit { prefs ->
+            val scoped = OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES]).filter { it.sourceFolder != null || it.projectHomePath != null }
+            prefs[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections((scoped + cleaned).distinctBy(com.pocketsteward.app.saved.CorrectionRulePolicy::identity).take(100))
+        }
+    }
+
+    suspend fun editCorrectionRule(original: CorrectionRule, replacement: CorrectionRule?) {
+        val cleaned = replacement?.let(com.pocketsteward.app.saved.CorrectionRulePolicy::clean)
+        require(replacement == null || cleaned != null) { "Use a safe folder name and valid source/home paths." }
+        context.dataStore.edit { prefs ->
+            val current = OrganizationPreferenceCodec.decodeCorrections(prefs[Keys.CORRECTION_RULES])
+            val updated = current.filterNot { it == original } + listOfNotNull(cleaned)
+            prefs[Keys.CORRECTION_RULES] = OrganizationPreferenceCodec.encodeCorrections(updated.distinctBy(com.pocketsteward.app.saved.CorrectionRulePolicy::identity).take(100))
         }
     }
 
