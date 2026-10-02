@@ -1,6 +1,6 @@
 # App completion implementation progress
 
-Updated 2026-10-01. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. GOAL_APP_COMPLETION_SPEC.md and APP_COMPLETION_REGISTER.md track the accepted remaining build path. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md retain historical/master traceability.
+Updated 2026-10-02. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. GOAL_APP_COMPLETION_SPEC.md and APP_COMPLETION_REGISTER.md track the accepted remaining build path. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md retain historical/master traceability.
 
 ## Implemented in dev7
 
@@ -136,3 +136,6 @@ Home/Tasks/status views now use small SQL projections instead of loading every f
 All **682 unit/JVM tests passed**, including real launcher/tab composition on API 35/36, expanded API 36 layout, saved-tab restoration, crash-dialog copy/dismiss, five-megabyte task history, exact 16k-operation plan retrieval and Unicode/empty/exact chunk boundaries. lintDebug passed with **0 errors and 86 warnings**; assembleDebug and assembleDebugAndroidTest passed. All three SQLite tools, six release-tool tests, and production JNI collision/Unicode/200 external-create race/missing-library checks passed. Android instrumentation was compiled, not executed. Canonical-signed publication details follow in the release provenance.
 
 Physical Fold 7 crash/ANR/reboot/memory/data-integrity acceptance remains open. See DEV17_CRASH_FIX_REPORT.md and DEV17_USER_GUIDE.md. FILING-01 and the rest of DOWNLOADS_SORTING_COMPLETION_PLAN.md remain pending: this release prioritizes the reported crash and does not change sorting decisions.
+
+
+Dev17 signed publication: canonical signer, version code 57, arm64-only, absent INTERNET permission, 16 KiB APK ZIP alignment and storage-helper ELF LOAD alignment verified. Published source `461d89696f8147ed3dc8175d58fcc2a608f73a95` matches local app tree `bb2b51a592ecb4397a12947639833c7dd55567ac`. [Public ZIP](https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/20b402c0ea4fb56244e800d8358f3db81fe9f004/PocketSteward-1.4.0-dev17.zip) and its embedded APK were downloaded and hash-verified. ZIP SHA-256: `3d467b99b8c4319d9cc022fc8e69d24959dc3a009d8024fed0e02a938f459059`; APK SHA-256: `8d9227f831dc8d868939f46225d3cbe9adbffeece7a343ab0dc7b4bbcc222d97`. [Independent matching-source GitHub validation](https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36964527193) passed (clean build, full suite/lint/instrumentation compile, SQLite/native/release checks, release assembly and offline-permission checks). Physical Fold 7 acceptance remains open.
