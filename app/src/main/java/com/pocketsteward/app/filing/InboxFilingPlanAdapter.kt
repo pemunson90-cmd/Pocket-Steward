@@ -44,6 +44,8 @@ data class FilingReviewPresentation(
     val heldSourceRefs: Set<String>? = null,
     val retainedUncertainSourceRefs: Set<String>? = null,
     val indexedFolderDescendantCount: Int = 0,
+    val intakeSnapshot: FilingIntakeSnapshot? = null,
+    val blockedSourceReasons: Map<String, String>? = null,
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size
@@ -96,7 +98,7 @@ object InboxFilingPlanAdapter {
             }
         }
 
-        val proposedDecisions = result.proposed
+        val proposedDecisions = result.proposed.filterNot { it.evidence.any { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }
         val countsByHome = proposedDecisions.groupingBy { it.projectHome?.path?.lowercase() }.eachCount()
         val proposed = proposedDecisions.filter { decision ->
             decision.projectHome != null && decision.destinationDirectory != null
@@ -178,9 +180,9 @@ object InboxFilingPlanAdapter {
             }
             .sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() })
 
-        val unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null }).map(::reviewItem)
+        val unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null || it.evidence.any { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }).map(::reviewItem)
         val checkpointGroups = result.unresolved
-            .filterNot { it.artifact.stableRef in retainedUncertainSourceRefs }
+            .filterNot { it.artifact.stableRef in retainedUncertainSourceRefs || it.evidence.any { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }
             .groupBy { it.artifact.parentRef?.trimEnd('/') }
             .mapNotNull { (inboxPath, decisions) ->
                 if (inboxPath == null || !inboxPath.startsWith("$rootPath/", ignoreCase = true)) {
@@ -214,7 +216,10 @@ object InboxFilingPlanAdapter {
             authorizedDestinationRoots = authorization.map { FileRef.Direct(it) },
             defaultSelectedSourceRefs = selectedRefs,
             presentation = FilingReviewPresentation(groups, unresolved, checkpointGroups,
-                retainedUncertainSourceRefs = retainedUncertainSourceRefs),
+                retainedUncertainSourceRefs = retainedUncertainSourceRefs,
+                blockedSourceReasons = result.decisions.mapNotNull { decision ->
+                    decision.evidence.firstOrNull { it.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE }?.let { decision.artifact.stableRef to it.detail }
+                }.toMap()),
         )
     }
 
@@ -250,7 +255,7 @@ object InboxFilingSafPlanAdapter {
         val selectedRefs = linkedSetOf<String>()
         val groups = mutableListOf<FilingReviewGroup>()
 
-        val proposed = result.proposed.filter { it.projectHome != null && it.destinationDirectory != null }
+        val proposed = result.proposed.filter { it.projectHome != null && it.destinationDirectory != null && it.evidence.none { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }
         proposed.groupBy { decision ->
             val home = requireNotNull(decision.projectHome)
             home.path.trimEnd('/') to decision.destinationDirectory
@@ -328,7 +333,7 @@ object InboxFilingSafPlanAdapter {
             )
         }
 
-        val checkpointDecisions = result.unresolved.filterNot { it.artifact.stableRef in retainedUncertainSourceRefs }
+        val checkpointDecisions = result.unresolved.filterNot { it.artifact.stableRef in retainedUncertainSourceRefs || it.evidence.any { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }
         val checkpointGroups = if (checkpointDecisions.isEmpty()) {
             emptyList()
         } else {
@@ -375,7 +380,7 @@ object InboxFilingSafPlanAdapter {
             defaultSelectedSourceRefs = selectedRefs,
             presentation = FilingReviewPresentation(
                 groups = groups.sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() }),
-                unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null }).map { decision ->
+                unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null || it.evidence.any { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }).map { decision ->
                     FilingReviewItem(
                         sourceRef = decision.artifact.stableRef,
                         displayName = decision.artifact.displayName,
@@ -388,6 +393,9 @@ object InboxFilingSafPlanAdapter {
                 },
                 checkpointGroups = checkpointGroups,
                 retainedUncertainSourceRefs = retainedUncertainSourceRefs,
+                blockedSourceReasons = result.decisions.mapNotNull { decision ->
+                    decision.evidence.firstOrNull { it.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE }?.let { decision.artifact.stableRef to it.detail }
+                }.toMap(),
             ),
         )
     }

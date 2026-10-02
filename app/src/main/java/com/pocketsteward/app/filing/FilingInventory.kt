@@ -45,6 +45,7 @@ object FilingInventoryPolicy {
                 }
                 item.sourceRef in filing.heldSourceRefs.orEmpty() -> FilingOutcome.KEEP to "You chose to keep this item here."
                 item.sourceRef in blocked -> FilingOutcome.BLOCKED to blocked.getValue(item.sourceRef)
+                item.sourceRef in filing.blockedSourceReasons.orEmpty() -> FilingOutcome.BLOCKED to filing.blockedSourceReasons.orEmpty().getValue(item.sourceRef)
                 item.sourceRef in filing.retainedUncertainSourceRefs.orEmpty() ->
                     FilingOutcome.RETAINED_UNCERTAIN to "Already in Uncertain; stays here until a destination is approved."
                 index != null -> FilingOutcome.NEEDS_DECISION to "Choose its destination, move to Uncertain, or keep here."

@@ -60,7 +60,20 @@ class SettingsViewModel(
     private val syncLibrarySchedule: (Boolean) -> Unit = {},
     private val refreshLibraryNow: () -> Unit = {},
     libraryWorkRunning: kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false),
+    evidenceProgress: kotlinx.coroutines.flow.Flow<com.pocketsteward.app.evidence.analysis.EvidenceAnalysisProgress?> = kotlinx.coroutines.flow.flowOf(null),
+    private val pauseEvidence: suspend () -> Unit = {},
+    private val resumeEvidence: suspend () -> Unit = {},
 ) : ViewModel() {
+
+    val evidenceAnalysisProgress = evidenceProgress.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val _evidenceMessage = MutableStateFlow<String?>(null)
+    val evidenceMessage: StateFlow<String?> = _evidenceMessage
+    fun pauseEvidenceAnalysis() { viewModelScope.launch {
+        try { pauseEvidence() } catch (failure: Exception) { _evidenceMessage.value = failure.message ?: "Could not pause analysis." }
+    } }
+    fun resumeEvidenceAnalysis() { viewModelScope.launch {
+        try { resumeEvidence() } catch (failure: Exception) { _evidenceMessage.value = failure.message ?: "Could not resume analysis." }
+    } }
 
     val librarySettings: StateFlow<com.pocketsteward.app.data.settings.LibrarySettings> =
         settingsRepository.librarySettings.stateIn(

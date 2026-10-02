@@ -13,14 +13,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.pocketsteward.app.navigation.PocketStewardNavHost
 import com.pocketsteward.app.navigation.Routes
+import com.pocketsteward.app.navigation.LauncherEntryPolicy
 import com.pocketsteward.app.ui.theme.PocketStewardTheme
 import com.pocketsteward.app.data.settings.UiSettings
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 
 class MainActivity : ComponentActivity() {
+    private val entryRevision = androidx.compose.runtime.mutableLongStateOf(0L)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        entryRevision.longValue = savedInstanceState?.getLong("launcherEntryRevision", 0L) ?: 0L
         enableEdgeToEdge()
         render()
     }
@@ -28,6 +32,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        entryRevision.longValue++
         // Static launcher shortcuts can arrive while the task already exists.
         // Recompose from the shortcut target rather than silently ignoring it.
         render()
@@ -59,14 +64,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putLong("launcherEntryRevision", entryRevision.longValue)
+        super.onSaveInstanceState(outState)
+    }
+
     private fun render() {
-        val afterOnboarding = when (intent?.data?.host?.lowercase()) {
-            "explore", "search" -> Routes.SCAN_FLOW
-            "tasks" -> Routes.HISTORY
-            "scheduled" -> Routes.scanFlowScheduledReview()
-            "home" -> Routes.HOME
-            else -> Routes.FILES
-        }
+        val afterOnboarding = LauncherEntryPolicy.destination(intent?.data?.scheme, intent?.data?.host)
         val settingsRepository = (application as PocketStewardApplication).container.settingsRepository
         setContent {
             val ui by settingsRepository.uiSettings.collectAsState(initial = UiSettings())
@@ -77,6 +81,7 @@ class MainActivity : ComponentActivity() {
                 PocketStewardNavHost(
                     startDestination = Routes.ONBOARDING,
                     postOnboardingDestination = afterOnboarding,
+                    launcherEntryRevision = entryRevision.longValue,
                 )
                 com.pocketsteward.app.diagnostics.CrashNotice()
             }

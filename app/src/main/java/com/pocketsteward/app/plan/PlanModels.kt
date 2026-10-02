@@ -97,6 +97,7 @@ data class AgentPlan(
      * that never passed through a review surface.
      */
     val reviewedSources: Map<String, SourcePrecondition> = emptyMap(),
+    val filingInventory: com.pocketsteward.app.filing.FilingTaskInventory? = null,
 )
 
 /** Plan Section 13. Classified deterministically from operation type alone — never from a model's self-reported confidence, which is a UI hint at most. */

@@ -16,6 +16,7 @@ data class TaskManifestDocument(
     val text: String,
     val assertion: DuplicateAssertion,
     val entries: List<ManifestEntry>,
+    val filing: FilingReconciliation? = null,
 ) {
     /** True when this run trashed nothing, so the duplicate assertion says nothing useful. */
     val hasDuplicateAssertion: Boolean get() = assertion.trashed > 0
@@ -24,10 +25,11 @@ data class TaskManifestDocument(
 /**
  * Turns the journal back into an account a person can read.
  *
- * Everything here is reconstructed from what was durably written at the time
+ * The historical operation account is reconstructed from what was durably written at the time
  * each file moved — `MutationRecord` for what happened, `TaskRun.planJson`
  * for why it was asked for. Nothing is re-derived by re-examining the
- * filesystem, which is the point: the files have already moved, and a
+ * filesystem. A separate filing-verification section observes the current locations:
+ * it does not replace the historical account. Historically, the files have already moved, and a
  * manifest that describes the current state rather than the change would
  * answer a different question than the one being asked.
  */
@@ -35,11 +37,16 @@ class TaskManifestService(
     private val taskRunDao: TaskRunDao,
     private val mutationRecordDao: MutationRecordDao,
     private val onVerifiedExport: (String) -> Unit = {},
+    private val gatewayFor: ((com.pocketsteward.app.storage.StorageAccessMode) -> StorageGateway)? = null,
 ) {
     suspend fun build(taskRunId: Long): TaskManifestDocument? {
         val task = taskRunDao.getById(taskRunId) ?: return null
-        val reasons = TaskManifest.reasonsBySequence(task.planJson)
-        val entries = mutationRecordDao.getForTaskRun(taskRunId).map { record ->
+        val durable = com.pocketsteward.app.plan.DurablePlanCodec.decodeOrNull(task.planJson)
+        val reasons = durable?.operations?.mapIndexed { index, op -> index to op.reason }?.toMap()
+            ?: TaskManifest.reasonsBySequence(task.planJson)
+        val records = mutationRecordDao.getForTaskRun(taskRunId)
+        val filing = if (durable != null && gatewayFor != null) FilingReconciler.check(durable, records, gatewayFor.invoke(task.storageAccessMode)) else null
+        val entries = records.map { record ->
             ManifestEntry(
                 sequence = record.sequence,
                 operation = record.operationType.name,
@@ -49,7 +56,7 @@ class TaskManifestService(
                 // UNDONE counts as succeeded-then-reversed, not failed: the
                 // file did move, and a manifest that called it a failure
                 // would misdescribe what happened to it.
-                succeeded = record.status != MutationStatus.FAILED,
+                succeeded = record.status in setOf(MutationStatus.COMMITTED, MutationStatus.UNDONE),
                 error = record.error,
                 reason = reasons[record.sequence],
             )
@@ -62,9 +69,10 @@ class TaskManifestService(
                 startedAtLabel = formatTimestamp(task.startedAt),
                 statusLabel = task.status.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() },
                 entries = entries,
-            ),
+            ) + filing?.render().orEmpty(),
             assertion = TaskManifest.duplicateAssertion(entries),
             entries = entries,
+            filing = filing,
         )
     }
 

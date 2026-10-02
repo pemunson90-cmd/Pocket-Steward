@@ -12,6 +12,7 @@ data class DurablePlan(
     val goal: String,
     val operations: List<PlannedOperation>,
     val sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
+    val filingInventory: com.pocketsteward.app.filing.FilingTaskInventory? = null,
 )
 
 /**
@@ -29,6 +30,7 @@ object DurablePlanCodec {
     private const val HEADER_V4 = "@psplan\t4"
     private const val GOAL_PREFIX = "@psgoal\t"
     private const val OP_PREFIX = "@psop\t"
+    private const val INVENTORY_PREFIX = "@psfiling\t"
     private const val PRECONDITION_PREFIX = "@pspre\t"
     private const val BINARY_VERSION = 1
     private const val MAX_STRING_BYTES = 16 * 1024 * 1024
@@ -37,10 +39,13 @@ object DurablePlanCodec {
         goal: String,
         operations: List<PlannedOperation>,
         sourcePreconditions: Map<Int, SourcePrecondition> = emptyMap(),
+        filingInventory: com.pocketsteward.app.filing.FilingTaskInventory? = null,
     ): String = buildString {
+        filingInventory?.validate(operations)
         appendLine(humanLine(goal))
         appendLine(HEADER_V4)
         appendLine(GOAL_PREFIX + encodeToken(goal))
+        filingInventory?.let { appendLine(INVENTORY_PREFIX + com.pocketsteward.app.filing.FilingTaskInventoryCodec.encode(it)) }
         operations.forEachIndexed { sequence, operation ->
             appendLine("$sequence\t${operation.typeLabel()}\t${humanLine(operation.reason)}")
             appendLine("$OP_PREFIX$sequence\t${encodeOperation(operation)}")
@@ -66,7 +71,7 @@ object DurablePlanCodec {
         }
 
         val headerIndex = lines.indexOf("@psplan\t$version")
-        require(lines.take(headerIndex).none { it.startsWith(OP_PREFIX) || it.startsWith(PRECONDITION_PREFIX) || it.startsWith(GOAL_PREFIX) }) { "Machine record precedes plan header." }
+        require(lines.take(headerIndex).none { it.startsWith(OP_PREFIX) || it.startsWith(PRECONDITION_PREFIX) || it.startsWith(GOAL_PREFIX) || it.startsWith(INVENTORY_PREFIX) }) { "Machine record precedes plan header." }
         val indexed = lines.mapNotNull { line ->
             if (!line.startsWith(OP_PREFIX)) return@mapNotNull null
             val fields = line.split('\t', limit = 3)
@@ -107,10 +112,17 @@ object DurablePlanCodec {
             require(goals.size == 1) { "Missing or duplicate durable goal." }
             decodeToken(goals.single().removePrefix(GOAL_PREFIX))
         } else lines.firstOrNull().orEmpty()
+        val inventoryLines = lines.filter { it.startsWith(INVENTORY_PREFIX) }
+        require(inventoryLines.size <= 1) { "Duplicate filing inventory." }
+        val inventory = inventoryLines.singleOrNull()?.let {
+            com.pocketsteward.app.filing.FilingTaskInventoryCodec.decode(it.removePrefix(INVENTORY_PREFIX))
+                .also { inventory -> inventory.validate(indexed.map { it.second }) }
+        }
         DurablePlan(
             goal = goal,
             operations = indexed.map { it.second },
             sourcePreconditions = preconditions,
+            filingInventory = inventory,
         )
     }.getOrNull()
 

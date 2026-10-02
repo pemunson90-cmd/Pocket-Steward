@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="organize" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_organize_short"
+        android:shortcutLongLabel="@string/shortcut_organize_long">
+        <intent android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pocketsteward.app"
+            android:targetClass="com.pocketsteward.app.MainActivity"
+            android:data="pocketsteward://organize" />
+    </shortcut>
+    <shortcut android:shortcutId="sort" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_sort_short"
+        android:shortcutLongLabel="@string/shortcut_sort_long">
+        <intent android:action="android.intent.action.VIEW"
+            android:targetPackage="com.pocketsteward.app"
+            android:targetClass="com.pocketsteward.app.MainActivity"
+            android:data="pocketsteward://sort" />
+    </shortcut>
     <shortcut
         android:shortcutId="explore"
         android:enabled="true"

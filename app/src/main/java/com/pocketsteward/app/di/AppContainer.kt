@@ -56,6 +56,9 @@ class AppContainer(context: Context) {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
+    val evidenceAnalysis: com.pocketsteward.app.evidence.analysis.EvidenceAnalysisCoordinator by lazy {
+        com.pocketsteward.app.evidence.analysis.EvidenceAnalysisCoordinator(appContext, appScope)
+    }
     val agentModel: AgentModel by lazy { GeminiNanoAgentModel() }
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
 
@@ -79,7 +82,8 @@ class AppContainer(context: Context) {
     }
 
     val projectKnowledge: com.pocketsteward.app.projects.ProjectKnowledge by lazy {
-        com.pocketsteward.app.projects.ProjectKnowledge(database.fileRecordDao(), directStorageGateway)
+        com.pocketsteward.app.projects.ProjectKnowledge(database.fileRecordDao(), directStorageGateway,
+            com.pocketsteward.app.projects.ProjectDiscoveryStore(java.io.File(appContext.noBackupFilesDir, "project-discovery-pages")))
     }
 
     val inventoryInvalidations by lazy { com.pocketsteward.app.library.DirectoryInvalidationStore(java.io.File(appContext.noBackupFilesDir, "inventory-invalidations.json")) }
@@ -161,6 +165,7 @@ class AppContainer(context: Context) {
         ).overview()
 
     suspend fun clearContentIndex(): Boolean {
+        evidenceAnalysis.pause()
         pauseContentIndexing()
         com.pocketsteward.app.content.index.ContentIndexCoordination.Shared.clear {
             ContentSearchDatabase.getInstance(appContext).contentIndexDao().clearAll()
@@ -201,6 +206,7 @@ class AppContainer(context: Context) {
         TaskManifestService(
             taskRunDao = database.taskRunDao(),
             mutationRecordDao = database.mutationRecordDao(),
+            gatewayFor = ::gatewayFor,
             onVerifiedExport = { path ->
                 notifyExternalFileCreated(
                     path,
@@ -211,9 +217,10 @@ class AppContainer(context: Context) {
     }
 
     val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
-    val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext) { ref ->
-        contentInspector(if (ref.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).observeMetadata(ref)
-    } }
+    val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext,
+        readFingerprint = { record -> contentInspector(if (record.stableRef.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).evidenceFingerprint(record) },
+        observeMetadata = { ref -> contentInspector(if (ref.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).observeMetadata(ref) },
+    ) }
     val scheduledCleanupCoordinator: ScheduledCleanupCoordinator by lazy { ScheduledCleanupCoordinator(appContext) }
     val runtimeDiagnostics: RuntimeDiagnostics by lazy {
         RuntimeDiagnostics(

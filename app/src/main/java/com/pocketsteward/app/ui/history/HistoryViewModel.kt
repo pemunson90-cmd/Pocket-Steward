@@ -17,6 +17,7 @@ import com.pocketsteward.app.report.TaskManifestService
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.StorageGateway
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,6 +49,7 @@ sealed interface HistoryActionState {
     data class BackgroundStarted(val message: String) : HistoryActionState
 
     data class Done(val summary: UndoSummary) : HistoryActionState
+    data class Verifying(val taskRunId: Long) : HistoryActionState
     data class Manifest(val document: TaskManifestDocument, val exportedTo: String? = null) : HistoryActionState
     data class Error(val message: String) : HistoryActionState
 }
@@ -151,15 +153,23 @@ class HistoryViewModel(
         }
     }
 
+    private var verificationJob: kotlinx.coroutines.Job? = null
+
     fun showManifest(taskRunId: Long) {
-        viewModelScope.launch {
+        verificationJob?.cancel()
+        _actionState.value = HistoryActionState.Verifying(taskRunId)
+        verificationJob = viewModelScope.launch {
             try {
                 val document = withContext(Dispatchers.IO) { manifestService.build(taskRunId) }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (_actionState.value != HistoryActionState.Verifying(taskRunId)) return@launch
                 _actionState.value = if (document == null) {
                     HistoryActionState.Error("That task is no longer in the journal.")
                 } else {
                     HistoryActionState.Manifest(document)
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
                 _actionState.value = HistoryActionState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -196,6 +206,7 @@ class HistoryViewModel(
     }
 
     fun dismissAction() {
+        verificationJob?.cancel()
         _actionState.value = HistoryActionState.Idle
     }
 }

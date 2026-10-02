@@ -90,6 +90,31 @@ class TabNavigationTest {
         compose.onNodeWithText("Previous app failure").assertDoesNotExist()
         compose.waitUntil(10_000) { !file.exists() }
     }
+    @Test fun warmLauncherRequestRechecksPermissionAndOpensANewWorkflow() {
+        val app = ApplicationProvider.getApplicationContext<PocketStewardApplication>()
+        runBlocking { app.container.settingsRepository.setStorageAccessMode(StorageAccessMode.DIRECT) }
+        val revision = androidx.compose.runtime.mutableLongStateOf(0L)
+        val target = androidx.compose.runtime.mutableStateOf(Routes.HOME)
+        lateinit var nav: androidx.navigation.NavHostController
+        compose.setContent {
+            nav = androidx.navigation.compose.rememberNavController()
+            PocketStewardTheme { PocketStewardNavHost(Routes.HOME, target.value, nav, revision.longValue) }
+        }
+        compose.onNodeWithText("Pocket Steward").assertIsDisplayed()
+        compose.runOnIdle { target.value = Routes.HISTORY; revision.longValue++ }
+        compose.waitUntil(10_000) { org.robolectric.shadows.ShadowLooper.idleMainLooper(); nav.currentDestination?.route == Routes.HISTORY }
+        compose.runOnIdle { target.value = Routes.HOME; revision.longValue++ }
+        compose.waitUntil(10_000) { org.robolectric.shadows.ShadowLooper.idleMainLooper(); nav.currentDestination?.route == Routes.HOME }
+        compose.onNodeWithText("Pocket Steward").assertIsDisplayed()
+        val before = runBlocking { app.container.database.taskRunDao().latestTaskId() }
+        runBlocking { app.container.settingsRepository.clearStorageAccessChoice() }
+        compose.runOnIdle { target.value = LauncherEntryPolicy.destination("pocketsteward", "organize"); revision.longValue++ }
+        compose.waitUntil(10_000) { org.robolectric.shadows.ShadowLooper.idleMainLooper(); nav.currentDestination?.route == Routes.ONBOARDING }
+        val label = app.getString(com.pocketsteward.app.R.string.onboarding_grant_broad_access)
+        compose.onNodeWithText(label).assertIsDisplayed()
+        com.google.common.truth.Truth.assertThat(runBlocking { app.container.database.taskRunDao().latestTaskId() }).isEqualTo(before)
+    }
+
 }
 
 class TabTestApplication : PocketStewardApplication() {

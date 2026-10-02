@@ -69,6 +69,9 @@ fun SettingsScreen(
                 SettingsViewModel(
                     settingsRepository = container.settingsRepository,
                     agentModel = container.agentModel,
+                    evidenceProgress = container.evidenceAnalysis.progress,
+                    pauseEvidence = { container.evidenceAnalysis.pause() },
+                    resumeEvidence = { container.evidenceAnalysis.resume() },
                     loadContentIndexOverview = container::contentIndexOverview,
                     clearContentIndexCache = container::clearContentIndex,
                     applyScheduledCleanup = container.scheduledCleanupCoordinator::apply,
@@ -100,6 +103,8 @@ fun SettingsScreen(
     val inboxRoots by viewModel.inboxRoots.collectAsState()
     val scheduledCleanup by viewModel.scheduledCleanupSettings.collectAsState()
     val modelStatus by viewModel.modelStatus.collectAsState()
+    val evidenceProgress by viewModel.evidenceAnalysisProgress.collectAsState()
+    val evidenceMessage by viewModel.evidenceMessage.collectAsState()
     val contentIndexStatus by viewModel.contentIndexStatus.collectAsState()
     val diagnosticsStatus by viewModel.diagnosticsStatus.collectAsState()
     val inboxObservation by container.inboxObservation.status.collectAsState()
@@ -224,6 +229,23 @@ fun SettingsScreen(
         }
 
         SectionTitle("Privacy & intelligence")
+        evidenceProgress?.let { progress ->
+            Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Saved library evidence analysis", style = MaterialTheme.typography.titleMedium)
+                    Text(progress.summary)
+                    Text(progress.detail)
+                    evidenceMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (progress.status in setOf(com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.QUEUED, com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.RUNNING)) {
+                        LinearProgressIndicator(progress = { progress.processed.toFloat() / progress.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
+                        OutlinedButton(onClick = viewModel::pauseEvidenceAnalysis) { Text("Pause analysis") }
+                    } else if (progress.status != com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.COMPLETED) {
+                        OutlinedButton(onClick = viewModel::resumeEvidenceAnalysis) { Text("Resume analysis") }
+                    }
+                    Text("No files move during analysis. Apply saved evidence from the filing review to see proposed changes.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
         SettingsSwitchRow(
             label = "Inspect document contents",
             supporting = "Local and on demand. Supports text, Office documents, PDFs, and scanned-PDF OCR.",

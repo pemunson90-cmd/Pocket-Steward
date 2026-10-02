@@ -47,6 +47,7 @@ import com.pocketsteward.app.report.ManifestFormat
 import com.pocketsteward.app.report.TaskManifestDocument
 import java.text.DateFormat
 import java.util.Date
+import com.pocketsteward.app.storage.rawValue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +90,11 @@ fun HistoryScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
             when (val action = actionState) {
                 HistoryActionState.Idle -> Unit
+                is HistoryActionState.Verifying -> {
+                    Text("Checking task #${action.taskRunId} and its current file locations…")
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    OutlinedButton(onClick = viewModel::dismissAction) { Text("Cancel verification") }
+                }
 
                 is HistoryActionState.ConfirmUndo -> {
                     ConfirmUndoCard(
@@ -253,10 +259,41 @@ private fun ManifestCard(
             }
         }
 
-        Text(
-            text = document.text,
-            modifier = Modifier.weight(1f).padding(top = 8.dp).verticalScroll(rememberScrollState()),
-        )
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Text(document.text.lineSequence().take(7).joinToString("\n")) }
+            document.filing?.let { filing ->
+                item {
+                    Text(filing.summary, style = MaterialTheme.typography.titleMedium)
+                    Text("Current locations and metadata were checked. This does not guarantee identical file bytes.")
+                    if (!filing.hasIntakeSnapshot) Text("Later-arrival coverage is unavailable for this older review.")
+                }
+                filing.roots.forEach { root ->
+                    item { Text("Folder: ${com.pocketsteward.app.storage.FileRefJournalCodec.decode(root.root).rawValue()}") }
+                    root.error?.let { error -> item { Text(error, color = MaterialTheme.colorScheme.error) } }
+                    items(root.newArrivals) { ref -> Text("Later arrival: ${com.pocketsteward.app.storage.FileRefJournalCodec.decode(ref).rawValue()}") }
+                    items(root.unreviewed) { ref -> Text("Unreviewed at intake: ${com.pocketsteward.app.storage.FileRefJournalCodec.decode(ref).rawValue()}") }
+                }
+                items(filing.locations, key = { "filing:${it.item.source}" }) { location ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(location.item.displayName, style = MaterialTheme.typography.titleSmall)
+                            Text(location.state.name.lowercase().replace('_', ' '))
+                            Text(location.detail)
+                            location.observedDestination?.let { Text(com.pocketsteward.app.storage.FileRefJournalCodec.decode(it).rawValue()) }
+                        }
+                    }
+                }
+                item { Text("Journaled operations", style = MaterialTheme.typography.titleMedium) }
+            }
+            items(document.entries, key = { "operation:${it.sequence}" }) { entry ->
+                Column {
+                    Text("${entry.operation}: ${entry.originalPath}")
+                    entry.resultPath?.let { Text("→ $it") }
+                    entry.reason?.let { Text(it) }
+                    entry.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
 
         exportedTo?.let {
             Text("Exported to $it", modifier = Modifier.padding(top = 8.dp))

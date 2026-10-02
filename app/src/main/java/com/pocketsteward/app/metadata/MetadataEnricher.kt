@@ -29,6 +29,7 @@ data class MetadataEnrichment(
     val mediaArtist: String? = null,
     val mediaAlbum: String? = null,
     val mediaTitle: String? = null,
+    val sourceError: String? = null,
 )
 
 /**
@@ -61,9 +62,14 @@ class MetadataEnricher(
             return MetadataEnrichment(record, changed = false)
         }
 
-        evidenceCache.read(record)?.let { return it }
+        val before = sourceSample(record)
+        evidenceCache.read(record, before)?.let { cached ->
+            if (sourceSample(record) == before) return cached
+        }
 
-        var updated = record
+        val cleared = record.copy(mediaType = null, width = null, height = null, durationMs = null,
+            apkPackageName = null, apkVersionName = null)
+        var updated = cleared
         val fields = linkedSetOf<String>()
         var pdfPages: Int? = null
         var archiveCount: Int? = null
@@ -81,8 +87,8 @@ class MetadataEnricher(
 
         if (record.extension.lowercase() in IMAGE_EXTENSIONS) {
             imageBounds(record)?.let { (width, height) ->
+                updated = updated.copy(width = width, height = height)
                 if (record.width != width || record.height != height) {
-                    updated = updated.copy(width = width, height = height)
                     fields += "dimensions"
                 }
             }
@@ -98,9 +104,9 @@ class MetadataEnricher(
             mediaTags(record)?.let { tags ->
                 val duration = tags[0]?.toLongOrNull()
                 mediaArtist = tags[1]; mediaAlbum = tags[2]; mediaTitle = tags[3]
-                if (duration != null && duration >= 0 && record.durationMs != duration) {
+                if (duration != null && duration >= 0) {
                     updated = updated.copy(durationMs = duration)
-                    fields += "duration"
+                    if (record.durationMs != duration) fields += "duration"
                 }
             }
         }
@@ -114,14 +120,12 @@ class MetadataEnricher(
                     @Suppress("DEPRECATION")
                     info.versionCode.toLong()
                 }
-                if (packageName.isNotBlank() &&
-                    (record.apkPackageName != packageName || record.apkVersionName != versionName)
-                ) {
+                if (packageName.isNotBlank()) {
                     updated = updated.copy(
                         apkPackageName = packageName,
                         apkVersionName = versionName,
                     )
-                    fields += "apk"
+                    if (record.apkPackageName != packageName || record.apkVersionName != versionName) fields += "apk"
                 }
             }
         }
@@ -158,8 +162,21 @@ class MetadataEnricher(
             exifCamera = camera,
             exifOrientation = orientation,
             captureDate = captureDate, mediaArtist = mediaArtist, mediaAlbum = mediaAlbum, mediaTitle = mediaTitle,
-        ).also(evidenceCache::write)
+        ).let { result ->
+            val after = sourceSample(record)
+            if (before == null || after != before) {
+                // No observation derived from a changing source becomes project evidence.
+                MetadataEnrichment(cleared, changed = cleared != record, archiveComplete = if (record.extension.lowercase() in ArchiveInspector.supportedExtensions) false else null,
+                    archiveNote = "Source evidence could not be verified; refresh the inventory before using it.")
+            } else result.also { evidenceCache.write(it, before) }
+        }
     }
+
+    private fun sourceSample(record: FileRecord): String? = try {
+        val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
+        input?.use { com.pocketsteward.app.evidence.EvidenceFingerprint.read(it, record.sizeBytes) }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+    catch (_: Exception) { null }
 
     private fun imageBounds(record: FileRecord): Pair<Int, Int>? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -74,6 +74,7 @@ open class PocketStewardApplication : Application() {
         // RUNNING with a file-granular cursor. When the user opens the app
         // again, restart only jobs that were running/queued; an explicit
         // user pause stays paused.
+        container.evidenceAnalysis
         appScope.launch {
             val jobs = runCatching {
                 ContentSearchDatabase.getInstance(this@PocketStewardApplication)

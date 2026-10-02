@@ -638,11 +638,13 @@ class PlanExecutorResumeTest {
         override suspend fun getAllUnderScopeRoot(scopeRootRef: String): List<FileRecord> =
             scoped(scopeRootRef)
 
-        override suspend fun indexedProjectLayouts(scopeRootRef: String, roleNames: List<String>, limit: Int): List<com.pocketsteward.app.data.db.IndexedProjectLayout> =
+        override suspend fun projectDiscoveryRevision() = com.pocketsteward.app.data.db.ProjectDiscoveryRevision(records.size.toLong(), records.values.maxOfOrNull { it.lastScannedAt } ?: 0L, records.values.maxOfOrNull { it.id } ?: 0L)
+
+        override suspend fun indexedProjectLayouts(scopeRootRef: String, roleNames: List<String>, limit: Int, afterPath: String): List<com.pocketsteward.app.data.db.IndexedProjectLayout> =
             scoped(scopeRootRef).filter { it.isDirectory }.mapNotNull { home ->
                 val roles = records.values.filter { child -> child.isDirectory && child.parentRef == home.stableRef && child.displayName.lowercase() in roleNames }
                 if (roles.isEmpty()) null else com.pocketsteward.app.data.db.IndexedProjectLayout(home.stableRef, home.displayName, home.isHidden, roles.joinToString("\n") { it.displayName })
-            }.sortedBy { it.path }.take(limit)
+            }.filter { it.path > afterPath }.sortedBy { it.path }.take(limit)
 
         override suspend fun getByStableRef(stableRef: String): FileRecord? =
             records[stableRef]

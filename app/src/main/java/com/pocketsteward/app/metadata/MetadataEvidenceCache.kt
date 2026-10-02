@@ -11,13 +11,14 @@ import java.util.UUID
 
 /** Rebuildable private cache; never holds filesystem mutation authority. */
 class MetadataEvidenceCache(private val directory: File) {
-    fun read(record: FileRecord): MetadataEnrichment? = runCatching {
-        if (record.modifiedAt == null) return null // Unknown freshness is not proof of reuse.
+    fun read(record: FileRecord, fingerprint: String?): MetadataEnrichment? = runCatching {
+        if (record.modifiedAt == null || fingerprint == null) return null // Unknown freshness is not proof of reuse.
         val file = fileFor(record)
         if (!file.isFile || file.length() > 1_048_576) return null
         DataInputStream(file.inputStream().buffered()).use { input ->
-            require(input.readInt() == 0x50534D32 && input.readInt() == 3)
+            require(input.readInt() == 0x50534D32 && input.readInt() == 4)
             require(input.readUTF() == record.stableRef && input.readLong() == record.sizeBytes && input.readLong() == record.modifiedAt)
+            require(input.readUTF() == fingerprint)
             val updated = record.copy(
                 mediaType = input.string(), width = input.integer(), height = input.integer(), durationMs = input.long(),
                 apkPackageName = input.string(), apkVersionName = input.string(),
@@ -43,8 +44,8 @@ class MetadataEvidenceCache(private val directory: File) {
         }
     }.getOrNull()
 
-    fun write(result: MetadataEnrichment) {
-        if (result.record.modifiedAt == null) return
+    fun write(result: MetadataEnrichment, fingerprint: String?) {
+        if (result.record.modifiedAt == null || fingerprint == null) return
         var temporary: File? = null
         try {
             directory.mkdirs()
@@ -52,8 +53,9 @@ class MetadataEvidenceCache(private val directory: File) {
             temporary = File(directory, "${target.name}.${UUID.randomUUID()}.tmp")
             DataOutputStream(temporary.outputStream().buffered()).use { output ->
                 val record = result.record
-                output.writeInt(0x50534D32); output.writeInt(3)
+                output.writeInt(0x50534D32); output.writeInt(4)
                 output.writeUTF(record.stableRef); output.writeLong(record.sizeBytes); output.writeLong(requireNotNull(record.modifiedAt))
+                output.writeUTF(fingerprint)
                 output.string(record.mediaType); output.integer(record.width); output.integer(record.height); output.long(record.durationMs)
                 output.string(record.apkPackageName); output.string(record.apkVersionName)
                 output.integer(result.pdfPageCount); output.integer(result.archiveEntryCount); output.string(result.apkLabel); output.long(result.apkVersionCode)

@@ -27,7 +27,30 @@ object TaskManifestJson {
             if (index != document.entries.lastIndex) append(",")
             append("\n")
         }
-        append("  ]\n")
+        append("  ]")
+        document.filing?.let { filing ->
+            append(",\n  \"filingVerification\": {\n")
+            append("    \"checkedAt\": ${filing.checkedAt}, \"indexedFolderDescendants\": ${filing.indexedFolderDescendants}, \"hasIntakeSnapshot\": ${filing.hasIntakeSnapshot},\n")
+            append("    \"locations\": [\n")
+            filing.locations.forEachIndexed { index, location ->
+                append("      {\"source\": ${jsonString(location.item.source)}, \"displayName\": ${jsonString(location.item.displayName)}, \"directory\": ${location.item.directory}, ")
+                append("\"approvedOutcome\": ${jsonString(location.item.outcome.name)}, \"approvedReason\": ${jsonString(location.item.reason)}, \"operationSequence\": ${location.item.operationSequence}, ")
+                append("\"expectedDestination\": ${jsonString(location.item.destination)}, \"observedDestination\": ${jsonString(location.observedDestination)}, ")
+                append("\"state\": ${jsonString(location.state.name)}, \"detail\": ${jsonString(location.detail)}}")
+                if (index != filing.locations.lastIndex) append(",")
+                append("\n")
+            }
+            append("    ],\n    \"roots\": [\n")
+            filing.roots.forEachIndexed { index, root ->
+                append("      {\"root\": ${jsonString(root.root)}, \"error\": ${jsonString(root.error)}, ")
+                append("\"newArrivals\": [${root.newArrivals.joinToString(",") { jsonString(it) }}], ")
+                append("\"unreviewed\": [${root.unreviewed.joinToString(",") { jsonString(it) }}]}")
+                if (index != filing.roots.lastIndex) append(",")
+                append("\n")
+            }
+            append("    ]\n  }")
+        }
+        append("\n")
         append("}\n")
     }
 

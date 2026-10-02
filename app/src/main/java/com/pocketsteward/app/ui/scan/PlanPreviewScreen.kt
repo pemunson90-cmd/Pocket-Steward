@@ -76,6 +76,12 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
     val error by viewModel.error.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val draftSaveStatus by viewModel.draftSaveStatus.collectAsState()
+    val evidenceProgress by viewModel.evidenceAnalysisProgress.collectAsState()
+    val evidenceError by viewModel.evidenceAnalysisError.collectAsState()
+    val evidenceRunning = evidenceProgress?.status in setOf(
+        com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.QUEUED,
+        com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.RUNNING,
+    )
 
     val preview = state
     var confirmBulkRed by rememberSaveable { mutableStateOf(false) }
@@ -253,14 +259,34 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                         FilingOverviewCard(filing, requireNotNull(filingInventory), busy == null,
                             onDeferRemaining = { viewModel.deferFilingFiles(filingInventory.pendingRefs) },
                             onKeepRemaining = { viewModel.keepFilingFiles(filingInventory.pendingRefs) })
+                        Text("Analyze every reviewed image and document in the background, using your enabled local privacy settings. No files move during analysis.")
+                        evidenceError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        evidenceProgress?.let { progress ->
+                            Text(progress.status.name.lowercase().replace('_', ' '))
+                            Text(progress.summary)
+                            Text(progress.detail)
+                            if (evidenceRunning) {
+                                androidx.compose.material3.LinearProgressIndicator(progress = { if (progress.total == 0) 0f else progress.processed.toFloat() / progress.total }, modifier = Modifier.fillMaxWidth())
+                                OutlinedButton(onClick = { viewModel.pauseFilingEvidenceAnalysis() }) { Text("Pause analysis") }
+                            } else if (progress.status != com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.COMPLETED) {
+                                OutlinedButton(onClick = { viewModel.resumeFilingEvidenceAnalysis() }) { Text("Resume saved analysis") }
+                            }
+                            if (!evidenceRunning && progress.processed > 0) {
+                                OutlinedButton(onClick = { viewModel.continueFilingImageEvidence() }, enabled = busy == null) { Text("Apply saved evidence to review") }
+                            }
+                        }
+                        OutlinedButton(onClick = { viewModel.analyzeAllFilingEvidence() }, enabled = !evidenceRunning && busy == null) { Text("Analyze all review evidence") }
+                        evidenceProgress?.takeIf { !evidenceRunning && (it.unavailable > 0 || it.partial > 0) }?.let {
+                            OutlinedButton(onClick = { viewModel.analyzeAllFilingEvidence(retryUnavailable = true) }, enabled = busy == null) { Text("Retry unavailable evidence across review") }
+                        }
                         filing.imageCoverage?.takeIf { it.enabled }?.let { coverage ->
                             Text(coverage.summary)
-                            if (coverage.hasDeferred) {
+                            if (coverage.hasDeferred && !evidenceRunning) {
                                 OutlinedButton(onClick = { viewModel.continueFilingImageEvidence() }) {
                                     Text("Continue image evidence")
                                 }
                             }
-                            if (coverage.unavailable > 0 || coverage.unavailableOcr > 0) {
+                            if (!evidenceRunning && (coverage.unavailable > 0 || coverage.unavailableOcr > 0)) {
                                 OutlinedButton(onClick = { viewModel.continueFilingImageEvidence(retryUnavailable = true) }) {
                                     Text("Retry unavailable image evidence")
                                 }

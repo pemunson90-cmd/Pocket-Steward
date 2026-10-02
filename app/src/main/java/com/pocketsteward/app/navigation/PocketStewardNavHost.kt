@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -55,7 +57,20 @@ fun PocketStewardNavHost(
     startDestination: String,
     postOnboardingDestination: String = Routes.HOME,
     navController: NavHostController = rememberNavController(),
+    launcherEntryRevision: Long = 0L,
 ) {
+    var handledLauncherEntry by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableLongStateOf(launcherEntryRevision) }
+    androidx.compose.runtime.LaunchedEffect(launcherEntryRevision) {
+        if (handledLauncherEntry != launcherEntryRevision) {
+            handledLauncherEntry = launcherEntryRevision
+            // Revalidate permission for warm launcher requests just as for a cold launch.
+            // Start a new workflow owner so a previous scan's autoStarted flag cannot eat the request.
+            navController.navigate(Routes.ONBOARDING) {
+                popUpTo(navController.graph.id) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
     PocketStewardShell(navController) { shellModifier ->
         NavHost(
             navController = navController,

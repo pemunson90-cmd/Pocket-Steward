@@ -65,6 +65,11 @@
             android:stopWithTask="false" />
 
         <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <service
             android:name=".service.ContentIndexForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync"

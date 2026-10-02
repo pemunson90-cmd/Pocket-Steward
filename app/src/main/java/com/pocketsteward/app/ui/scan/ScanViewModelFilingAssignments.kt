@@ -64,7 +64,8 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                 plan.authorizedDestinationRoots, plan.defaultSelectedSourceRefs,
                 plan.presentation.copy(reviewingUncertain = current.filingPresentation.reviewingUncertain, imageCoverage = current.filingPresentation.imageCoverage, reviewSessionId = nextSession.reviewId,
                     heldSourceRefs = current.filingPresentation.heldSourceRefs.orEmpty() - sourceRefs,
-                    indexedFolderDescendantCount = current.filingPresentation.indexedFolderDescendantCount),
+                    indexedFolderDescendantCount = current.filingPresentation.indexedFolderDescendantCount,
+                    intakeSnapshot = current.filingPresentation.intakeSnapshot),
                 previousReviewedSources = session.originalSources.orEmpty() + current.reviewedSources,
             )
             val edited = _uiState.value as? ScanUiState.PlanPreview ?: return@launch

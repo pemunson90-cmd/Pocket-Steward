@@ -10,7 +10,7 @@ Baseline: 1.4.0-dev11 (51), local commit 2beca08, published app-completion sourc
 
 ## Execution rules
 
-Keep the goal open until mandatory requirements pass their stated acceptance and conditional requirements receive explicit dispositions. Continue independent implementation when phone access/model credentials are unavailable. Preserve existing passing behavior. Publish meaningful checkpoints after relevant gates pass, rather than declaring the whole app finished after a checkpoint.
+Keep the goal open until mandatory requirements pass their stated acceptance and conditional requirements receive explicit dispositions. Continue independent implementation when phone access/model credentials are unavailable. Preserve existing passing behavior. User update 2026-10-02: do not publish intermediate APK checkpoints. Continue implementation through every mandatory planned feature, using internal builds/checks/source commits. The next published APK must be feature complete; physical acceptance, bug fixing and refactoring then finalize that build. An internal implementation step or passing check is not a stopping point for the goal.
 
 All mutations follow typed plan -> whole-plan validation -> exact review/approval -> durable task -> foreground executor -> journal/recovery/undo. No permanent deletion, unattended mutation, model filesystem authority or overwrite. Protection outranks inference. Preserve source baselines across review edits and continuation. Signing credentials stay outside source/backups; optional model credentials are separate.
 
@@ -82,3 +82,8 @@ AppFunctions remains conditionally deferred while SDK/invocation maturity is ins
 Run relevant regressions and full app tests, lint, debug/instrumentation compilation, exact SQLite checks and release-tool tests. Execute available instrumentation/device checks and record actual status. Increment version code; sign canonically; verify app ID/certificate/version/ABI and edition permissions. Commit/publish verified app tree, package provenance/tutorial, retrieve the public ZIP, verify both ZIP/APK hashes and record remaining blockers/next starting point. Use BUILD_AND_RELEASE.md and the checked-in tools.
 
 The goal closes only after every mandatory register row passes and final signed build/source/download/tutorial are published. A checkpoint release does not close the goal.
+
+
+## User-directed delivery policy — 2026-10-02
+
+The user prefers one feature-complete next APK over incremental releases. Dev18 remains the last published checkpoint. Do not invoke signing/package/public-APK publication merely because an individual work package passes. Internal compile/regression checks and source commits remain authorized; retain the existing mutation protections throughout implementation. The next-APK gate is implemented and reachable mandatory capabilities, integrated end-to-end sorting and whole-library processing, and explicit capability states for optional integrations. Deliver that feature-complete build for physical corpus acceptance and subsequent bug fixing/refactoring. Overall goal acceptance stays open until the physical and final quality gates pass.

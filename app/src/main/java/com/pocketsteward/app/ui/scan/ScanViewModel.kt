@@ -499,6 +499,9 @@ class ScanViewModel(
     internal var selectionDependencies: PlanSelection.Dependencies? = null
     internal var filingEditJob: Job? = null
     internal var filingPlanningJob: Job? = null
+    val evidenceAnalysisProgress get() = container.evidenceAnalysis.progress
+    val evidenceAnalysisError get() = container.evidenceAnalysis.error
+
     val hasActiveFilingWork: Boolean get() = filingPlanningJob?.isActive == true || filingEditJob?.isActive == true
 
     internal val _preview = MutableStateFlow<ScanUiState.PlanPreview?>(null)
@@ -1403,7 +1406,13 @@ class ScanViewModel(
                 require(ReviewDraftPolicy.hasCurrentAccess(preview, mode, accessState.safTreeUri)) { "Storage access changed. Rebuild this review with the current access." }
                 val executor = container.planExecutor(mode)
 
-                val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources)
+                val inventory = preview.filingPresentation?.let { filing ->
+                    com.pocketsteward.app.filing.FilingTaskInventoryBuilder.build(
+                        com.pocketsteward.app.filing.FilingInventoryPolicy.build(filing, preview.accepted, preview.selectedIndices, preview.rejected),
+                        selectedOperations, filing.intakeSnapshot, filing.indexedFolderDescendantCount,
+                    )
+                }
+                val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources, inventory)
                 val unindexed = preview.unindexedFolder
                 val index = if (unindexed == null) {
                     buildAuthorizedPlanIndex(

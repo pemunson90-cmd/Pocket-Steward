@@ -132,9 +132,12 @@ interface FileRecordDao {
             "INNER JOIN file_records h ON h.stableRef = c.parentRef " +
             "INNER JOIN file_scopes s ON s.fileRef = h.stableRef " +
             "WHERE s.scopeRoot = :scopeRootRef AND h.isDirectory = 1 AND c.isDirectory = 1 " +
-            "AND lower(c.displayName) IN (:roleNames) GROUP BY h.stableRef ORDER BY h.stableRef LIMIT :limit",
+            "AND h.stableRef > :afterPath AND lower(c.displayName) IN (:roleNames) GROUP BY h.stableRef ORDER BY h.stableRef LIMIT :limit",
     )
-    suspend fun indexedProjectLayouts(scopeRootRef: String, roleNames: List<String>, limit: Int): List<IndexedProjectLayout>
+    suspend fun indexedProjectLayouts(scopeRootRef: String, roleNames: List<String>, limit: Int, afterPath: String = ""): List<IndexedProjectLayout>
+
+    @Query("SELECT COUNT(*) AS rowCount, COALESCE(MAX(lastScannedAt), 0) AS scannedAt, COALESCE(MAX(id), 0) AS maxId FROM file_records")
+    suspend fun projectDiscoveryRevision(): ProjectDiscoveryRevision
 
     @Query("SELECT * FROM file_records WHERE stableRef = :stableRef")
     suspend fun getByStableRef(stableRef: String): FileRecord?
@@ -275,3 +278,5 @@ interface FileRecordDao {
 data class ExtensionStat(val extension: String, val fileCount: Int, val totalBytes: Long)
 
 data class IndexedProjectLayout(val path: String, val name: String, val hidden: Boolean, val observedRoles: String)
+
+data class ProjectDiscoveryRevision(val rowCount: Long, val scannedAt: Long, val maxId: Long)

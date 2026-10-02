@@ -10,6 +10,7 @@ enum class FilingConfidence {
 
 enum class FilingEvidenceKind {
     USER_MAPPING,
+    SOURCE_UNAVAILABLE,
     PROJECT_HOME,
     APK_PACKAGE,
     APK_LABEL,
