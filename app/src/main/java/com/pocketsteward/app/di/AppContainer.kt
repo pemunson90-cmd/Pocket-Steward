@@ -221,6 +221,7 @@ class AppContainer(context: Context) {
         readFingerprint = { record -> contentInspector(if (record.stableRef.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).evidenceFingerprint(record) },
         observeMetadata = { ref -> contentInspector(if (ref.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).observeMetadata(ref) },
     ) }
+    val fileEvidenceInspector by lazy { com.pocketsteward.app.evidence.createFileEvidenceInspector(this) }
     val scheduledCleanupCoordinator: ScheduledCleanupCoordinator by lazy { ScheduledCleanupCoordinator(appContext) }
     val runtimeDiagnostics: RuntimeDiagnostics by lazy {
         RuntimeDiagnostics(

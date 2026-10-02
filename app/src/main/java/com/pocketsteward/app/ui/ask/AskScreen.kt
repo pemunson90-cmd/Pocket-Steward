@@ -310,6 +310,7 @@ private fun PassageCard(
                     maxLines = 8,
                     overflow = TextOverflow.Ellipsis,
                 )
+                com.pocketsteward.app.ui.evidence.FileEvidenceButton(com.pocketsteward.app.evidence.EvidenceRequest(passage.stableRef))
             }
         }
     }

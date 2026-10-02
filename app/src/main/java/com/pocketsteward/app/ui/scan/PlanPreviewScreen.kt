@@ -397,6 +397,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                         Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
                                         inventoryBySource[item.sourceRef]?.let { Text(it.reason, style = MaterialTheme.typography.labelSmall) }
                                         item.contentExcerpt?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis) }
+                                        com.pocketsteward.app.ui.evidence.FileEvidenceButton(filingEvidenceRequest(item, preview))
                                         Text(
                                             buildString {
                                                 append(formatBytes(item.sizeBytes)).append(" · ")
@@ -881,6 +882,7 @@ private fun FilingDestinationCard(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                com.pocketsteward.app.ui.evidence.FileEvidenceButton(filingEvidenceRequest(item, preview, group))
                                 if (!checked) {
                                     if (!group.isUncertainCheckpoint) TextButton(onClick = { onDefer(setOf(item.sourceRef)) }, enabled = selectionEnabled) { Text("Move to Uncertain") }
                                     TextButton(onClick = { onKeep(setOf(item.sourceRef)) }, enabled = selectionEnabled) { Text("Keep here") }
@@ -1269,6 +1271,18 @@ private fun treeMarkLabel(mark: PlanTree.Mark, after: Boolean): String = when (m
     PlanTree.Mark.COPY -> if (after) "copy" else "copied"
     PlanTree.Mark.TRASH -> if (after) "recoverable" else "to Trash"
     PlanTree.Mark.NEW -> "new"
+}
+
+private fun filingEvidenceRequest(item: com.pocketsteward.app.filing.FilingReviewItem, preview: ScanUiState.PlanPreview,
+    group: com.pocketsteward.app.filing.FilingReviewGroup? = null): com.pocketsteward.app.evidence.EvidenceRequest {
+    val baseline = preview.reviewedSources[item.sourceRef]
+    val scope = if (preview.storageMode == com.pocketsteward.app.storage.StorageAccessMode.SAF) preview.scopes.singleOrNull()?.root
+        else preview.scopes.map { it.root }.filterIsInstance<com.pocketsteward.app.storage.FileRef.Direct>()
+            .filter { item.sourceRef.startsWith(it.absolutePath.trimEnd('/') + "/") }.maxByOrNull { it.absolutePath.length }
+    return com.pocketsteward.app.evidence.EvidenceRequest(item.sourceRef, preview.storageMode, scope?.rawValue(),
+        baseline?.let { com.pocketsteward.app.evidence.EvidenceExpectedSource(it.sizeBytes, it.modifiedAtEpochMs, item.isDirectory) },
+        com.pocketsteward.app.evidence.EvidenceReviewContext(owner = group?.projectName?.takeUnless { group.isUncertainCheckpoint },
+            release = group?.release, destination = item.destinationPath, confidence = item.confidence.name.lowercase(), reasons = item.evidence))
 }
 
 @Composable

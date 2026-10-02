@@ -1,6 +1,7 @@
 package com.pocketsteward.app.image
 
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import org.json.JSONArray
@@ -97,22 +98,25 @@ class ImageUnderstanding(
         readCache(checked, inspectText)?.let { return it }
         if (!allowFresh) return null
         val cachedVisual = if (inspectText) readCache(checked, false) else null
-        val uri = if (record.stableRef.startsWith("content://")) Uri.parse(record.stableRef) else Uri.fromFile(File(record.stableRef))
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        val bitmap = try {
-            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || maxOf(bounds.outWidth, bounds.outHeight) > 100_000) return null
-            var sample = 1
-            val maximum = if (inspectText) 1600 else 1024
-            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maximum) sample *= 2
-            currentCoroutineContext().ensureActive()
-            context.contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-            }
-        } catch (cancel: CancellationException) { throw cancel }
-        catch (_: Exception) { null } ?: return null
+        val lease = analysisGate.acquire()
+        var retainedBitmap: Bitmap? = null
         var pending: Task<*>? = null
         return try {
+            val uri = if (record.stableRef.startsWith("content://")) Uri.parse(record.stableRef) else Uri.fromFile(File(record.stableRef))
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            val bitmap = try {
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || maxOf(bounds.outWidth, bounds.outHeight) > 100_000) return null
+                var sample = 1
+                val maximum = if (inspectText) 1600 else 1024
+                while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maximum) sample *= 2
+                currentCoroutineContext().ensureActive()
+                context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { null } ?: return null
+            retainedBitmap = bitmap
             val input = InputImage.fromBitmap(bitmap, 0)
             val labels = cachedVisual?.labels ?: labeler.process(input).also { pending = it }.await()
                 .sortedByDescending { it.confidence }.take(MAX_LABELS).map { ImageLabelScore(it.text, it.confidence) }
@@ -145,10 +149,10 @@ class ImageUnderstanding(
         } catch (cancel: CancellationException) { throw cancel }
         catch (_: Exception) { null }
         finally {
-            val task = pending
-            if (task == null || task.isComplete) bitmap.recycle() else task.addOnCompleteListener { bitmap.recycle() }
+            lease.releaseAfter(pending) { retainedBitmap?.recycle() }
         }
     }
+    private val analysisGate = ImageAnalysisGate()
 
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 

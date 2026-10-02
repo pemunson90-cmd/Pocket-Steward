@@ -1,5 +1,7 @@
 package com.pocketsteward.app.ui.scan
 
+import com.pocketsteward.app.evidence.evidenceRequest
+
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.animation.animateContentSize
@@ -335,6 +337,7 @@ private fun ContentMatchCard(match: ContentMatch) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = Spacing.hairline),
                 )
+                com.pocketsteward.app.ui.evidence.FileEvidenceButton(match.record.evidenceRequest())
             }
         }
     }
@@ -1005,6 +1008,8 @@ private fun SearchResultPreview(
         result.snippets.forEach { snippet ->
             SearchSnippet(snippet, topPadding = Spacing.tight)
         }
+        com.pocketsteward.app.ui.evidence.FileEvidenceButton(com.pocketsteward.app.evidence.EvidenceRequest(result.stableRef,
+            expected = com.pocketsteward.app.evidence.EvidenceExpectedSource(result.sizeBytes, result.modifiedAt, false)))
     }
 }
 
@@ -1242,6 +1247,9 @@ private fun CoherenceAuditReview(
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = Spacing.hairline),
                         )
+                        com.pocketsteward.app.ui.evidence.FileEvidenceButton(row.record.evidenceRequest(review = com.pocketsteward.app.evidence.EvidenceReviewContext(
+                            confidence = row.classification.name.replace('_', ' ').lowercase(),
+                            reasons = listOfNotNull(row.suggestedGroup?.let { "Suggested group: $it" }), modelAdvice = row.reason)))
                         row.suggestedGroup?.let { suggestion ->
                             Text(
                                 text = "Suggested group: $suggestion",
