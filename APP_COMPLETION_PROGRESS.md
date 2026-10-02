@@ -139,3 +139,19 @@ Physical Fold 7 crash/ANR/reboot/memory/data-integrity acceptance remains open. 
 
 
 Dev17 signed publication: canonical signer, version code 57, arm64-only, absent INTERNET permission, 16 KiB APK ZIP alignment and storage-helper ELF LOAD alignment verified. Published source `461d89696f8147ed3dc8175d58fcc2a608f73a95` matches local app tree `bb2b51a592ecb4397a12947639833c7dd55567ac`. [Public ZIP](https://raw.githubusercontent.com/pemunson90-cmd/Pocket-Steward/20b402c0ea4fb56244e800d8358f3db81fe9f004/PocketSteward-1.4.0-dev17.zip) and its embedded APK were downloaded and hash-verified. ZIP SHA-256: `3d467b99b8c4319d9cc022fc8e69d24959dc3a009d8024fed0e02a938f459059`; APK SHA-256: `8d9227f831dc8d868939f46225d3cbe9adbffeece7a343ab0dc7b4bbcc222d97`. [Independent matching-source GitHub validation](https://github.com/pemunson90-cmd/Pocket-Steward/actions/runs/36964527193) passed (clean build, full suite/lint/instrumentation compile, SQLite/native/release checks, release assembly and offline-permission checks). Physical Fold 7 acceptance remains open.
+
+
+## Fold 7 retest and resumed filing work — 2026-10-02
+
+The user reports **no tab crashes** after installing dev17 on the Galaxy Fold 7 / API 36. The copied previous-process exit record had no saved stack or failed-build version; it does not establish a fresh dev17 crash. Home/Explore switching has this user-reported device confirmation. Scanning, sustained cleanup, folded/unfolded layouts, ANR/phone reboot, memory/thermal behavior, interruption, Undo and data-integrity acceptance remain open. FILING-01 resumed after this retest.
+
+
+## Implemented for dev18 — explicit filing review decisions
+
+FILING-01 now has per-source destination/checkpoint/retained-checkpoint/explicit-keep/blocked/needs-decision accounting in the review. Probable unchecked proposals can be explicitly deferred to Uncertain or kept; group/individual choices and a bulk remaining-items action preserve selected destinations. Both UI and approval entry point refuse incomplete decisions. Keep choices survive saved review/continuation and are rescinded by reselection; explicit Uncertain decisions survive as scoped assignments. Assignment and defer rebuilds preserve original session baselines for unresolved inputs as well as previously reviewed operations.
+
+Overlapping scan scopes no longer propose both an intact folder and its descendants. Memoized indexed-parent traversal counts indexed descendants separately without additional moves. Copy outcomes explain that originals remain. The historical exit notice now displays UTC time and no longer claims to identify an unknown failed-build version. See DEV18_USER_GUIDE.md and DEV18_FILING_REVIEW_REPORT.md.
+
+All 697 unit/JVM tests passed with zero failures, errors or skips on the final application source. They include real API 36 Compose review transitions, rejection before enqueue, defer preserving another selected project/source baselines, restart, 16k source outcomes and overlapping intact folders with 16,001 indexed descendants. The initial UI fixture required explicit paused-main-looper delivery and history-independent task-count assertions; those test corrections do not establish a phone defect. Lint/build/signing/publication results follow after completion.
+
+FILING-01 remains partly implemented: durable full inventory task manifests, post-task live rescan/journal reconciliation, distinct new arrivals and all inaccessible/protected inventory exceptions remain open. Complete automatic evidence analysis, recognition/learning and selected-tree folder parity remain later work. Only the dev17 Home/Explore retest has user-reported phone confirmation; no full-corpus/thermal/Undo/data-integrity acceptance is claimed.

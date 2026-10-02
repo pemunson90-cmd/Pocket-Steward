@@ -102,6 +102,25 @@ class InboxFilingIntakeTest {
         assertThat(selected.records).isEmpty()
     }
 
+    @Test fun overlappingFolderScopesReviewAnIntactBundleExactlyOnce() {
+        val root = "/Download"
+        val bundle = record("$root/Lilith", root, directory = true)
+        val notes = record("${bundle.stableRef}/Notes", bundle.stableRef, directory = true)
+        val files = List(16_000) { record("${notes.stableRef}/$it.txt", notes.stableRef) }
+        val selection = InboxFilingIntake.select(listOf(bundle, notes) + files + files.take(10),
+            setOf(root, bundle.stableRef, notes.stableRef), false, true)
+        assertThat(selection.records).containsExactly(bundle)
+        assertThat(selection.indexedFolderDescendantCount).isEqualTo(16_001)
+    }
+
+    @Test fun opaqueProviderParentIdentityAlsoPreventsDoublePlanning() {
+        val bundle = record("content://provider/document/42", "content://provider/document/1", "Lilith", true)
+        val child = record("content://provider/document/99", bundle.stableRef)
+        val selection = InboxFilingIntake.select(listOf(bundle, child), setOf(bundle.parentRef!!, bundle.stableRef), false, true)
+        assertThat(selection.records).containsExactly(bundle)
+        assertThat(selection.indexedFolderDescendantCount).isEqualTo(1)
+    }
+
     private fun unresolved(source: String, parent: String) = FilingDecision(
         FilingArtifact(source, source.substringAfterLast('/'), "txt", 10, modifiedAt = 1, parentRef = parent),
         null, null, null, null, FilingConfidence.UNRESOLVED, emptyList(),

@@ -275,7 +275,9 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 scopeNotes = notes,
                 authorizedDestinationRoots = plan.authorizedDestinationRoots,
                 defaultSelectedSourceRefs = continuationSelections(plan.defaultSelectedSourceRefs, continuation),
-                filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly, imageCoverage = imageEvidence.coverage, reviewSessionId = nextSession.reviewId),
+                filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly, imageCoverage = imageEvidence.coverage, reviewSessionId = nextSession.reviewId,
+                    heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
+                    indexedFolderDescendantCount = intake.indexedFolderDescendantCount),
                 previousReviewedSources = originalSources,
             )
             filingSession = nextSession
@@ -413,7 +415,9 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             enriched.values.count { it.archiveComplete == false }.takeIf { it > 0 }?.let { "$it archives had partial or unavailable inspection. Only observed entry names were used as evidence." },
         ),
         defaultSelectedSourceRefs = continuationSelections(plan.defaultSelectedSourceRefs, continuation),
-        filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly, imageCoverage = imageEvidence.coverage, reviewSessionId = nextSession.reviewId),
+        filingPresentation = plan.presentation.copy(skippedInboxFolders = skippedFolders, reviewingUncertain = checkpointOnly, imageCoverage = imageEvidence.coverage, reviewSessionId = nextSession.reviewId,
+            heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
+            indexedFolderDescendantCount = intake.indexedFolderDescendantCount),
         previousReviewedSources = originalSources,
     )
     filingSession = nextSession

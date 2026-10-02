@@ -627,7 +627,11 @@ internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolea
         ?: PlanSelection.dependencies(current.accepted).also { selectionDependencies = it }
     val updated = PlanSelection.setSelected(current.accepted, current.selectedIndices, index, selected, graph)
 
-    _preview.value = current.copy(selectedIndices = updated)
+    val source = current.accepted.getOrNull(index)?.let(com.pocketsteward.app.plan.ReviewedSources::sourceOf)?.rawValue()
+    _preview.value = current.copy(selectedIndices = updated,
+        filingPresentation = current.filingPresentation?.let { filing ->
+            if (selected && source != null) filing.copy(heldSourceRefs = filing.heldSourceRefs.orEmpty() - source) else filing
+        })
 }
 
 internal fun ScanViewModel.selectAllPlanOperations() {
@@ -635,6 +639,7 @@ internal fun ScanViewModel.selectAllPlanOperations() {
     val current = _preview.value ?: return
     _preview.value = current.copy(
         selectedIndices = PlanSelection.allSelected(current.accepted),
+        filingPresentation = current.filingPresentation?.copy(heldSourceRefs = emptySet()),
     )
 }
 
@@ -652,6 +657,7 @@ internal fun ScanViewModel.selectRecommendedPlanOperations() {
         .mapTo(linkedSetOf()) { it.sourceRef }
     _preview.value = current.copy(
         selectedIndices = defaultSelectionForSources(current.accepted, strongRefs),
+        filingPresentation = filing.copy(heldSourceRefs = filing.heldSourceRefs.orEmpty() - strongRefs),
     )
 }
 

@@ -1377,6 +1377,13 @@ class ScanViewModel(
                 _uiState.value = ScanUiState.Error("Select at least one action to run.")
                 return@launch
             }
+            preview.filingPresentation?.let { filing ->
+                val inventory = com.pocketsteward.app.filing.FilingInventoryPolicy.build(filing, preview.accepted, preview.selectedIndices, preview.rejected)
+                if (!inventory.complete) {
+                    _error.value = "${inventory.pendingRefs.size} item(s) still need a decision. Select a destination, move to Uncertain, or choose Keep here."
+                    return@launch
+                }
+            }
 
             _uiState.value = ScanUiState.Working(
                 label = "Starting task",

@@ -30,4 +30,6 @@ All 682 unit/JVM tests pass with no failures or errors on the final app source. 
 
 No physical Fold 7, emulator, device logcat or user crash stack is attached to this environment. Android instrumentation compilation is not execution. Do not close physical crash/ANR/reboot/data-integrity acceptance until the installed update is exercised on the phone.
 
-FILING-01 implementation remains pending because this actual crash report takes priority over new sorting behavior.
+On 2026-10-02, the user reports **no tab crashes** after installing dev17 on the Galaxy Fold 7 (Android API 36). Home/Explore tab switching now has this physical-phone confirmation. The displayed previous-process exit notice was historical diagnostic evidence, not a reported fresh dev17 failure. This does not verify scanning, long running cleanup, folded/unfolded layouts, memory/thermal behavior, Undo or data-integrity acceptance.
+
+FILING-01 implementation resumed after this tab retest.

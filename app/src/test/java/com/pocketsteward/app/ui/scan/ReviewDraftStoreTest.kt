@@ -35,6 +35,17 @@ class ReviewDraftStoreTest {
         assertThat(ReviewDraftCodec.decode(ReviewDraftCodec.encode(original))).isEqualTo(original)
     }
 
+    @Test fun explicitKeepsRetainedCheckpointAndFolderCountsSurviveRestart() {
+        val original = draft()
+        val source = original.filingSession!!.result.decisions.single().artifact.stableRef
+        val updated = original.copy(preview = original.preview.copy(filingPresentation = original.preview.filingPresentation!!.copy(
+            heldSourceRefs = setOf(source), retainedUncertainSourceRefs = setOf(source), indexedFolderDescendantCount = 16_000)))
+        val restored = ReviewDraftCodec.decode(ReviewDraftCodec.encode(updated))!!
+        assertThat(restored).isEqualTo(updated)
+        assertThat(FilingInventoryPolicy.build(restored.preview.filingPresentation!!, restored.preview.accepted,
+            restored.preview.selectedIndices, restored.preview.rejected).count(FilingOutcome.KEEP)).isEqualTo(1)
+    }
+
     @Test fun rejectsCorruptOrTruncatedDraftInsteadOfRecoveringPartialOperations() {
         val bytes = ReviewDraftCodec.encode(draft())
         assertThat(ReviewDraftCodec.decode(bytes.copyOf(bytes.size - 7))).isNull()

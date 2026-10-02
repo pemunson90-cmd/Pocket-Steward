@@ -24,6 +24,9 @@ import com.pocketsteward.app.ui.components.FileVisual
 import com.pocketsteward.app.plan.PlanTree
 import com.pocketsteward.app.filing.FilingConfidence
 import com.pocketsteward.app.filing.FilingReviewPresentation
+import com.pocketsteward.app.filing.FilingInventory
+import com.pocketsteward.app.filing.FilingInventoryPolicy
+import com.pocketsteward.app.filing.FilingOutcome
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -107,6 +110,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                 }
             }
         }
+        val filingInventory = remember(preview.filingPresentation, preview.accepted, preview.selectedIndices, preview.rejected) {
+            preview.filingPresentation?.let { FilingInventoryPolicy.build(it, preview.accepted, preview.selectedIndices, preview.rejected) }
+        }
+        val inventoryBySource = remember(filingInventory) { filingInventory?.entries?.associateBy { it.item.sourceRef }.orEmpty() }
 
         Column(modifier = contentModifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.hairline)) {
@@ -243,7 +250,9 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
 
                 preview.filingPresentation?.let { filing ->
                     item {
-                        FilingOverviewCard(filing)
+                        FilingOverviewCard(filing, requireNotNull(filingInventory), busy == null,
+                            onDeferRemaining = { viewModel.deferFilingFiles(filingInventory.pendingRefs) },
+                            onKeepRemaining = { viewModel.keepFilingFiles(filingInventory.pendingRefs) })
                         filing.imageCoverage?.takeIf { it.enabled }?.let { coverage ->
                             Text(coverage.summary)
                             if (coverage.hasDeferred) {
@@ -282,6 +291,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
+                                onConfirm = viewModel::confirmFilingFiles,
+                                onDefer = viewModel::deferFilingFiles,
+                                onKeep = viewModel::keepFilingFiles,
+                                inventoryBySource = inventoryBySource,
                                 onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { root, name ->
@@ -304,6 +317,10 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
+                                onConfirm = viewModel::confirmFilingFiles,
+                                onDefer = viewModel::deferFilingFiles,
+                                onKeep = viewModel::keepFilingFiles,
+                                inventoryBySource = inventoryBySource,
                                 onAssign = { refs, title, role, homePath, release -> viewModel.assignFilingFiles(refs, title, role, homePath, release) },
                                 knownProjects = viewModel.filingSession?.homes.orEmpty(),
                                 onApplyDestination = { _, _ -> },
@@ -349,6 +366,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                     FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef)
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
+                                        inventoryBySource[item.sourceRef]?.let { Text(it.reason, style = MaterialTheme.typography.labelSmall) }
                                         item.contentExcerpt?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis) }
                                         Text(
                                             buildString {
@@ -520,7 +538,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                         viewModel.approvePlan(preview)
                     },
-                    enabled = preview.selectedIndices.isNotEmpty() && busy == null,
+                    enabled = preview.selectedIndices.isNotEmpty() && busy == null && filingInventory?.complete != false,
                 ) {
                     val selectedFileCount = preview.selectedIndices.count { index ->
                         when (preview.accepted.getOrNull(index)) {
@@ -673,23 +691,34 @@ private fun PlanOperationEditControls(
 }
 
 @Composable
-private fun FilingOverviewCard(filing: FilingReviewPresentation) {
-    val strong = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.STRONG }
-    val probable = filing.groups.flatMap { it.items }.count { it.confidence == FilingConfidence.PROBABLE }
+private fun FilingOverviewCard(filing: FilingReviewPresentation, inventory: FilingInventory, enabled: Boolean,
+    onDeferRemaining: () -> Unit, onKeepRemaining: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.base)) {
             Text(if (filing.reviewingUncertain) "Sort Uncertain" else "Organize Downloads", style = MaterialTheme.typography.titleMedium)
             Text(
                 buildString {
-                    append(strong).append(" ready to file")
-                    if (probable > 0) append(" · ").append(probable).append(" need review")
-                    if (filing.checkpointCount > 0) append(" · ").append(filing.checkpointCount).append(" to Uncertain")
-                    if (filing.reviewingUncertain && filing.unresolvedCount > 0) append(" · ").append(filing.unresolvedCount).append(" stay in Uncertain")
+                    append(inventory.entries.size).append(" reviewed items")
+                    append(" · ").append(inventory.count(FilingOutcome.DESTINATION)).append(" to destinations")
+                    if (inventory.count(FilingOutcome.COPY_RETAINED) > 0) append(" · ").append(inventory.count(FilingOutcome.COPY_RETAINED)).append(" copies; originals stay here")
+                    append(" · ").append(inventory.count(FilingOutcome.CHECKPOINT)).append(" to Uncertain")
+                    if (inventory.count(FilingOutcome.RETAINED_UNCERTAIN) > 0) append(" · ").append(inventory.count(FilingOutcome.RETAINED_UNCERTAIN)).append(" stay in Uncertain")
+                    if (inventory.count(FilingOutcome.KEEP) > 0) append(" · ").append(inventory.count(FilingOutcome.KEEP)).append(" kept here")
+                    if (inventory.count(FilingOutcome.BLOCKED) > 0) append(" · ").append(inventory.count(FilingOutcome.BLOCKED)).append(" blocked")
+                    if (!inventory.complete) append(" · ").append(inventory.count(FilingOutcome.NEEDS_DECISION)).append(" need a decision")
                     if (filing.skippedInboxFolders > 0) append(" · ").append(filing.skippedInboxFolders).append(" existing folders left")
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = Spacing.hairline),
             )
+            if (filing.indexedFolderDescendantCount > 0) Text(
+                "${filing.indexedFolderDescendantCount} indexed items inside reviewed folders travel with their folder; they are not separate moves.",
+                style = MaterialTheme.typography.bodySmall)
+            if (!inventory.complete) {
+                Text("Unchecked items need an explicit choice before Run. Your selected destinations are preserved.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = onDeferRemaining, enabled = enabled) { Text("Send ${inventory.pendingRefs.size} remaining to Uncertain") }
+                TextButton(onClick = onKeepRemaining, enabled = enabled) { Text("Keep ${inventory.pendingRefs.size} remaining here") }
+            }
             Text(
                 if (filing.reviewingUncertain) {
                     "Review project matches from the checkpoint. Anything still unresolved stays exactly where it is."
@@ -713,6 +742,10 @@ private fun FilingDestinationCard(
     preview: ScanUiState.PlanPreview,
     sourceOperationIndices: Map<String, Int>,
     onSetSelected: (Int, Boolean) -> Unit,
+    onConfirm: (Set<String>) -> Unit,
+    onDefer: (Set<String>) -> Unit,
+    onKeep: (Set<String>) -> Unit,
+    inventoryBySource: Map<String, com.pocketsteward.app.filing.FilingInventoryEntry>,
     onAssign: (Set<String>, String, com.pocketsteward.app.filing.FilingRole, String?, String?) -> Unit,
     knownProjects: List<com.pocketsteward.app.filing.ProjectHomeCandidate>,
     onApplyDestination: (String, String) -> Unit,
@@ -769,6 +802,18 @@ private fun FilingDestinationCard(
                 }
             }
 
+            if (selectedFiles < group.items.size) {
+                val unselected = group.items.filter { item -> sourceOperationIndices[item.sourceRef]?.let { it in preview.selectedIndices } != true }
+                    .mapTo(hashSetOf()) { it.sourceRef }
+                OutlinedButton(onClick = { onConfirm(unselected) }, enabled = selectionEnabled) {
+                    Text(if (group.isUncertainCheckpoint) "Confirm checkpoint moves" else "Confirm destination for group")
+                }
+                if (!group.isUncertainCheckpoint) TextButton(onClick = { onDefer(unselected) }, enabled = selectionEnabled) {
+                    Text("Send unselected to Uncertain")
+                }
+                TextButton(onClick = { onKeep(unselected) }, enabled = selectionEnabled) { Text("Keep unselected here") }
+            }
+
             if (expanded) {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     items(group.items, key = { it.sourceRef }) { item ->
@@ -787,6 +832,7 @@ private fun FilingDestinationCard(
                             FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef, size = 28.dp)
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(item.displayName, style = MaterialTheme.typography.bodyMedium)
+                                inventoryBySource[item.sourceRef]?.let { Text(it.reason, style = MaterialTheme.typography.labelSmall) }
                                 Text(
                                     buildString {
                                         append(if (group.isUncertainCheckpoint) "Uncertain · review later" else if (item.confidence == FilingConfidence.STRONG) "Strong match" else "Probable match · review")
@@ -805,6 +851,10 @@ private fun FilingDestinationCard(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                }
+                                if (!checked) {
+                                    if (!group.isUncertainCheckpoint) TextButton(onClick = { onDefer(setOf(item.sourceRef)) }, enabled = selectionEnabled) { Text("Move to Uncertain") }
+                                    TextButton(onClick = { onKeep(setOf(item.sourceRef)) }, enabled = selectionEnabled) { Text("Keep here") }
                                 }
                             }
                         }

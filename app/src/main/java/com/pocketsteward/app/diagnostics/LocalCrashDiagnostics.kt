@@ -56,8 +56,9 @@ object LocalCrashDiagnostics {
         if (exit.timestamp <= dismissed) return null
         return "Pocket Steward previous process exit\n" +
             "Reason: ${reason(exit.reason)}\nAndroid API: ${Build.VERSION.SDK_INT}\n" +
-            "Time (epoch ms): ${exit.timestamp}\n" +
-            "Android recorded the exit reason. This older build did not save an exception stack."
+            "Time (UTC): ${java.time.Instant.ofEpochMilli(exit.timestamp)}\nTime (epoch ms): ${exit.timestamp}\n" +
+            "This is a previous process exit, not a report of this launch failing. " +
+            "Android recorded the exit reason; no saved exception stack or failed-build version is available."
     }
 
     fun dismiss(context: Context) {

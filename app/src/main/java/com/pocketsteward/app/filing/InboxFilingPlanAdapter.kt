@@ -40,6 +40,10 @@ data class FilingReviewPresentation(
     val reviewingUncertain: Boolean = false,
     val imageCoverage: com.pocketsteward.app.image.ImageReviewCoverage? = null,
     val reviewSessionId: String? = null,
+    /** Nullable for drafts written before explicit keep/complete inventory support. */
+    val heldSourceRefs: Set<String>? = null,
+    val retainedUncertainSourceRefs: Set<String>? = null,
+    val indexedFolderDescendantCount: Int = 0,
 ) {
     val proposedCount: Int get() = groups.sumOf { it.items.size }
     val unresolvedCount: Int get() = unresolved.size
@@ -61,6 +65,7 @@ object InboxFilingPlanAdapter {
         existingDirectories: Set<String>,
         retainedUncertainSourceRefs: Set<String> = emptySet(),
     ): InboxFilingPlan {
+        require(result.decisions.map { it.artifact.stableRef }.distinct().size == result.decisions.size) { "Duplicate filing sources." }
         val existing = existingDirectories.mapTo(linkedSetOf()) { it.trimEnd('/').lowercase() }
         val operations = mutableListOf<PlannedOperation>()
         val plannedDirectories = linkedSetOf<String>()
@@ -173,7 +178,7 @@ object InboxFilingPlanAdapter {
             }
             .sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() })
 
-        val unresolved = result.unresolved.map(::reviewItem)
+        val unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null }).map(::reviewItem)
         val checkpointGroups = result.unresolved
             .filterNot { it.artifact.stableRef in retainedUncertainSourceRefs }
             .groupBy { it.artifact.parentRef?.trimEnd('/') }
@@ -208,7 +213,8 @@ object InboxFilingPlanAdapter {
             operations = operations,
             authorizedDestinationRoots = authorization.map { FileRef.Direct(it) },
             defaultSelectedSourceRefs = selectedRefs,
-            presentation = FilingReviewPresentation(groups, unresolved, checkpointGroups),
+            presentation = FilingReviewPresentation(groups, unresolved, checkpointGroups,
+                retainedUncertainSourceRefs = retainedUncertainSourceRefs),
         )
     }
 
@@ -238,6 +244,7 @@ object InboxFilingSafPlanAdapter {
         scopeLabel: String,
         retainedUncertainSourceRefs: Set<String> = emptySet(),
     ): InboxFilingPlan {
+        require(result.decisions.map { it.artifact.stableRef }.distinct().size == result.decisions.size) { "Duplicate filing sources." }
         val operations = mutableListOf<PlannedOperation>()
         val plannedDirectories = linkedSetOf<String>()
         val selectedRefs = linkedSetOf<String>()
@@ -368,7 +375,7 @@ object InboxFilingSafPlanAdapter {
             defaultSelectedSourceRefs = selectedRefs,
             presentation = FilingReviewPresentation(
                 groups = groups.sortedWith(compareBy<FilingReviewGroup> { it.projectName.lowercase() }.thenBy { it.release.orEmpty() }),
-                unresolved = result.unresolved.map { decision ->
+                unresolved = (result.unresolved + result.proposed.filter { it.projectHome == null }).map { decision ->
                     FilingReviewItem(
                         sourceRef = decision.artifact.stableRef,
                         displayName = decision.artifact.displayName,
@@ -380,6 +387,7 @@ object InboxFilingSafPlanAdapter {
                     )
                 },
                 checkpointGroups = checkpointGroups,
+                retainedUncertainSourceRefs = retainedUncertainSourceRefs,
             ),
         )
     }
