@@ -364,6 +364,7 @@ internal fun ScanViewModel.startSavedWorkflow(workflowId: String) {
                     com.pocketsteward.app.saved.WorkflowKind.REQUEST -> null
                 },
                 forceWalk = true,
+                workflowPreferences = workflow.preferences,
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
@@ -427,6 +428,7 @@ internal fun ScanViewModel.saveWorkflow(
     name: String,
     request: String,
     kind: com.pocketsteward.app.saved.WorkflowKind = com.pocketsteward.app.saved.WorkflowKind.REQUEST,
+    preferences: com.pocketsteward.app.saved.WorkflowPreferences = com.pocketsteward.app.saved.WorkflowPreferences(),
 ) {
     viewModelScope.launch {
         try {
@@ -435,6 +437,7 @@ internal fun ScanViewModel.saveWorkflow(
                 request = request,
                 roots = summary.scopes.map { it.root.rawValue() },
                 kind = kind,
+                preferences = preferences,
             )
         } catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)

@@ -38,7 +38,7 @@ internal suspend fun ScanViewModel.prepareFilingFolderEvidence(indexed: List<Fil
     val errors = linkedMapOf<String, String>()
     val children = mutableListOf<FilingArtifact>()
     val owners = linkedMapOf<String, String>()
-    val privacy = settingsRepository.privacySettings.first()
+    val privacy = workflowPrivacy()
     val repository = container.contentIndexRepository(summary.mode)
     var cached = 0
     for ((folderIndex, folder) in folders.withIndex()) {

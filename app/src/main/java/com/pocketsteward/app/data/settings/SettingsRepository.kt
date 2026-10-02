@@ -379,8 +379,10 @@ class SettingsRepository(private val context: Context) {
         request: String,
         roots: List<String>,
         kind: com.pocketsteward.app.saved.WorkflowKind = com.pocketsteward.app.saved.WorkflowKind.REQUEST,
+        preferences: com.pocketsteward.app.saved.WorkflowPreferences = com.pocketsteward.app.saved.WorkflowPreferences(),
     ): SavedWorkflow {
         val cleanedName = name.trim().take(60)
+        preferences.validate()
         require(cleanedName.isNotBlank()) { "Saved workflow name cannot be blank." }
         val cleanedRoots = roots
             .map { it.trim().trimEnd('/') }
@@ -394,6 +396,7 @@ class SettingsRepository(private val context: Context) {
             request = request.trim().take(2_000),
             roots = cleanedRoots,
             kind = kind,
+            preferences = preferences,
         )
         context.dataStore.edit { prefs ->
             val current = SavedWorkflowCodec.decode(prefs[Keys.SAVED_WORKFLOWS])

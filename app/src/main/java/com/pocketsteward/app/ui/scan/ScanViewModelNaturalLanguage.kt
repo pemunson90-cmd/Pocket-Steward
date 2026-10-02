@@ -133,7 +133,7 @@ internal fun ScanViewModel.handleNaturalLanguage(
                         return@launch
                     }
 
-                    val privacy = settingsRepository.privacySettings.first()
+                    val privacy = workflowPrivacy()
                     if (!privacy.onDeviceAiEnabled ||
                         container.agentModel.availability() != AgentModelAvailability.AVAILABLE
                     ) {
@@ -362,18 +362,18 @@ internal fun ScanViewModel.handleNaturalLanguage(
                         IntentAction.ARCHIVE,
                         -> {
                             val projectKeywords = settingsRepository.projectKeywords.first()
+                            val destinations = summary.scopes.associateWith { scope ->
+                                workflowDestination(scope, summary.mode)?.let { workflowDestinationSetup(it, summary.mode) }
+                            }
                             val generatedByScope = summary.scopes.map { scope ->
                                 val root = scope.root
-                                val records = container.database.fileRecordDao()
-                                    .getFilesUnderScopeRoot(root.rawValue())
-                                scope to IntentPlanGenerator.generate(
-                                    scopeRoot = root,
-                                    records = records,
-                                    projectKeywords = projectKeywords,
-                                    intent = intent,
-                                )
+                                val records = container.database.fileRecordDao().getFilesUnderScopeRoot(root.rawValue())
+                                scope to IntentPlanGenerator.generate(scopeRoot = root, records = records,
+                                    projectKeywords = projectKeywords, intent = intent, destinationRoot = destinations[scope]?.root ?: root)
                             }
-                            val operations = generatedByScope.flatMap { it.second.plan.operations }
+                            val activeDestinations = generatedByScope.filter { it.second.plan.operations.isNotEmpty() }.mapNotNull { destinations[it.first] }
+                            val operations = (activeDestinations.flatMap { it.prelude } +
+                                generatedByScope.flatMap { it.second.plan.operations }).distinct()
                             if (operations.isEmpty()) {
                                 _uiState.value = ScanUiState.Error(
                                     "The request was understood, but there are no confidently matching files to move.",
@@ -382,7 +382,8 @@ internal fun ScanViewModel.handleNaturalLanguage(
                             }
                             val notes = buildList {
                                 if (summary.scopes.size > 1) {
-                                    add("Each selected scan root stays local; this request will not move files between roots.")
+                                    add(if (destinations.values.any { it != null }) "New groups use the workflow destination preference. Every source remains in the reviewed inventory."
+                                        else "Each selected scan root stays local; this request will not move files between roots.")
                                 }
                                 if (intent.action == IntentAction.ARCHIVE) {
                                     add("Archive means grouping files that are already archive formats; M9 does not create ZIP files.")
@@ -393,7 +394,8 @@ internal fun ScanViewModel.handleNaturalLanguage(
                                     }
                                 }
                             }
-                            showPlanPreview(intent.rawRequest, operations, summary.scopes, notes)
+                            showPlanPreview(intent.rawRequest, operations, summary.scopes, notes,
+                                authorizedDestinationRoots = activeDestinations.flatMap { it.authorization }.distinct())
                         }
                     }
                 }

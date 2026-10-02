@@ -203,6 +203,24 @@ class SemanticPlanAdapterTest {
     }
 
     @Test
+    fun resolvedDestinationsPreserveOpaqueProviderReferencesAndAuthorizeExistingDirectHomes() {
+        val root = FileRef.Saf("content://example/tree/root/document/opaque-root")
+        val target = FileRef.Saf("content://example/tree/root/document/opaque-documents")
+        val file = record("content://example/tree/root/document/opaque-file", "a.txt", root.documentUri)
+        val result = SemanticPlanAdapter.build(listOf(root), listOf(file), listOf(suggestion(file, "Notes")),
+            destinationRootsByScope = mapOf(root.documentUri to target))
+        assertThat(result.operations.filterIsInstance<PlannedOperation.CreateDirectory>().single().parent).isEqualTo(target)
+        assertThat(result.operations.filterIsInstance<PlannedOperation.Move>().single().destination)
+            .isEqualTo(FileRef.Child(FileRef.Child(target, "Notes"), "a.txt"))
+        val directFile = record("${downloads.absolutePath}/b.txt", "b.txt", downloads.absolutePath)
+        val existing = record("${documents.absolutePath}/Notes", "Notes", documents.absolutePath).copy(isDirectory = true)
+        val direct = SemanticPlanAdapter.build(listOf(downloads), listOf(directFile, existing), listOf(suggestion(directFile, "Notes")),
+            destinationRootsByScope = mapOf(downloads.absolutePath to documents))
+        assertThat(direct.operations.filterIsInstance<PlannedOperation.CreateDirectory>()).isEmpty()
+        assertThat(direct.authorizedDestinationRoots).containsExactly(documents)
+    }
+
+    @Test
     fun largeSemanticProposalUsesTheSameIndexedProtectionGraph() {
         val count = 4_000
         val records = (0 until count).map { index ->

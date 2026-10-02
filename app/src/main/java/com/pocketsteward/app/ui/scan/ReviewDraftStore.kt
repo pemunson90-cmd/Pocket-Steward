@@ -107,6 +107,7 @@ internal object ReviewDraftCodec {
         require(draft.preview.storageMode == draft.mode)
         require(draft.preview.taskHistoryWatermark >= 0)
         val preview = draft.preview
+        preview.workflowPreferences?.validate()
         require(preview.scopes.isNotEmpty() && preview.scopes.size <= 100)
         require(preview.accepted.size <= 100_000 && preview.rejected.size <= 100_000)
         require(preview.pendingCorrections.orEmpty().size <= 100)

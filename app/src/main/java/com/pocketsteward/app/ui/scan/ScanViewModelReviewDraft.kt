@@ -29,6 +29,7 @@ internal fun ScanViewModel.initializeReviewDraftPersistence() {
                 }
                 if (!consumed && generation == draftGeneration && _preview.value == null) {
                     filingSession = draft.filingSession
+                    activeWorkflowPreferences = draft.preview.workflowPreferences
                     _preview.value = draft.preview
                     _draftSaveStatus.value = "Restored review · approval still checks current files"
                 }

@@ -132,7 +132,7 @@ internal fun ScanViewModel.runCoherenceAudit(summary: ScanUiState.Summary) {
             "Selecting a representative cross-section from the local index",
         )
         try {
-            val privacy = settingsRepository.privacySettings.first()
+            val privacy = workflowPrivacy()
             if (!privacy.contentInspectionEnabled) {
                 _uiState.value = ScanUiState.Error(
                     "Document content inspection is off. Enable it in Settings before running a coherence audit.",
@@ -341,51 +341,20 @@ internal fun ScanViewModel.proposeSemanticOrganization(
         )
         try {
             val directScope = review.scopes.all { it.root is FileRef.Direct }
-            if (!directScope && destinationPolicy != DestinationPolicy.ROOT_LOCAL) {
-                _uiState.value = ScanUiState.Error(
-                    "Selected-folder mode can only build document groups inside the granted tree.",
-                )
-                return@launch
+            val mode = if (directScope) StorageAccessMode.DIRECT else StorageAccessMode.SAF
+            val destinationPreference = com.pocketsteward.app.saved.WorkflowPreferences(
+                destination = when (destinationPolicy) {
+                    DestinationPolicy.ROOT_LOCAL -> com.pocketsteward.app.saved.WorkflowDestination.INBOX_LOCAL
+                    DestinationPolicy.RECOMMENDED_DOCUMENTS -> com.pocketsteward.app.saved.WorkflowDestination.DOCUMENTS
+                    DestinationPolicy.EXPLICIT_FOLDER -> com.pocketsteward.app.saved.WorkflowDestination.CHOSEN_FOLDER
+                },
+                destinationFolder = explicitDestinationPath?.trim()?.takeIf { destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER },
+            ).also { it.validate() }
+            val destinationSetups = review.scopes.associate { scope ->
+                scope.root.rawValue() to workflowDestinationSetup(
+                    requireNotNull(workflowDestination(scope, mode, destinationPreference)), mode)
             }
-
-            @Suppress("DEPRECATION")
-            val documentsRoot = if (directScope) {
-                FileRef.Direct(
-                    Environment.getExternalStoragePublicDirectory(
-                        Environment.DIRECTORY_DOCUMENTS,
-                    ).absolutePath,
-                )
-            } else {
-                null
-            }
-
-            val explicitRoot = if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
-                val path = explicitDestinationPath?.trim()?.trimEnd('/')
-                if (path.isNullOrBlank()) {
-                    _uiState.value = ScanUiState.Error("Choose an existing destination folder first.")
-                    return@launch
-                }
-                val ref = FileRef.Direct(path)
-                val gateway = container.gatewayFor(StorageAccessMode.DIRECT)
-                val valid = withContext(Dispatchers.IO) {
-                    gateway.exists(ref) &&
-                        runCatching { gateway.stat(ref).isDirectory }.getOrDefault(false)
-                }
-                if (!valid) {
-                    _uiState.value = ScanUiState.Error(
-                        "That destination folder does not exist or is not a directory.",
-                    )
-                    return@launch
-                }
-                ref
-            } else {
-                null
-            }
-
-            val destinationChoice = SemanticDestinationChoice(
-                policy = destinationPolicy,
-                explicitRoot = explicitRoot,
-            )
+            val destinationRoots = destinationSetups.mapValues { it.value.root }
 
             val records = allRecordsForScopes(review.scopes)
             val documentRecords = records.filter {
@@ -431,11 +400,7 @@ internal fun ScanViewModel.proposeSemanticOrganization(
                     modelSuggestions = modelSuggestions,
                     destinationRootByRef = documentRecords.mapNotNull { record ->
                         val root = SemanticPlanAdapter.originatingRoot(record, review.scopes.map { it.root }) ?: return@mapNotNull null
-                        val target = when (destinationPolicy) {
-                            DestinationPolicy.ROOT_LOCAL -> root
-                            DestinationPolicy.RECOMMENDED_DOCUMENTS -> documentsRoot
-                            DestinationPolicy.EXPLICIT_FOLDER -> explicitRoot
-                        } ?: return@mapNotNull null
+                        val target = destinationRoots[root.rawValue()] ?: return@mapNotNull null
                         record.stableRef to target.rawValue()
                     }.toMap(),
                 )
@@ -446,8 +411,7 @@ internal fun ScanViewModel.proposeSemanticOrganization(
                     records = records,
                     suggestions = groupingDecisions.map { it.suggestion },
                     includeSubfolders = includeSubfolders,
-                    destinationChoice = destinationChoice,
-                    recommendedDocumentsRoot = documentsRoot,
+                    destinationRootsByScope = destinationRoots,
                 )
             }
 
@@ -466,14 +430,14 @@ internal fun ScanViewModel.proposeSemanticOrganization(
                 return@launch
             }
 
-            val destinationLabel = when (destinationPolicy) {
-                DestinationPolicy.ROOT_LOCAL ->
-                    if (directScope) "inside each current scan root" else "inside the selected tree"
-                DestinationPolicy.RECOMMENDED_DOCUMENTS ->
-                    requireNotNull(documentsRoot).absolutePath
-                DestinationPolicy.EXPLICIT_FOLDER ->
-                    requireNotNull(explicitRoot).absolutePath
-            }
+            val currentRecordsByRef = records.associateBy { it.stableRef }
+            val usedDestinationKeys = result.operations.filterIsInstance<PlannedOperation.Move>().mapNotNull { operation ->
+                currentRecordsByRef[operation.source.rawValue()]?.let { record ->
+                    SemanticPlanAdapter.originatingRoot(record, review.scopes.map { it.root })?.rawValue()
+                }
+            }.toSet()
+            val activeDestinationSetups = destinationSetups.filterKeys { it in usedDestinationKeys }.values
+            val destinationLabel = activeDestinationSetups.map { it.root.rawValue() }.distinct().joinToString()
 
             val notes = buildList {
                 add("Semantic findings are advisory. This proposal was rebuilt deterministically from the current scan.")
@@ -515,10 +479,10 @@ internal fun ScanViewModel.proposeSemanticOrganization(
             val originalModelRecords = review.rows.associate { it.record.stableRef to it.record }
             showPlanPreview(
                 goal = "Organize ${result.plannedFileCount} file(s) from semantic findings",
-                operations = result.operations,
+                operations = (activeDestinationSetups.flatMap { it.prelude } + result.operations).distinct(),
                 scopes = review.scopes,
                 scopeNotes = notes,
-                authorizedDestinationRoots = result.authorizedDestinationRoots,
+                authorizedDestinationRoots = (result.authorizedDestinationRoots + activeDestinationSetups.flatMap { it.authorization }).distinct(),
                 previousReviewedSources = records.mapNotNull { record ->
                     val evidenceRecord = if (record.stableRef in modelSourceRefs) originalModelRecords[record.stableRef] ?: record else record
                     com.pocketsteward.app.plan.SourcePreconditions.from(evidenceRecord)?.let { record.stableRef to it }

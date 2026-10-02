@@ -95,7 +95,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 return@launch
             }
 
-            val metadataEnabled = settingsRepository.privacySettings.first().metadataIndexingEnabled
+            val metadataEnabled = workflowPrivacy().metadataIndexingEnabled
             val enriched = withContext(Dispatchers.IO) {
                 records.map { record ->
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -216,12 +216,17 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             }
 
             val folderMaterial = prepareFilingFolderEvidence(scannedRecords, readableRecords, snapshots.baselines, summary)
+            val workflowRoots = summary.scopes.associate { it.root.rawValue() to workflowDestination(it, summary.mode)?.rawValue() }
+            val preferredRoots = artifacts.mapNotNull { artifact ->
+                workflowRoots[sourceRootFor(artifact.stableRef, summary.scopes) ?: summary.scopes.first().root.rawValue()]?.let { artifact.stableRef to it }
+            }.toMap()
+            val childRoots = folderMaterial.ownerByChild.mapNotNull { (child, owner) -> preferredRoots[owner]?.let { child to it } }.toMap()
             val inferred = withContext(Dispatchers.Default) {
                 val keywords = settingsRepository.projectKeywords.first()
                 val corrections = settingsRepository.correctionRules.first()
                 val roles = settingsRepository.hierarchyTemplate.first().roleFolders
                 val children = InboxFilingEngine.resolve(folderMaterial.children, (savedHomes + favorites).distinctBy { it.path.lowercase() },
-                    observedHomes + discovered, keywords, corrections, storageRoot.absolutePath, roles)
+                    observedHomes + discovered, keywords, corrections, storageRoot.absolutePath, roles, childRoots)
                 val resolved = InboxFilingEngine.resolve(
                     artifacts = artifacts,
                     persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
@@ -230,6 +235,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     correctionRules = settingsRepository.correctionRules.first(),
                     storageRoot = storageRoot.absolutePath,
                     newProjectRoles = roles,
+                    newProjectRoots = preferredRoots,
                 )
                 com.pocketsteward.app.filing.FilingFolderEvidence.reconcile(resolved, children, folderMaterial.ownerByChild,
                     folderMaterial.entryCounts, snapshots.baselines.filterValues { it.directoryDigest != null }.mapValues { it.value.directoryEntryCount })
@@ -298,6 +304,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
                     indexedFolderDescendantCount = intake.indexedFolderDescendantCount, intakeSnapshot = intakeSnapshot),
                 previousReviewedSources = originalSources,
+                preserveWorkflowSelection = continuation != null,
                 pendingCorrections = continuation?.preview?.pendingCorrections.orEmpty(),
             )
             filingSession = nextSession
@@ -340,7 +347,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
         return
     }
 
-    val metadataEnabled = settingsRepository.privacySettings.first().metadataIndexingEnabled
+    val metadataEnabled = workflowPrivacy().metadataIndexingEnabled
     val enriched = withContext(Dispatchers.IO) {
         records.map { record ->
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -399,6 +406,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             indexedText = indexedText[updated.stableRef].orEmpty(),
         )
     }
+    val workflowHomeRoot = workflowDestination(scope, summary.mode)
     val inferred = withContext(Dispatchers.Default) {
         InboxFilingEngine.resolve(
             artifacts = artifacts,
@@ -408,6 +416,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             correctionRules = settingsRepository.correctionRules.first(),
             storageRoot = scope.root.rawValue(),
             newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
+            newProjectRoots = artifacts.associate { it.stableRef to (workflowHomeRoot?.rawValue() ?: scope.root.rawValue()) },
         )
     }
     val result = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(inferred, continuation?.assignments.orEmpty()), unavailableSources)
@@ -421,6 +430,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             existingHomes = existingHomeRefs,
             scopeLabel = scope.label,
             retainedUncertainSourceRefs = intake.retainedUncertainSourceRefs,
+            newHomeRoot = workflowHomeRoot ?: scope.root,
         )
     }
     val originalSources = snapshots.baselines
@@ -447,6 +457,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             heldSourceRefs = continuation?.preview?.filingPresentation?.heldSourceRefs,
             indexedFolderDescendantCount = intake.indexedFolderDescendantCount, intakeSnapshot = intakeSnapshot),
         previousReviewedSources = originalSources,
+        preserveWorkflowSelection = continuation != null,
         pendingCorrections = continuation?.preview?.pendingCorrections.orEmpty(),
     )
     filingSession = nextSession
@@ -521,7 +532,7 @@ private data class FilingContent(val text: Map<String, String>, val reused: Int,
 }
 
 private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>, summary: ScanUiState.Summary): FilingContent {
-    if (!settingsRepository.privacySettings.first().contentInspectionEnabled) return FilingContent(emptyMap(), 0, 0, 0, enabled = false)
+    if (!workflowPrivacy().contentInspectionEnabled) return FilingContent(emptyMap(), 0, 0, 0, enabled = false)
     val repository = container.contentIndexRepository(summary.mode)
     val readable = records.filter { !it.isDirectory && ContentExtractor.supports(it.extension) }
     val cachedPdfs = withContext(Dispatchers.IO) { repository.cachedDocuments(readable.filter { it.extension.equals("pdf", true) }.map { it.stableRef }) }
@@ -566,7 +577,7 @@ private suspend fun ScanViewModel.prepareFilingContent(records: List<FileRecord>
 }
 
 private suspend fun ScanViewModel.prepareFilingImages(records: List<FileRecord>, retryUnavailable: Boolean): ImageReviewResult {
-    val privacy = settingsRepository.privacySettings.first()
+    val privacy = workflowPrivacy()
     if (!privacy.imageAnalysisEnabled) return ImageReviewResult(emptyMap(),
         ImageReviewCoverage(0, 0, 0, 0, 0, 0, 0, 0, enabled = false))
     return withContext(Dispatchers.IO) {
@@ -653,7 +664,7 @@ internal fun ScanViewModel.analyzeAllFilingEvidence(retryUnavailable: Boolean = 
             val access = settingsRepository.storageAccessState.first()
             val mode = requireNotNull(access.mode) { "Restore storage access before analysis." }
             require(ReviewDraftPolicy.hasCurrentAccess(current, mode, access.safTreeUri)) { "Storage access changed. Rebuild the review first." }
-            val privacy = settingsRepository.privacySettings.first()
+            val privacy = workflowPrivacy()
             require(privacy.imageAnalysisEnabled || privacy.contentInspectionEnabled) { "Enable local image analysis or content inspection in Settings first." }
             val planned = withContext(Dispatchers.IO) {
                 val artifacts = session.result.decisions.filterNot { decision ->

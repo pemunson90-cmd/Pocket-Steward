@@ -227,6 +227,7 @@ sealed interface ScanUiState {
         val taskHistoryWatermark: Long = 0,
         /** Nullable for older Gson drafts. No learning occurs before task approval. */
         val pendingCorrections: List<com.pocketsteward.app.saved.PendingCorrection>? = emptyList(),
+        val workflowPreferences: com.pocketsteward.app.saved.WorkflowPreferences? = null,
     ) : ScanUiState {
         init {
             require(scopes.isNotEmpty()) { "A plan preview needs at least one scope." }
@@ -559,6 +560,7 @@ class ScanViewModel(
 
     /** Guards against a recomposition re-triggering a Home tile's auto-scan. */
     internal var autoStarted = false
+    internal var activeWorkflowPreferences: com.pocketsteward.app.saved.WorkflowPreferences? = null
     /** Normal Explore entry restores the durable completed snapshot once. */
     private var entryCacheRestoreAttempted = false
 
@@ -864,7 +866,10 @@ class ScanViewModel(
         thenImportedPlan: DurablePlan? = null,
         thenScheduledSuggestion: PendingCleanupSuggestion? = null,
         forceWalk: Boolean = false,
+        workflowPreferences: com.pocketsteward.app.saved.WorkflowPreferences? = null,
     ) {
+        workflowPreferences?.validate()
+        activeWorkflowPreferences = workflowPreferences
         scanJob?.cancel()
         cancelFilingWork()
         draftGeneration += 1
@@ -1243,6 +1248,7 @@ class ScanViewModel(
         filingPresentation: FilingReviewPresentation? = null,
         previousReviewedSources: Map<String, SourcePrecondition> = emptyMap(),
         pendingCorrections: List<com.pocketsteward.app.saved.PendingCorrection> = emptyList(),
+        preserveWorkflowSelection: Boolean = false,
     ) {
         val mode = settingsRepository.storageAccessState.first().mode
             ?: error("No storage access mode is active.")
@@ -1256,9 +1262,10 @@ class ScanViewModel(
         val reviewedSources = withContext(Dispatchers.IO) {
             ReviewedSources.capture(validated.accepted, container.gatewayFor(mode))
         }
-        val selectedIndices = defaultSelectedSourceRefs?.let { selectedRefs ->
+        val normalSelection = defaultSelectedSourceRefs?.let { selectedRefs ->
             defaultSelectionForSources(validated.accepted, selectedRefs)
         } ?: PlanSelection.safeSelected(validated.accepted)
+        val selectedIndices = activeWorkflowPreferences?.initialSelection(normalSelection, preserveWorkflowSelection) ?: normalSelection
         _uiState.value = ScanUiState.PlanPreview(
             goal = goal,
             accepted = validated.accepted,
@@ -1271,11 +1278,12 @@ class ScanViewModel(
                 scopeForOperation(operation, scopes)?.label ?: scopes.first().label
             },
             selectedIndices = selectedIndices,
-            scopeNotes = scopeNotes,
+            scopeNotes = scopeNotes + listOfNotNull(activeWorkflowPreferences?.let { "Workflow preferences: ${it.summary}. Global privacy settings still apply; existing project homes remain preferred." }),
             authorizedDestinationRoots = authorizedDestinationRoots,
             reviewedSources = com.pocketsteward.app.plan.ReviewBaselinePolicy.merge(validated.accepted, reviewedSources, previousReviewedSources),
             filingPresentation = filingPresentation,
             pendingCorrections = pendingCorrections,
+            workflowPreferences = activeWorkflowPreferences,
         )
     }
 

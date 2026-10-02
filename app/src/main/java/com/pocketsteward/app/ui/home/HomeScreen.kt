@@ -348,6 +348,8 @@ fun HomeScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 4.dp),
                         )
+                        Text(workflow.preferences.summary, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

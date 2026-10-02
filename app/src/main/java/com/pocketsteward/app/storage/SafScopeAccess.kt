@@ -15,7 +15,8 @@ object SafScopeAccess {
                 else if (DocumentsContract.isTreeUri(source)) DocumentsContract.getTreeDocumentId(source) else error("Not a provider document")
             val route = DocumentsContract.findDocumentPath(context.contentResolver,
                 DocumentsContract.buildDocumentUriUsingTree(tree, id))?.path
-            route?.lastOrNull() == id && DocumentsContract.getTreeDocumentId(tree) in route.orEmpty()
+            val rootId = if (DocumentsContract.isDocumentUri(context, tree)) DocumentsContract.getDocumentId(tree) else DocumentsContract.getTreeDocumentId(tree)
+            route?.lastOrNull() == id && rootId in route.orEmpty()
         }
     } catch (_: Exception) { false }
 }

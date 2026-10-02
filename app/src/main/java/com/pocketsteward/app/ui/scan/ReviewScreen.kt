@@ -138,6 +138,7 @@ fun ReviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             )
             is ScanUiState.CoherenceAuditReview -> CoherenceAuditReview(
                 state = current,
+                workflowPreferences = viewModel.activeWorkflowPreferences,
                 favoriteDestinations = favoriteDestinations,
                 recentFolders = recentFolders,
                 onBuildProposal = { includeSubfolders, destinationPolicy, explicitPath ->
@@ -1146,20 +1147,25 @@ private fun ContentSearchProvenance.label(): String = when (this) {
 @Composable
 private fun CoherenceAuditReview(
     state: ScanUiState.CoherenceAuditReview,
+    workflowPreferences: com.pocketsteward.app.saved.WorkflowPreferences?,
     favoriteDestinations: List<FavoriteDestination>,
     recentFolders: List<String>,
     onBuildProposal: (Boolean, DestinationPolicy, String?) -> Unit,
     modifier: Modifier,
 ) {
     val directScope = state.scopes.all { it.root is FileRef.Direct }
-    var includeSubfolders by remember { mutableStateOf(false) }
-    var destinationPolicy by remember(directScope) {
+    var includeSubfolders by rememberSaveable { mutableStateOf(false) }
+    var destinationPolicy by rememberSaveable(directScope, workflowPreferences) {
         mutableStateOf(
-            if (directScope) DestinationPolicy.RECOMMENDED_DOCUMENTS
-            else DestinationPolicy.ROOT_LOCAL,
+            when (workflowPreferences?.destination) {
+                com.pocketsteward.app.saved.WorkflowDestination.INBOX_LOCAL -> DestinationPolicy.ROOT_LOCAL
+                com.pocketsteward.app.saved.WorkflowDestination.DOCUMENTS -> DestinationPolicy.RECOMMENDED_DOCUMENTS
+                com.pocketsteward.app.saved.WorkflowDestination.CHOSEN_FOLDER -> DestinationPolicy.EXPLICIT_FOLDER
+                else -> if (directScope) DestinationPolicy.RECOMMENDED_DOCUMENTS else DestinationPolicy.ROOT_LOCAL
+            },
         )
     }
-    var explicitDestination by remember { mutableStateOf("") }
+    var explicitDestination by rememberSaveable(workflowPreferences) { mutableStateOf(workflowPreferences?.destinationFolder.orEmpty()) }
     val context = LocalContext.current
 
     val model = state.modelName?.let { " · $it" } ?: ""
@@ -1298,9 +1304,9 @@ private fun CoherenceAuditReview(
                             modifier = Modifier.padding(top = Spacing.base),
                         )
 
-                        if (directScope) {
+                        run {
                             RadioFilterRow(
-                                label = "Recommended Documents",
+                                label = if (directScope) "Recommended Documents" else "Documents inside the scanned tree",
                                 selected = destinationPolicy == DestinationPolicy.RECOMMENDED_DOCUMENTS,
                                 onSelect = { destinationPolicy = DestinationPolicy.RECOMMENDED_DOCUMENTS },
                             )
@@ -1314,7 +1320,7 @@ private fun CoherenceAuditReview(
                                 selected = destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER,
                                 onSelect = { destinationPolicy = DestinationPolicy.EXPLICIT_FOLDER },
                             )
-                            if (favoriteDestinations.isNotEmpty()) {
+                            if (directScope && favoriteDestinations.isNotEmpty()) {
                                 Text(
                                     "Favorites",
                                     style = MaterialTheme.typography.labelLarge,
@@ -1337,7 +1343,7 @@ private fun CoherenceAuditReview(
                                 }
                             }
                             if (destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER) {
-                                if (recentFolders.isNotEmpty()) {
+                                if (directScope && recentFolders.isNotEmpty()) {
                                     Text(
                                         "Recent folders",
                                         style = MaterialTheme.typography.labelMedium,
@@ -1360,13 +1366,14 @@ private fun CoherenceAuditReview(
                                 OutlinedTextField(
                                     value = explicitDestination,
                                     onValueChange = { explicitDestination = it },
-                                    label = { Text("Destination folder path") },
-                                    placeholder = { Text("/storage/emulated/0/Documents") },
+                                    label = { Text(if (directScope) "Destination folder path" else "Folder URI inside the scanned tree") },
+                                    placeholder = { Text(if (directScope) "/storage/emulated/0/Documents" else "content://…") },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth().padding(top = Spacing.hairline),
                                 )
                             }
-                        } else {
+                        }
+                        if (!directScope) {
                             Text(
                                 "Inside the selected Android document tree",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -1408,13 +1415,11 @@ private fun CoherenceAuditReview(
                                     includeSubfolders,
                                     destinationPolicy,
                                     explicitDestination.takeIf {
-                                        directScope &&
-                                            destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER
+                                        destinationPolicy == DestinationPolicy.EXPLICIT_FOLDER
                                     },
                                 )
                             },
-                            enabled = !directScope ||
-                                destinationPolicy != DestinationPolicy.EXPLICIT_FOLDER ||
+                            enabled = destinationPolicy != DestinationPolicy.EXPLICIT_FOLDER ||
                                 explicitDestination.isNotBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = Spacing.base),
                         ) {

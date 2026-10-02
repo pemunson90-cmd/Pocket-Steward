@@ -48,8 +48,10 @@ object SemanticPlanAdapter {
         destinationChoice: SemanticDestinationChoice =
             SemanticDestinationChoice(DestinationPolicy.ROOT_LOCAL),
         recommendedDocumentsRoot: FileRef.Direct? = null,
+        destinationRootsByScope: Map<String, FileRef> = emptyMap(),
     ): SemanticPlanResult {
         require(scopeRoots.isNotEmpty()) { "Semantic planning needs at least one scope root." }
+        require(destinationRootsByScope.keys.all { key -> scopeRoots.any { it.rawValue() == key } })
 
         val recordsByRef = records.associateBy { it.stableRef }
         val candidates = records.map { record ->
@@ -76,6 +78,7 @@ object SemanticPlanAdapter {
         val createdDirectories = mutableSetOf<String>()
         val skipped = mutableListOf<SemanticSkip>()
         var plannedFiles = 0
+        val usedDestinationRoots = linkedSetOf<FileRef>()
 
         for ((stableRef, entries) in suggestions.groupBy { it.stableRef }) {
             if (entries.size != 1) {
@@ -125,7 +128,7 @@ object SemanticPlanAdapter {
                 continue
             }
 
-            val destinationRoot: FileRef = when (destinationChoice.policy) {
+            val destinationRoot: FileRef = destinationRootsByScope[root.rawValue()] ?: when (destinationChoice.policy) {
                 DestinationPolicy.ROOT_LOCAL -> root
                 DestinationPolicy.RECOMMENDED_DOCUMENTS -> {
                     require(root is FileRef.Direct) {
@@ -174,12 +177,12 @@ object SemanticPlanAdapter {
                 destination = destinationDirectory.child(record.displayName),
                 reason = "Document audit suggested group “$group”; deterministic adapter built this proposal.",
             )
+            usedDestinationRoots += destinationRoot
             plannedFiles++
         }
 
-        val destinationRoots = operations
-            .filterIsInstance<PlannedOperation.CreateDirectory>()
-            .mapNotNull { it.parent as? FileRef.Direct }
+        val destinationRoots = usedDestinationRoots
+            .filterIsInstance<FileRef.Direct>()
             .filterNot { parent ->
                 scopeRoots.filterIsInstance<FileRef.Direct>().any {
                     it.absolutePath.trimEnd('/') == parent.absolutePath.trimEnd('/')

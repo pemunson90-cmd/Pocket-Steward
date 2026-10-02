@@ -36,6 +36,7 @@ object InboxFilingEngine {
         correctionRules: List<CorrectionRule>,
         storageRoot: String,
         newProjectRoles: Map<String, String> = emptyMap(),
+        newProjectRoots: Map<String, String> = emptyMap(),
     ): InboxFilingResult {
         if (artifacts.isEmpty()) return InboxFilingResult(emptyList())
 
@@ -54,6 +55,7 @@ object InboxFilingEngine {
                 correctionRules = correctionRules,
                 storageRoot = storageRoot,
                 repeatedLabels = repeatedLabels,
+                newProjectRoot = newProjectRoots[artifact.stableRef],
             )
         }
 
@@ -172,6 +174,7 @@ object InboxFilingEngine {
         correctionRules: List<CorrectionRule>,
         storageRoot: String,
         repeatedLabels: Map<String, Int>,
+        newProjectRoot: String?,
     ): FilingDecision {
         val imageTopic = if (!artifact.isDirectory && !storageRoot.startsWith("content://") &&
                 artifact.extension.lowercase(Locale.ROOT) in setOf("png", "jpg", "jpeg", "webp", "gif", "heic")) {
@@ -199,7 +202,7 @@ object InboxFilingEngine {
                 candidates.forEach { add(it, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder} · ${rule.sourceFolder ?: "all folders"}", 120) }
             } else {
                 val candidates = homes.matchingNamed(rule.destinationFolder)
-                    .ifEmpty { listOf(syntheticHome(rule.destinationFolder, storageRoot)) }
+                    .ifEmpty { listOf(syntheticHome(rule.destinationFolder, storageRoot, newProjectRoot)) }
                 candidates.forEach { home ->
                     add(home, FilingEvidenceKind.USER_MAPPING, "learned mapping “${rule.term}” → ${rule.destinationFolder}", 120)
                 }
@@ -212,7 +215,7 @@ object InboxFilingEngine {
             val archiveHit = !filenameHit && artifact.archiveSample.any { ProjectEvidenceTerms.containsTerm(it, keyword.term) }
             if (filenameHit || contentHit || archiveHit) {
                 val candidates = homes.matchingNamed(keyword.projectFolder)
-                    .ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot)) }
+                    .ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot, newProjectRoot)) }
                 val weight = when {
                     filenameHit -> 105
                     archiveHit -> 82
@@ -262,7 +265,7 @@ object InboxFilingEngine {
         }
 
         explicitContentProject(artifact.indexedText)?.let { title ->
-            val candidates = homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot)) }
+            val candidates = homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot, newProjectRoot)) }
             candidates.forEach { home ->
                 add(home, FilingEvidenceKind.INDEXED_CONTENT, "document explicitly names project “$title”", 94)
             }
@@ -277,19 +280,19 @@ object InboxFilingEngine {
             }
             projectKeywords.forEach { keyword ->
                 if (ProjectEvidenceTerms.containsTerm(imageText, keyword.term)) {
-                    homes.matchingNamed(keyword.projectFolder).ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot)) }
+                    homes.matchingNamed(keyword.projectFolder).ifEmpty { listOf(syntheticHome(keyword.projectFolder, storageRoot, newProjectRoot)) }
                         .forEach { add(it, FilingEvidenceKind.IMAGE_TEXT, "detected image text matches project mapping “${keyword.term}”; confirm ownership", 74) }
                 }
             }
             explicitContentProject(imageText)?.let { title ->
-                homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot)) }.forEach {
+                homes.matchingNamed(title).ifEmpty { listOf(syntheticHome(title, storageRoot, newProjectRoot)) }.forEach {
                     add(it, FilingEvidenceKind.IMAGE_TEXT, "detected image text names project “$title”; confirm OCR and ownership", 80)
                 }
             }
         }
 
         artifact.apkLabel?.takeIf { isUsefulLabel(it) }?.let { label ->
-            val candidates = homes.matchingNamed(label).ifEmpty { listOf(syntheticHome(label, storageRoot)) }
+            val candidates = homes.matchingNamed(label).ifEmpty { listOf(syntheticHome(label, storageRoot, newProjectRoot)) }
             candidates.forEach { home -> add(home, FilingEvidenceKind.APK_LABEL, "APK metadata identifies “$label”", 112) }
         }
 
@@ -309,7 +312,7 @@ object InboxFilingEngine {
             if (matchingHomes.isNotEmpty()) {
                 matchingHomes.forEach { home -> add(home, FilingEvidenceKind.FILENAME, "filename identifies ${home.name}", if (repeated) 92 else 78) }
             } else if (repeated && imageTopic == null) {
-                val synthetic = syntheticHome(guessed, storageRoot)
+                val synthetic = syntheticHome(guessed, storageRoot, newProjectRoot)
                 add(synthetic, FilingEvidenceKind.FILENAME, "repeated filename family identifies $guessed", 84)
             }
         }
@@ -353,7 +356,7 @@ object InboxFilingEngine {
         val createsFolderHome = artifact.isDirectory && !storageRoot.startsWith("content://") &&
             homes.none { normalize(it.path) == normalize(best.key.path) }
         val home = if (createsFolderHome) best.key.copy(
-            path = "${storageRoot.trimEnd('/')}/Documents/${sanitizeSegment(artifact.displayName) ?: error("Unsafe folder name")}",
+            path = "${newProjectRoot?.trimEnd('/') ?: "${storageRoot.trimEnd('/')}/Documents"}/${sanitizeSegment(artifact.displayName) ?: error("Unsafe folder name")}",
         ) else best.key
         val evidence = best.value.distinctBy { it.kind to it.detail }
         val score = evidence.sumOf { it.weight }
@@ -477,12 +480,12 @@ object InboxFilingEngine {
         }
     }
 
-    private fun syntheticHome(name: String, storageRoot: String): ProjectHomeCandidate {
+    private fun syntheticHome(name: String, storageRoot: String, preferredRoot: String? = null): ProjectHomeCandidate {
         val safe = sanitizeSegment(name) ?: "Unsorted project"
         val directStorage = !storageRoot.startsWith("content://")
         return ProjectHomeCandidate(
             name = safe,
-            path = storageRoot.trimEnd('/') + if (directStorage) "/Documents/$safe" else "/$safe",
+            path = (preferredRoot?.trimEnd('/') ?: (storageRoot.trimEnd('/') + if (directStorage) "/Documents" else "")) + "/$safe",
             aliases = listOf(safe),
             hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
             persisted = false,

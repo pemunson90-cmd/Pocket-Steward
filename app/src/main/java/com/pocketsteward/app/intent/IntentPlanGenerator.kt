@@ -17,7 +17,8 @@ import com.pocketsteward.app.storage.rawValue
 
 /**
  * Converts a parsed organize/group/archive request into ordinary typed
- * operations. It never crosses scan roots: callers invoke it once per root.
+ * operations. Sources belong to one scan root; the caller resolves and validates
+ * any preferred destination before opening the ordinary review.
  */
 object IntentPlanGenerator {
     fun generate(
@@ -25,11 +26,19 @@ object IntentPlanGenerator {
         records: List<FileRecord>,
         projectKeywords: List<ProjectKeyword>,
         intent: BoundedIntent,
+        destinationRoot: FileRef = scopeRoot,
     ): GeneratedCleanup {
         require(intent.action in setOf(IntentAction.ORGANIZE, IntentAction.GROUP, IntentAction.ARCHIVE))
+        val rootKey = scopeRoot.rawValue().trimEnd('/')
+        val providerMembership = if (scopeRoot is FileRef.Saf)
+            com.pocketsteward.app.filing.FilingFolderIndex(records, setOf(rootKey)) else null
+        val admitted = records.filter { record ->
+            if (scopeRoot is FileRef.Direct) record.stableRef.startsWith("$rootKey/")
+            else providerMembership?.ownerOf(record.stableRef) == rootKey
+        }
 
         val partition = SortScope.partition(
-            candidates = records.map { it.toSortCandidate() },
+            candidates = admitted.map { it.toSortCandidate() },
             scopeRoot = scopeRoot.rawValue(),
             includeSubfolders = intent.includeSubfolders,
         )
@@ -38,7 +47,7 @@ object IntentPlanGenerator {
         val plannedDirectories = mutableSetOf<String>()
         var sorted = 0
 
-        for (record in records) {
+        for (record in admitted) {
             if (record.stableRef !in sortableRefs) continue
             if (!matchesCriteria(record, intent)) continue
 
@@ -55,7 +64,7 @@ object IntentPlanGenerator {
                 add(leafFolder)
             }
             val destinationFolder = ensureDirectoryTree(
-                root = scopeRoot,
+                root = destinationRoot,
                 segments = segments,
                 operations = operations,
                 plannedDirectories = plannedDirectories,

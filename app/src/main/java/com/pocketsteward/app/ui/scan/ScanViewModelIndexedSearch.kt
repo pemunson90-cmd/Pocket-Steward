@@ -133,7 +133,7 @@ internal suspend fun ScanViewModel.runIndexedContentSearch(
     filters: ContentSearchFilters? = null,
     savedSearchId: String? = null,
 ) {
-    val privacy = settingsRepository.privacySettings.first()
+    val privacy = workflowPrivacy()
     if (!privacy.contentInspectionEnabled) {
         _uiState.value = ScanUiState.Error(
             "Document content inspection is off. Enable it in Settings to search inside files.",

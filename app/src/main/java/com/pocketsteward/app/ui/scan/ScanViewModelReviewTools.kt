@@ -329,7 +329,7 @@ internal fun ScanViewModel.exportInventory(summary: ScanUiState.Summary) {
 internal fun ScanViewModel.analyzeImages(summary: ScanUiState.Summary) {
     viewModelScope.launch {
         try {
-            val privacy = settingsRepository.privacySettings.first()
+            val privacy = workflowPrivacy()
             if (!privacy.imageAnalysisEnabled) {
                 _uiState.value = ScanUiState.Error(
                     "Image analysis is off. Enable it in Settings before running local image understanding.",
@@ -376,7 +376,7 @@ internal fun ScanViewModel.analyzeImages(summary: ScanUiState.Summary) {
 internal fun ScanViewModel.findSimilarFiles(summary: ScanUiState.Summary) {
     viewModelScope.launch {
         try {
-            val privacy = settingsRepository.privacySettings.first()
+            val privacy = workflowPrivacy()
             if (!privacy.imageAnalysisEnabled && !privacy.contentInspectionEnabled) {
                 _uiState.value = ScanUiState.Error(
                     "Enable Image analysis and/or Document content inspection in Settings to find near-duplicates.",
@@ -518,7 +518,7 @@ internal fun ScanViewModel.findLargestFiles(summary: ScanUiState.Summary, limit:
 internal fun ScanViewModel.enrichMetadata(summary: ScanUiState.Summary) {
     viewModelScope.launch {
         try {
-            val privacy = settingsRepository.privacySettings.first()
+            val privacy = workflowPrivacy()
             if (!privacy.metadataIndexingEnabled) {
                 _uiState.value = ScanUiState.Error(
                     "Metadata indexing is off. Enable it in Settings before enriching file metadata.",

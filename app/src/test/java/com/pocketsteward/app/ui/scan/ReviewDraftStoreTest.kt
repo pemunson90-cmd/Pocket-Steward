@@ -34,6 +34,16 @@ class ReviewDraftStoreTest {
         val original = draft()
         assertThat(ReviewDraftCodec.decode(ReviewDraftCodec.encode(original))).isEqualTo(original)
     }
+    @Test fun workflowPrivacyDestinationAndSelectionPreferencesSurviveReviewRestart() {
+        val original = draft()
+        val preferences = com.pocketsteward.app.saved.WorkflowPreferences(metadata = false, content = false,
+            selection = com.pocketsteward.app.saved.WorkflowSelection.MANUAL, destination = com.pocketsteward.app.saved.WorkflowDestination.DOCUMENTS)
+        val updated = original.copy(preview = original.preview.copy(workflowPreferences = preferences))
+        val store = ReviewDraftStore(temporary.newFolder().resolve("draft"))
+        store.save(updated)
+        assertThat(store.load()).isEqualTo(updated)
+        assertThat(store.load()!!.preview.workflowPreferences).isEqualTo(preferences)
+    }
     @Test fun pendingLearningSurvivesRestartWithoutLearningUncheckedActions() {
         val original = draft()
         val operation = original.preview.accepted.single() as PlannedOperation.Copy

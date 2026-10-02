@@ -161,6 +161,9 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                 item { SectionHeader("Save this setup") }
                 item {
                     var workflowKind by rememberSaveable { mutableStateOf(com.pocketsteward.app.saved.WorkflowKind.REQUEST) }
+                    var workflowPreferences by rememberSaveable(stateSaver = WorkflowPreferencesSaver) {
+                        mutableStateOf(com.pocketsteward.app.saved.WorkflowPreferences())
+                    }
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(Spacing.base)) {
                             Text(
@@ -182,6 +185,7 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                                     Text(if (workflowKind == kind) "✓ ${kind.label}" else kind.label)
                                 }
                             }
+                            WorkflowPreferencesEditor(workflowPreferences, hasBroadAccess) { workflowPreferences = it }
                             OutlinedTextField(
                                 value = workflowName,
                                 onValueChange = { workflowName = it },
@@ -191,10 +195,10 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                             )
                             Button(
                                 onClick = {
-                                    viewModel.saveWorkflow(state, workflowName, request, workflowKind)
+                                    viewModel.saveWorkflow(state, workflowName, request, workflowKind, workflowPreferences)
                                     workflowName = ""
                                 },
-                                enabled = workflowName.isNotBlank(),
+                                enabled = workflowName.isNotBlank() && runCatching { workflowPreferences.validate() }.isSuccess,
                                 modifier = Modifier.fillMaxWidth().padding(top = Spacing.tight),
                             ) {
                                 Text("Save workflow")

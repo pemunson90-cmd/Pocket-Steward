@@ -248,14 +248,18 @@ object InboxFilingSafPlanAdapter {
         existingHomes: Map<String, FileRef>,
         scopeLabel: String,
         retainedUncertainSourceRefs: Set<String> = emptySet(),
+        newHomeRoot: FileRef = scopeRoot,
     ): InboxFilingPlan {
         require(result.decisions.map { it.artifact.stableRef }.distinct().size == result.decisions.size) { "Duplicate filing sources." }
         val operations = mutableListOf<PlannedOperation>()
         val plannedDirectories = linkedSetOf<String>()
         val selectedRefs = linkedSetOf<String>()
         val groups = mutableListOf<FilingReviewGroup>()
-
         val proposed = result.proposed.filter { it.projectHome != null && it.destinationDirectory != null && it.evidence.none { evidence -> evidence.kind == FilingEvidenceKind.SOURCE_UNAVAILABLE } }
+        if (newHomeRoot is FileRef.Child && proposed.any { it.projectHome?.path !in existingHomes }) {
+            operations += PlannedOperation.CreateDirectory(newHomeRoot.parent, newHomeRoot.name, "Create or reuse the workflow's reviewed home base inside the granted tree.")
+            plannedDirectories += newHomeRoot.rawValue()
+        }
         proposed.groupBy { decision ->
             val home = requireNotNull(decision.projectHome)
             home.path.trimEnd('/') to decision.destinationDirectory
@@ -265,11 +269,11 @@ object InboxFilingSafPlanAdapter {
             val projectName = requireNotNull(first.projectName)
             val existingHomeRef = existingHomes[home.path.trimEnd('/')]
             val homeParts = if (existingHomeRef == null) {
-                require(home.path.startsWith(scopeRoot.rawValue().trimEnd('/') + "/")) { "Project home is outside the selected tree." }
-                home.path.removePrefix(scopeRoot.rawValue().trimEnd('/') + "/").split('/')
+                require(home.path.startsWith(newHomeRoot.rawValue().trimEnd('/') + "/")) { "Project home is outside the selected destination." }
+                home.path.removePrefix(newHomeRoot.rawValue().trimEnd('/') + "/").split('/')
             } else listOf(projectName)
             require(homeParts.isNotEmpty() && homeParts.all { InboxFilingEngine.sanitizeSegment(it) == it }) { "Unsafe project folder." }
-            var homeRef: FileRef = existingHomeRef ?: scopeRoot
+            var homeRef: FileRef = existingHomeRef ?: newHomeRoot
             if (existingHomeRef == null) {
                 for (part in homeParts) {
                     val child = homeRef.child(part)
