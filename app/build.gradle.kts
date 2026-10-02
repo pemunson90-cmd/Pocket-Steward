@@ -23,8 +23,8 @@ android {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 56
-        versionName = "1.4.0-dev16"
+        versionCode = 57
+        versionName = "1.4.0-dev17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -72,6 +72,10 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 
     externalNativeBuild {
@@ -148,6 +152,9 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("app.cash.turbine:turbine:1.2.0")
     testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.16.1")
     // Test-only: run Room migration SQL against a real SQLite database on the
     // JVM, and read the committed app/schemas/*.json files to compare the
     // migrated tables with what Room expects. Neither ships in the APK.

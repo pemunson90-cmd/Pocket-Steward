@@ -17,11 +17,17 @@ internal fun ScanViewModel.initializeReviewDraftPersistence() {
             val access = settingsRepository.storageAccessState.first()
             if (draft != null && ReviewDraftPolicy.hasCurrentAccess(draft.preview, access.mode, access.safTreeUri) && generation == draftGeneration && _preview.value == null) {
                 // A death between enqueue and deleting the draft leads to Tasks, not another approval.
-                val tasks = container.database.taskRunDao().plansAfter(draft.preview.taskHistoryWatermark).mapNotNull { task ->
-                    DurablePlanCodec.decodeOrNull(task.planJson)?.let { task.id to it.operations }
+                val consumed = withContext(Dispatchers.IO) {
+                    val dao = container.database.taskRunDao()
+                    // Compare one task at a time: never retain every large plan
+                    // and decoded operation list while restoring an old review.
+                    dao.idsAfter(draft.preview.taskHistoryWatermark).any { id ->
+                        val task = dao.getById(id)
+                        val plan = task?.let { DurablePlanCodec.decodeOrNull(it.planJson) }
+                        plan != null && ReviewDraftPolicy.wasQueued(draft.preview, listOf(id to plan.operations))
+                    }
                 }
-                val consumed = ReviewDraftPolicy.wasQueued(draft.preview, tasks)
-                if (!consumed) {
+                if (!consumed && generation == draftGeneration && _preview.value == null) {
                     filingSession = draft.filingSession
                     _preview.value = draft.preview
                     _draftSaveStatus.value = "Restored review · approval still checks current files"

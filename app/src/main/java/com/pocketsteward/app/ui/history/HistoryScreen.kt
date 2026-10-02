@@ -41,9 +41,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.data.db.TaskJournalProgress
-import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunOverview
 import com.pocketsteward.app.data.db.TaskRunStatus
-import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.report.ManifestFormat
 import com.pocketsteward.app.report.TaskManifestDocument
 import java.text.DateFormat
@@ -321,7 +320,7 @@ private fun ManifestCard(
 
 @Composable
 private fun TaskCard(
-    task: TaskRun,
+    task: TaskRunOverview,
     progress: TaskJournalProgress?,
     onResume: () -> Unit,
     onPause: () -> Unit,
@@ -340,7 +339,7 @@ private fun TaskCard(
             }
             task.summary?.takeIf { it.isNotBlank() }?.let { Text(it, modifier = Modifier.padding(top = 4.dp)) }
 
-            val durableTotal = DurablePlanCodec.decodeOrNull(task.planJson)?.operations?.size ?: 0
+            val durableTotal = task.operationCount
             if (durableTotal > 0 && progress != null &&
                 (task.status == TaskRunStatus.RUNNING || task.status == TaskRunStatus.CANCELLED)
             ) {
@@ -381,7 +380,7 @@ private fun TaskCard(
                         )
                     }
                 }
-                if (task.status == TaskRunStatus.RUNNING && DurablePlanCodec.isDurable(task.planJson)) {
+                if (task.status == TaskRunStatus.RUNNING && task.hasDurablePlan) {
                     OutlinedButton(onClick = onPause) {
                         Text("Pause")
                     }
@@ -403,9 +402,9 @@ private fun TaskCard(
     }
 }
 
-private fun TaskRun.isResumable(): Boolean =
+private fun TaskRunOverview.isResumable(): Boolean =
     (status == TaskRunStatus.RUNNING || status == TaskRunStatus.CANCELLED) &&
-        DurablePlanCodec.isDurable(planJson)
+        hasDurablePlan
 
 private fun TaskRunStatus.isUndoable(): Boolean =
     this == TaskRunStatus.COMPLETED ||

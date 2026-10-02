@@ -21,7 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.pocketsteward.app.data.db.TaskJournalProgress
-import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunOverview
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.executor.ExecutionSummary
 import com.pocketsteward.app.executor.UndoSummary
@@ -105,7 +105,7 @@ fun CompletionScreen(
 @Composable
 private fun ExecutionQueued(
     state: ScanUiState.ExecutionQueued,
-    task: TaskRun?,
+    task: TaskRunOverview?,
     progress: TaskJournalProgress?,
     onPause: () -> Unit,
     onResume: () -> Unit,

@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.db.MutationRecordDao
 import com.pocketsteward.app.data.db.MutationStatus
 import com.pocketsteward.app.data.db.TaskJournalProgress
-import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunOverview
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.db.UndoState
 import com.pocketsteward.app.executor.UndoExecutor
@@ -37,7 +37,7 @@ sealed interface HistoryActionState {
     data object Idle : HistoryActionState
 
     /** A large undo waiting on an explicit yes. Nothing has been touched yet. */
-    data class ConfirmUndo(val task: TaskRun, val operationCount: Int) : HistoryActionState
+    data class ConfirmUndo(val task: TaskRunOverview, val operationCount: Int) : HistoryActionState
 
     data class Undoing(
         val taskRunId: Long,
@@ -61,7 +61,7 @@ class HistoryViewModel(
     private val startForegroundTask: (Long) -> Unit,
     private val pauseForegroundTask: () -> Unit,
 ) : ViewModel() {
-    val tasks: StateFlow<List<TaskRun>> = taskRunDao.observeAll()
+    val tasks: StateFlow<List<TaskRunOverview>> = taskRunDao.observeOverviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val taskProgress: StateFlow<Map<Long, TaskJournalProgress>> =
@@ -72,7 +72,7 @@ class HistoryViewModel(
     private val _actionState = MutableStateFlow<HistoryActionState>(HistoryActionState.Idle)
     val actionState: StateFlow<HistoryActionState> = _actionState
 
-    fun resumeTask(task: TaskRun) {
+    fun resumeTask(task: TaskRunOverview) {
         viewModelScope.launch {
             try {
                 val otherRunning = withContext(Dispatchers.IO) {
@@ -106,7 +106,7 @@ class HistoryViewModel(
     }
 
     /** Asks first when the run is large, otherwise goes straight to it. */
-    fun requestUndo(task: TaskRun) {
+    fun requestUndo(task: TaskRunOverview) {
         viewModelScope.launch {
             val count = try {
                 withContext(Dispatchers.IO) { reversibleCount(task.id) }

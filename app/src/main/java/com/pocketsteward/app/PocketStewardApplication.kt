@@ -11,7 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 
-class PocketStewardApplication : Application() {
+open class PocketStewardApplication : Application() {
     lateinit var container: AppContainer
         private set
 
@@ -19,6 +19,7 @@ class PocketStewardApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.pocketsteward.app.diagnostics.LocalCrashDiagnostics.install(this)
         container = AppContainer(this)
         container.inboxObservation.start()
 

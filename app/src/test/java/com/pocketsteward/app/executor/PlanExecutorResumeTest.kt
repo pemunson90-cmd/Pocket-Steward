@@ -500,7 +500,16 @@ class PlanExecutorResumeTest {
         override suspend fun portableSummaries(): List<com.pocketsteward.app.backup.ArchivedTaskSummary> =
             listOf(com.pocketsteward.app.backup.ArchivedTaskSummary(current.requestText, current.status.name, current.startedAt, current.completedAt, current.summary))
 
-        override fun observeAll(): Flow<List<TaskRun>> = flowOf(listOf(current))
+        override fun observeOverviews(): Flow<List<com.pocketsteward.app.data.db.TaskRunOverview>> = flowOf(emptyList())
+        override suspend fun metadataById(id: Long): TaskRun? = current.takeIf { it.id == id }?.copy(planJson = "")
+        override suspend fun planChunk(id: Long, offset: Long, size: Int): ByteArray? =
+            current.takeIf { it.id == id }?.planJson?.toByteArray(Charsets.UTF_8)?.let { bytes ->
+                bytes.copyOfRange((offset - 1).toInt().coerceAtMost(bytes.size), (offset - 1 + size).toInt().coerceAtMost(bytes.size))
+            }
+        override suspend fun planByteLength(id: Long): Long? = current.takeIf { it.id == id }?.planJson?.toByteArray(Charsets.UTF_8)?.size?.toLong()
+        override suspend fun idsByStatus(statuses: List<String>): List<Long> =
+            if (current.status.name in statuses) listOf(current.id) else emptyList()
+        override suspend fun idsAfter(afterId: Long): List<Long> = if (current.id > afterId) listOf(current.id) else emptyList()
 
         override suspend fun getRunning(): List<TaskRun> =
             listOf(current).filter { it.status == TaskRunStatus.RUNNING }

@@ -1,19 +1,21 @@
 package com.pocketsteward.app.ui.scan
 
 import android.net.Uri
+import android.annotation.SuppressLint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
 import com.pocketsteward.app.PocketStewardApplication
@@ -96,8 +98,8 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
                 },
             ),
         ) { entry ->
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             ScanScreen(
                 viewModel = viewModel,
                 autoAction = PostScanAction.fromRoute(entry.arguments?.getString(ScanFlow.ARG_ACTION)),
@@ -112,15 +114,15 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
             )
         }
 
-        composable(ScanRoute.PICKER.route) {
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+        composable(ScanRoute.PICKER.route) { entry ->
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             FolderPickerScreen(viewModel = viewModel, onBack = { popFrom(navController, viewModel, ScanRoute.PICKER) })
         }
 
-        composable(ScanRoute.RESULTS.route) {
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+        composable(ScanRoute.RESULTS.route) { entry ->
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             ResultsScreen(
                 viewModel = viewModel,
                 onBack = { popFrom(navController, viewModel, ScanRoute.RESULTS) },
@@ -131,21 +133,21 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
             )
         }
 
-        composable(ScanRoute.REVIEW.route) {
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+        composable(ScanRoute.REVIEW.route) { entry ->
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             ReviewScreen(viewModel = viewModel, onBack = { popFrom(navController, viewModel, ScanRoute.REVIEW) })
         }
 
-        composable(ScanRoute.PREVIEW.route) {
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+        composable(ScanRoute.PREVIEW.route) { entry ->
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             PlanPreviewScreen(viewModel = viewModel, onBack = { popFrom(navController, viewModel, ScanRoute.PREVIEW) })
         }
 
-        composable(ScanRoute.COMPLETION.route) {
-            val viewModel = scanViewModel(navController)
-            ScanFlowNavEffect(navController, viewModel)
+        composable(ScanRoute.COMPLETION.route) { entry ->
+            val viewModel = scanViewModel(navController, entry)
+            ScanFlowNavEffect(navController, viewModel, entry)
             CompletionScreen(
                 viewModel = viewModel,
                 onOpenTask = { taskId ->
@@ -171,11 +173,13 @@ fun NavGraphBuilder.scanFlowGraph(navController: NavHostController, onExitFlow: 
  * bug this milestone exists to fix, reintroduced by a defaulted parameter.
  */
 @Composable
-private fun scanViewModel(navController: NavHostController): ScanViewModel {
+private fun scanViewModel(navController: NavHostController, entry: NavBackStackEntry): ScanViewModel {
     val context = LocalContext.current
     val container = (context.applicationContext as PocketStewardApplication).container
-    val currentEntry by navController.currentBackStackEntryAsState()
-    val graphEntry = remember(currentEntry) {
+    // Outgoing screens compose during the exit animation after the graph has
+    // been saved/popped. Retain the owner captured for THIS destination entry;
+    // the global current entry belongs to the newly selected tab.
+    val graphEntry = remember(entry) {
         navController.getBackStackEntry(ScanFlow.GRAPH)
     }
     return viewModel(
@@ -195,10 +199,18 @@ private fun scanViewModel(navController: NavHostController): ScanViewModel {
  * generated.
  */
 @Composable
-private fun ScanFlowNavEffect(navController: NavHostController, viewModel: ScanViewModel) {
-    LaunchedEffect(viewModel) {
-        viewModel.navEvents.collect { route ->
-            navController.navigate(route.route) { launchSingleTop = true }
+// This job is owned by LaunchedEffect and is created once per composing entry.
+// The lint call-chain analysis follows MainActivity's permission-driven render()
+// from onResume, mistaking this composition effect for an Activity-launched job.
+@SuppressLint("RepeatOnLifecycleWrongUsage")
+private fun ScanFlowNavEffect(navController: NavHostController, viewModel: ScanViewModel, entry: NavBackStackEntry) {
+    LaunchedEffect(viewModel, entry) {
+        // A saved tab or outgoing destination must not consume navigation
+        // meant for the visible scan screen. The channel retains pending events.
+        entry.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.navEvents.collect { route ->
+                navController.navigate(route.route) { launchSingleTop = true }
+            }
         }
     }
 }

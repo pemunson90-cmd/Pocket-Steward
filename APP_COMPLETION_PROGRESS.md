@@ -125,3 +125,14 @@ Cancellation now retains service admission ownership through suspended cleanup. 
 - Final end-to-end tutorial/device acceptance updates. Reproducible local signing, source publication, packaging and verified-download helpers are now tracked; GitHub CI independently checks unsigned source builds.
 
 No emulator or target-phone run was available in this environment. Every remaining row stays open until implemented and verified or explicitly resolved with the user.
+
+
+## Implemented for dev17 — tab-crash repair
+
+User reports Galaxy Fold 7 crashes on Home/Explore before scanning. A new executable Compose regression reproduced a dev16 tab-exit exception: the outgoing Explore screen re-looked-up the now-absent scan graph after switching tabs. Dev17 retains the owner by composing destination entry and collects scan navigation only while that entry is RESUMED. This is a host reproduction of a concrete navigation defect, not a retrieved Samsung crash stack.
+
+Home/Tasks/status views now use small SQL projections instead of loading every full saved plan and decoding operations during composition. Full execution/recovery/manifest task reads use transactional 64 KiB UTF-8 chunks; queued-review comparison processes one historical plan at a time off the main thread and rechecks freshness before publishing a restored preview. Original task plans and schema remain unchanged. A local fatal-exception recorder delegates to Android after recording bounded exception types/code frames and route/version/device metadata without exception messages or document contents. The root restart dialog can copy/dismiss the record; Android exit reasons cover older builds and native/ANR/low-memory exits without claiming to recover their stacks.
+
+All **682 unit/JVM tests passed**, including real launcher/tab composition on API 35/36, expanded API 36 layout, saved-tab restoration, crash-dialog copy/dismiss, five-megabyte task history, exact 16k-operation plan retrieval and Unicode/empty/exact chunk boundaries. lintDebug passed with **0 errors and 86 warnings**; assembleDebug and assembleDebugAndroidTest passed. All three SQLite tools, six release-tool tests, and production JNI collision/Unicode/200 external-create race/missing-library checks passed. Android instrumentation was compiled, not executed. Canonical-signed publication details follow in the release provenance.
+
+Physical Fold 7 crash/ANR/reboot/memory/data-integrity acceptance remains open. See DEV17_CRASH_FIX_REPORT.md and DEV17_USER_GUIDE.md. FILING-01 and the rest of DOWNLOADS_SORTING_COMPLETION_PLAN.md remain pending: this release prioritizes the reported crash and does not change sorting decisions.

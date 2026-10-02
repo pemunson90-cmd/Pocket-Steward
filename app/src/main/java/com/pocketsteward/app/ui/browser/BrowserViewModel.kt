@@ -619,7 +619,7 @@ class BrowserViewModel(
                 if (pending.consumesClipboard) _state.update { it.copy(clipboard = null) }
                 container.startForegroundTask(taskRunId)
                 val done = withContext(Dispatchers.IO) {
-                    container.database.taskRunDao().observeAll().first { runs ->
+                    container.database.taskRunDao().observeOverviews().first { runs ->
                         runs.firstOrNull { it.id == taskRunId }?.status?.let { it != TaskRunStatus.RUNNING } == true
                     }.first { it.id == taskRunId }
                 }

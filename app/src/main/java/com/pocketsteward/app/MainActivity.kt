@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
                     startDestination = Routes.ONBOARDING,
                     postOnboardingDestination = afterOnboarding,
                 )
+                com.pocketsteward.app.diagnostics.CrashNotice()
             }
         }
     }

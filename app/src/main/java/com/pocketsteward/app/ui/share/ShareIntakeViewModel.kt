@@ -33,7 +33,7 @@ class ShareIntakeViewModel(application: Application) : AndroidViewModel(applicat
     private val gateway = container.gatewayFor(StorageAccessMode.SAF)
     private val mutableState = MutableStateFlow(ShareIntakeState())
     val state = mutableState.asStateFlow()
-    val tasks = container.database.taskRunDao().observeAll()
+    val tasks = container.database.taskRunDao().observeOverviews()
     private var initialized = false
 
     fun load(uris: List<String>) {

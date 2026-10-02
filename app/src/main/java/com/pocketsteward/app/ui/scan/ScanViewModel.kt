@@ -32,7 +32,7 @@ import com.pocketsteward.app.content.index.ContentSearchView
 import com.pocketsteward.app.content.index.IndexedExtractionStatus
 import com.pocketsteward.app.content.index.IndexedFileSearchResult
 import com.pocketsteward.app.data.db.FileRecord
-import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunOverview
 import com.pocketsteward.app.data.db.TaskJournalProgress
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.dedupe.DuplicateDetector
@@ -540,8 +540,8 @@ class ScanViewModel(
     val favoriteDestinations: StateFlow<List<FavoriteDestination>> = settingsRepository.favoriteDestinations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val taskRuns: StateFlow<List<TaskRun>> =
-        container.database.taskRunDao().observeAll()
+    val taskRuns: StateFlow<List<TaskRunOverview>> =
+        container.database.taskRunDao().observeOverviews()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val taskProgress: StateFlow<Map<Long, TaskJournalProgress>> =

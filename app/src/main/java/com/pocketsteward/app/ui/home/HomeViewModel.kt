@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketsteward.app.data.db.MutationRecordDao
 import com.pocketsteward.app.data.db.TaskJournalProgress
-import com.pocketsteward.app.data.db.TaskRun
+import com.pocketsteward.app.data.db.TaskRunOverview
 import com.pocketsteward.app.data.db.TaskRunDao
 import com.pocketsteward.app.data.settings.SettingsRepository
 import com.pocketsteward.app.saved.LastScanSession
@@ -22,7 +22,7 @@ class HomeViewModel(
     mutationRecordDao: MutationRecordDao,
     private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
-    val recentTasks: StateFlow<List<TaskRun>> = taskRunDao.observeAll()
+    val recentTasks: StateFlow<List<TaskRunOverview>> = taskRunDao.observeOverviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val taskProgress: StateFlow<Map<Long, TaskJournalProgress>> =

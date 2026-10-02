@@ -39,7 +39,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
-import com.pocketsteward.app.plan.DurablePlanCodec
 import com.pocketsteward.app.data.db.TaskRunStatus
 import com.pocketsteward.app.ui.scan.PostScanAction
 
@@ -119,7 +118,7 @@ fun HomeScreen(
             it.status == TaskRunStatus.RUNNING || it.status == TaskRunStatus.CANCELLED
         }
         if (activeTask != null) {
-            val total = DurablePlanCodec.decodeOrNull(activeTask.planJson)?.operations?.size ?: 0
+            val total = activeTask.operationCount
             val journal = taskProgress[activeTask.id]
             val completed = if (total > 0 && journal != null) {
                 journal.journaledCount.coerceAtMost(total.toLong()).toInt()

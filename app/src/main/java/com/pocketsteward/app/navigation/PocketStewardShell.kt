@@ -23,6 +23,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +65,10 @@ fun PocketStewardShell(
 ) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val current = backStackEntry?.destination
+    LaunchedEffect(current) {
+        // Destination patterns contain no user request, filename or search text.
+        com.pocketsteward.app.diagnostics.LocalCrashDiagnostics.activeRoute = current?.route ?: "startup"
+    }
     val showNavigation = current != null && current.route != Routes.ONBOARDING
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
