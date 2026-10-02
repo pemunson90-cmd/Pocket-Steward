@@ -54,6 +54,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.ai.AgentModelAvailability
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.evidence.analysis.analyzeIndexedLibrary
 
 @Composable
 fun SettingsScreen(
@@ -72,6 +73,7 @@ fun SettingsScreen(
                     evidenceProgress = container.evidenceAnalysis.progress,
                     pauseEvidence = { container.evidenceAnalysis.pause() },
                     resumeEvidence = { container.evidenceAnalysis.resume() },
+                    startLibraryEvidence = { retry -> container.analyzeIndexedLibrary(retryUnavailable = retry) },
                     loadContentIndexOverview = container::contentIndexOverview,
                     clearContentIndexCache = container::clearContentIndex,
                     applyScheduledCleanup = container.scheduledCleanupCoordinator::apply,
@@ -230,6 +232,15 @@ fun SettingsScreen(
         }
 
         SectionTitle("Privacy & intelligence")
+        val evidenceStarting by viewModel.evidenceStarting.collectAsState()
+        OutlinedButton(onClick = { viewModel.analyzeLibraryEvidence() }, enabled = !evidenceStarting &&
+            (privacy.imageAnalysisEnabled || privacy.contentInspectionEnabled) && evidenceProgress?.status !in setOf(
+                com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.QUEUED,
+                com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.RUNNING)) {
+            Text(if (evidenceStarting) "Preparing library analysis…" else "Analyze indexed library")
+        }
+        Text("Reads eligible indexed documents and images in accessible roots, one file at a time. Refresh the library inventory to include new files. No files move.", style = MaterialTheme.typography.bodySmall)
+        if (evidenceProgress == null) evidenceMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         evidenceProgress?.let { progress ->
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Column(Modifier.padding(16.dp)) {
@@ -242,6 +253,10 @@ fun SettingsScreen(
                         OutlinedButton(onClick = viewModel::pauseEvidenceAnalysis) { Text("Pause analysis") }
                     } else if (progress.status != com.pocketsteward.app.evidence.analysis.EvidenceAnalysisStatus.COMPLETED) {
                         OutlinedButton(onClick = viewModel::resumeEvidenceAnalysis) { Text("Resume analysis") }
+                    } else if (progress.unavailable > 0) {
+                        OutlinedButton(onClick = { viewModel.analyzeLibraryEvidence(retryUnavailable = true) }, enabled = !evidenceStarting) {
+                            Text("Retry unavailable evidence")
+                        }
                     }
                     Text("No files move during analysis. Apply saved evidence from the filing review to see proposed changes.", style = MaterialTheme.typography.bodySmall)
                 }
@@ -596,6 +611,12 @@ fun SettingsScreen(
                 "Runs only on the charger. Turns on document inspection.",
             checked = librarySettings.contentIndexWhileCharging && privacy.contentInspectionEnabled,
             onCheckedChange = viewModel::setLibraryContentWhileCharging,
+        )
+        SettingsSwitchRow(
+            label = "Analyze library evidence while charging",
+            supporting = "After inventory refresh, analyze eligible documents and images sequentially with the enabled privacy settings. Paused jobs stay paused; files never move automatically.",
+            checked = librarySettings.evidenceAnalysisWhileCharging,
+            onCheckedChange = viewModel::setLibraryEvidenceWhileCharging,
         )
         OutlinedButton(
             onClick = viewModel::refreshLibraryNow,

@@ -2,10 +2,12 @@ package com.pocketsteward.app.evidence.analysis
 
 import com.pocketsteward.app.data.db.FileRecord
 import com.pocketsteward.app.storage.StorageAccessMode
+import com.pocketsteward.app.plan.SourcePrecondition
 import java.util.UUID
 
 /** Immutable source metadata captured when this read-only analysis was requested. */
-data class EvidenceAnalysisSource(val record: FileRecord, val sourceRoot: String)
+data class EvidenceAnalysisSource(val record: FileRecord, val sourceRoot: String, val folderUnitRef: String? = null)
+data class EvidenceAnalysisFolder(val ref: String, val baseline: SourcePrecondition)
 data class EvidenceAnalysisRequest(
     val id: String,
     val mode: StorageAccessMode,
@@ -14,6 +16,8 @@ data class EvidenceAnalysisRequest(
     val content: Boolean,
     val retryUnavailable: Boolean,
     val sources: List<EvidenceAnalysisSource>,
+    val folders: List<EvidenceAnalysisFolder> = emptyList(),
+    val automatic: Boolean = false,
 ) {
     fun validate() {
         require(UUID.fromString(id).toString() == id)
@@ -22,7 +26,19 @@ data class EvidenceAnalysisRequest(
         require(sources.map { it.record.stableRef }.distinct().size == sources.size)
         require(sources.all { it.sourceRoot.isNotBlank() && it.record.stableRef.isNotBlank() && !it.record.isDirectory && it.record.sizeBytes >= 0 })
         require((mode == StorageAccessMode.SAF) == (grant != null))
+        require(folders.size <= 100_000 && folders.distinctBy { it.ref }.size == folders.size)
+        require(folders.all { it.ref.isNotBlank() && it.baseline.directoryDigest?.matches(Regex("[a-f0-9]{64}")) == true &&
+            it.baseline.directoryEntryCount in 0..100_000 && it.baseline.sizeBytes >= 0 })
+        val units = folders.mapTo(hashSetOf()) { it.ref }
+        require(sources.all { it.folderUnitRef == null || it.folderUnitRef in units })
     }
+
+    fun sameInventoryAs(other: EvidenceAnalysisRequest): Boolean = mode == other.mode && grant == other.grant &&
+        images == other.images && content == other.content && folders == other.folders && sources.size == other.sources.size &&
+        sources.zip(other.sources).all { (a, b) -> a.sourceRoot == b.sourceRoot && a.folderUnitRef == b.folderUnitRef &&
+            a.record.stableRef == b.record.stableRef && a.record.displayName == b.record.displayName && a.record.extension == b.record.extension &&
+            a.record.mimeType == b.record.mimeType && a.record.parentRef == b.record.parentRef && a.record.sizeBytes == b.record.sizeBytes &&
+            a.record.modifiedAt == b.record.modifiedAt }
 }
 enum class EvidenceAnalysisStatus { QUEUED, RUNNING, PAUSED, COMPLETED, FAILED }
 enum class EvidenceAnalysisOutcome { ANALYZED, REUSED, PARTIAL, UNAVAILABLE, CHANGED }

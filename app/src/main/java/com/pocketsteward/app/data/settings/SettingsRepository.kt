@@ -57,6 +57,7 @@ data class PrivacySettings(
 data class LibrarySettings(
     val backgroundRefreshEnabled: Boolean = true,
     val contentIndexWhileCharging: Boolean = true,
+    val evidenceAnalysisWhileCharging: Boolean = false,
 )
 
 data class StorageAccessState(
@@ -126,6 +127,7 @@ class SettingsRepository(private val context: Context) {
         val THUMBNAILS = booleanPreferencesKey("thumbnails_enabled")
         val LIBRARY_BACKGROUND = booleanPreferencesKey("library_background_refresh")
         val LIBRARY_CONTENT_CHARGING = booleanPreferencesKey("library_content_while_charging")
+        val LIBRARY_EVIDENCE_CHARGING = booleanPreferencesKey("library_evidence_while_charging")
         val LIBRARY_LAST_COMPLETED = androidx.datastore.preferences.core.longPreferencesKey("library_last_completed_at")
         val LIBRARY_LAST_ROOT = androidx.datastore.preferences.core.stringPreferencesKey("library_last_completed_root")
         val SAVED_WORKFLOWS = stringPreferencesKey("saved_workflows")
@@ -499,6 +501,7 @@ class SettingsRepository(private val context: Context) {
         LibrarySettings(
             backgroundRefreshEnabled = prefs[Keys.LIBRARY_BACKGROUND] ?: true,
             contentIndexWhileCharging = prefs[Keys.LIBRARY_CONTENT_CHARGING] ?: true,
+            evidenceAnalysisWhileCharging = prefs[Keys.LIBRARY_EVIDENCE_CHARGING] ?: false,
         )
     }
 
@@ -522,6 +525,9 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLibraryContentWhileCharging(enabled: Boolean) {
         context.dataStore.edit { it[Keys.LIBRARY_CONTENT_CHARGING] = enabled }
+    }
+    suspend fun setLibraryEvidenceWhileCharging(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.LIBRARY_EVIDENCE_CHARGING] = enabled }
     }
 
     val storageAccessState: Flow<StorageAccessState> = context.dataStore.data.map { prefs ->

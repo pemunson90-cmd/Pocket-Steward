@@ -11,7 +11,7 @@ data class ArchivedTaskSummary(val request: String, val status: String, val star
 data class PortableBackup(val format: String = "PocketStewardSettings", val version: Int = 1, val createdAt: Long, val settings: Map<String, String>, val history: List<ArchivedTaskSummary>)
 
 object PortableSettingsPolicy {
-    val booleanKeys = setOf("metadata_indexing_enabled", "content_inspection_enabled", "image_analysis_enabled", "on_device_ai_enabled", "advanced_mode_enabled", "wallpaper_colors_enabled", "thumbnails_enabled", "library_content_while_charging")
+    val booleanKeys = setOf("metadata_indexing_enabled", "content_inspection_enabled", "image_analysis_enabled", "on_device_ai_enabled", "advanced_mode_enabled", "wallpaper_colors_enabled", "thumbnails_enabled", "library_content_while_charging", "library_evidence_while_charging")
     val stringKeys = setOf("project_keywords", "hierarchy_template", "named_hierarchy_templates", "saved_workflows", "saved_searches", "favorite_destinations", "correction_rules", "project_homes", "inbox_roots", "scheduled_cleanup")
     val allowedKeys = booleanKeys + stringKeys
 

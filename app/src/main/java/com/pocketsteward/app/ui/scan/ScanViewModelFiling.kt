@@ -215,16 +215,24 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 )
             }
 
+            val folderMaterial = prepareFilingFolderEvidence(scannedRecords, readableRecords, snapshots.baselines, summary)
             val inferred = withContext(Dispatchers.Default) {
-                InboxFilingEngine.resolve(
+                val keywords = settingsRepository.projectKeywords.first()
+                val corrections = settingsRepository.correctionRules.first()
+                val roles = settingsRepository.hierarchyTemplate.first().roleFolders
+                val children = InboxFilingEngine.resolve(folderMaterial.children, (savedHomes + favorites).distinctBy { it.path.lowercase() },
+                    observedHomes + discovered, keywords, corrections, storageRoot.absolutePath, roles)
+                val resolved = InboxFilingEngine.resolve(
                     artifacts = artifacts,
                     persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
                     discoveredHomes = observedHomes + discovered,
                     projectKeywords = settingsRepository.projectKeywords.first(),
                     correctionRules = settingsRepository.correctionRules.first(),
                     storageRoot = storageRoot.absolutePath,
-                    newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
+                    newProjectRoles = roles,
                 )
+                com.pocketsteward.app.filing.FilingFolderEvidence.reconcile(resolved, children, folderMaterial.ownerByChild,
+                    folderMaterial.entryCounts, snapshots.baselines.filterValues { it.directoryDigest != null }.mapValues { it.value.directoryEntryCount })
             }
             // Folder contents stay together; their internal layout is never split by role.
             val existingDirectories = linkedSetOf<String>()
@@ -243,7 +251,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             existingDirectories += releases.directories
 
             val conventional = com.pocketsteward.app.filing.FilingReleaseConvention.reconcile(inferred, existingDirectories, releases.unavailableHomes)
-            val choices = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(conventional, continuation?.assignments.orEmpty()), unavailableSources)
+            val choices = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(conventional, continuation?.assignments.orEmpty()), unavailableSources + folderMaterial.errors)
             val result = resolveDirectDestinationCollisions(choices, gateway, storageRoot.absolutePath)
             val plan = withContext(Dispatchers.Default) {
                 InboxFilingPlanAdapter.build(
@@ -265,6 +273,7 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                 add(if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Anything still unresolved stays in its existing Uncertain checkpoint."
                     else "Strong matches are selected by default. Probable matches are proposed but left unchecked. Unresolved files and intact folders move to Uncertain after review.")
                 add(content.summary)
+                if (folderMaterial.entryCounts.isNotEmpty()) add(folderMaterial.summary)
                 add(imageEvidence.coverage.summary)
                 add(knowledge.explanation)
                 addAll(extraNotes)
@@ -646,29 +655,18 @@ internal fun ScanViewModel.analyzeAllFilingEvidence(retryUnavailable: Boolean = 
             require(ReviewDraftPolicy.hasCurrentAccess(current, mode, access.safTreeUri)) { "Storage access changed. Rebuild the review first." }
             val privacy = settingsRepository.privacySettings.first()
             require(privacy.imageAnalysisEnabled || privacy.contentInspectionEnabled) { "Enable local image analysis or content inspection in Settings first." }
-            val originals = session.result.decisions.associateBy { it.artifact.stableRef }
-            val sources = withContext(Dispatchers.IO) {
-                val indexed = allRecordsForScopes(current.scopes).associateBy { it.stableRef }
-                originals.values.mapNotNull { decision ->
-                    val artifact = decision.artifact
-                    if (artifact.isDirectory) return@mapNotNull null
-                    val eligible = privacy.imageAnalysisEnabled && artifact.extension.lowercase() in ImageReviewBatch.EXTENSIONS ||
-                        privacy.contentInspectionEnabled && ContentExtractor.supports(artifact.extension)
-                    if (!eligible) return@mapNotNull null
-                    // Missing or refreshed index rows never change the saved source identity.
-                    val record = indexed[artifact.stableRef] ?: FileRecord(stableRef = artifact.stableRef, displayName = artifact.displayName,
-                        extension = artifact.extension, mimeType = null, absolutePathOrUri = artifact.stableRef, parentRef = artifact.parentRef,
-                        sizeBytes = artifact.sizeBytes, createdAt = artifact.createdAt, modifiedAt = artifact.modifiedAt,
-                        lastScannedAt = 0, isDirectory = false, isHidden = artifact.displayName.startsWith('.'))
-                    val snapshot = record.copy(displayName = artifact.displayName, sizeBytes = artifact.sizeBytes,
-                        modifiedAt = artifact.modifiedAt, extension = artifact.extension, parentRef = artifact.parentRef)
-                    com.pocketsteward.app.evidence.analysis.EvidenceAnalysisSource(snapshot,
-                        sourceRootFor(record.stableRef, current.scopes) ?: current.scopes.first().root.rawValue())
-                }
+            val planned = withContext(Dispatchers.IO) {
+                val artifacts = session.result.decisions.filterNot { decision ->
+                    decision.evidence.any { it.kind == com.pocketsteward.app.filing.FilingEvidenceKind.SOURCE_UNAVAILABLE }
+                }.map { it.artifact }
+                com.pocketsteward.app.evidence.analysis.EvidenceAnalysisSourcePlanner.forReview(
+                    artifacts, allRecordsForScopes(current.scopes), session.originalSources.orEmpty() + current.reviewedSources,
+                    privacy.imageAnalysisEnabled, privacy.contentInspectionEnabled,
+                ) { record -> sourceRootFor(record.stableRef, current.scopes) ?: current.scopes.first().root.rawValue() }
             }
-            require(sources.isNotEmpty()) { "This review has no eligible image or document files for the enabled privacy settings." }
-            container.evidenceAnalysis.start(sources, mode, access.safTreeUri.takeIf { mode == StorageAccessMode.SAF },
-                privacy.imageAnalysisEnabled, privacy.contentInspectionEnabled, retryUnavailable)
+            require(planned.sources.isNotEmpty()) { "This review has no eligible indexed image or document files for the enabled privacy settings. Refresh the inventory to include folder contents." }
+            container.evidenceAnalysis.start(planned.sources, mode, access.safTreeUri.takeIf { mode == StorageAccessMode.SAF },
+                privacy.imageAnalysisEnabled, privacy.contentInspectionEnabled, retryUnavailable, planned.folders)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { _error.value = failure.message ?: "Could not start evidence analysis." }
     }

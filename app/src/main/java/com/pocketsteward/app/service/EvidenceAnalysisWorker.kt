@@ -59,11 +59,23 @@ class EvidenceAnalysisWorker(context: Context, params: WorkerParameters) : Corou
         catch (_: IllegalStateException) { foreground = false }
         catch (_: SecurityException) { foreground = false }
         val started = SystemClock.elapsedRealtime()
+        val folderGuard = EvidenceAnalysisFolderGuard(request.folders) { ref ->
+            val refusal = if (request.mode == StorageAccessMode.DIRECT) {
+                @Suppress("DEPRECATION") val root = Environment.getExternalStorageDirectory().absolutePath
+                DirectProtection.refusal(root, ref)
+            } else {
+                require(com.pocketsteward.app.storage.SafScopeAccess.contains(applicationContext, requireNotNull(request.grant), ref)) { "Folder is outside the current grant." }
+                com.pocketsteward.app.storage.SafProtection(applicationContext).refusal(Uri.parse(ref))
+            }
+            require(refusal == null) { refusal ?: "Folder protection is unavailable." }
+            com.pocketsteward.app.plan.SourcePreconditions.capture(container.gatewayFor(request.mode), parseFileRef(ref))
+        }
         var lastNotification = 0L
         suspend fun hasAccess(): Boolean {
             val access = container.settingsRepository.storageAccessState.first()
             val privacy = container.settingsRepository.privacySettings.first()
             return access.mode == request.mode && (request.mode != StorageAccessMode.SAF || access.safTreeUri == request.grant) &&
+                (!request.automatic || container.settingsRepository.librarySettings.first().evidenceAnalysisWhileCharging) &&
                 (!request.images || privacy.imageAnalysisEnabled) && (!request.content || privacy.contentInspectionEnabled)
         }
         try {
@@ -71,13 +83,14 @@ class EvidenceAnalysisWorker(context: Context, params: WorkerParameters) : Corou
                 allowed = { !isStopped && SystemClock.elapsedRealtime() - started < 8 * 60_000 && hasAccess() },
                 inspect = { source ->
                     try {
-                        withTimeout(90_000) { inspect(request, source) }
+                        val refusal = withTimeout(5 * 60_000L) { folderGuard.refusal(source) }
+                        refusal ?: withTimeout(90_000) { inspect(request, source) }
                     } catch (timeout: TimeoutCancellationException) {
                         currentCoroutineContext().ensureActive()
                         // An SDK task may still own its bitmap after coroutine timeout. Do not
                         // keep admitting new images while a potentially stuck task remains.
                         coordinator.publish(coordinator.store.update(request.id) {
-                            it.copy(pauseRequested = true, detail = "A file inspection timed out. Analysis is paused; resume after checking device resources.")
+                            it.copy(pauseRequested = true, detail = "A file or folder inspection timed out. Analysis is paused; resume after checking device resources.")
                         })
                         EvidenceAnalysisOutcome.UNAVAILABLE
                     }
@@ -104,6 +117,11 @@ class EvidenceAnalysisWorker(context: Context, params: WorkerParameters) : Corou
         if (request.mode == StorageAccessMode.DIRECT) {
             @Suppress("DEPRECATION") val storageRoot = Environment.getExternalStorageDirectory().absolutePath
             if (DirectProtection.refusal(storageRoot, record.stableRef) != null) return EvidenceAnalysisOutcome.UNAVAILABLE
+        } else {
+            if (!com.pocketsteward.app.storage.SafScopeAccess.contains(applicationContext, requireNotNull(request.grant), record.stableRef) ||
+                com.pocketsteward.app.storage.SafProtection(applicationContext).refusal(Uri.parse(record.stableRef)) != null) {
+                return EvidenceAnalysisOutcome.UNAVAILABLE
+            }
         }
         val metadata = try { gateway.stat(parseFileRef(record.stableRef)) }
         catch (cancelled: CancellationException) { throw cancelled }

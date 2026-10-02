@@ -63,11 +63,24 @@ class SettingsViewModel(
     evidenceProgress: kotlinx.coroutines.flow.Flow<com.pocketsteward.app.evidence.analysis.EvidenceAnalysisProgress?> = kotlinx.coroutines.flow.flowOf(null),
     private val pauseEvidence: suspend () -> Unit = {},
     private val resumeEvidence: suspend () -> Unit = {},
+    private val startLibraryEvidence: suspend (Boolean) -> Unit = {},
 ) : ViewModel() {
 
     val evidenceAnalysisProgress = evidenceProgress.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     private val _evidenceMessage = MutableStateFlow<String?>(null)
     val evidenceMessage: StateFlow<String?> = _evidenceMessage
+    private val _evidenceStarting = MutableStateFlow(false)
+    val evidenceStarting: StateFlow<Boolean> = _evidenceStarting
+    fun analyzeLibraryEvidence(retryUnavailable: Boolean = false) {
+        if (_evidenceStarting.value) return
+        _evidenceStarting.value = true
+        viewModelScope.launch {
+            try { startLibraryEvidence(retryUnavailable); _evidenceMessage.value = "Library analysis queued. Progress is saved after each file." }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { _evidenceMessage.value = failure.message ?: "Could not start library analysis." }
+            finally { _evidenceStarting.value = false }
+        }
+    }
     fun pauseEvidenceAnalysis() { viewModelScope.launch {
         try { pauseEvidence() } catch (failure: Exception) { _evidenceMessage.value = failure.message ?: "Could not pause analysis." }
     } }
@@ -134,6 +147,12 @@ class SettingsViewModel(
         viewModelScope.launch {
             settingsRepository.setLibraryContentWhileCharging(enabled)
             if (enabled) settingsRepository.setContentInspectionEnabled(true)
+        }
+    }
+    fun setLibraryEvidenceWhileCharging(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setLibraryEvidenceWhileCharging(enabled)
+            if (enabled) refreshLibraryNow()
         }
     }
 

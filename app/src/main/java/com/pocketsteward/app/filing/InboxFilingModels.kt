@@ -27,6 +27,7 @@ enum class FilingEvidenceKind {
     MEDIA_METADATA,
     IMAGE_CONTENT,
     IMAGE_TEXT,
+    FOLDER_CONTENT,
 }
 
 data class FilingEvidence(
@@ -65,6 +66,7 @@ data class ProjectHomeCandidate(
     val hierarchy: ProjectHierarchyStrategy = ProjectHierarchyStrategy.VERSIONED,
     val persisted: Boolean = false,
     val roleFolders: Map<String, String> = emptyMap(),
+    val categoryHome: Boolean = false,
 )
 
 data class FilingDecision(

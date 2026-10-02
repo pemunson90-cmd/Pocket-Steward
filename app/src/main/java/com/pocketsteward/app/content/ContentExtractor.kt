@@ -23,6 +23,8 @@ object ContentExtractor {
 
     private val ooxmlExtensions = setOf("docx", "xlsx", "pptx")
 
+    val supportedExtensions: Set<String> = plainTextExtensions + ooxmlExtensions + "pdf"
+
     fun supports(extension: String): Boolean {
         val ext = extension.lowercase()
         return ext in plainTextExtensions || ext in ooxmlExtensions || ext == "pdf"

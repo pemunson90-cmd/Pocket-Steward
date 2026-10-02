@@ -12,6 +12,7 @@ import androidx.work.workDataOf
 import com.pocketsteward.app.PocketStewardApplication
 import com.pocketsteward.app.library.LibraryPolicy
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.evidence.analysis.analyzeIndexedLibrary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
@@ -61,9 +62,12 @@ class LibraryRefreshWorker(
             val refreshedSlice = affected != null && container.library.refreshDirectories(access, affected, resume = runAttemptCount > 0)
             if (!refreshedSlice && !container.library.refresh(access, forced = forced)) return Result.retry()
             val privacy = settings.privacySettings.first()
-            if (library.contentIndexWhileCharging && privacy.contentInspectionEnabled) {
+            if (library.contentIndexWhileCharging && privacy.contentInspectionEnabled && !library.evidenceAnalysisWhileCharging) {
                 if (refreshedSlice) affected.orEmpty().forEach { root -> container.enqueueChargingContentIndex(root, mode) }
                 else container.library.root(access)?.let { root -> container.enqueueChargingContentIndex(root.rawValue(), mode) }
+            }
+            if (library.evidenceAnalysisWhileCharging && (privacy.contentInspectionEnabled || privacy.imageAnalysisEnabled)) {
+                container.analyzeIndexedLibrary(automatic = true)
             }
             if (pending != null && !container.inventoryInvalidations.complete(pending)) return Result.retry()
             Result.success()

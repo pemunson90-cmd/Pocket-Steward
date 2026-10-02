@@ -327,7 +327,7 @@ object InboxFilingEngine {
         if (best == null) {
             NonProjectMediaFiling.propose(artifact, storageRoot)?.let { return it }
             if (imageTopic != null) {
-                val topicHome = ProjectHomeCandidate(imageTopic, "${storageRoot.trimEnd('/')}/Images/$imageTopic", hierarchy = ProjectHierarchyStrategy.FLAT)
+                val topicHome = ProjectHomeCandidate(imageTopic, "${storageRoot.trimEnd('/')}/Images/$imageTopic", hierarchy = ProjectHierarchyStrategy.FLAT, categoryHome = true)
                 return FilingDecision(
                     artifact = artifact,
                     projectName = imageTopic,

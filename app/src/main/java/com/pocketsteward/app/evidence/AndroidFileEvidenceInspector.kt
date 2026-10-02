@@ -24,18 +24,9 @@ internal fun createFileEvidenceInspector(container: AppContainer): FileEvidenceI
                         val root = (library.root(access) as? FileRef.Direct)?.absolutePath?.trimEnd('/')
                         root != null && request.ref.startsWith("$root/")
                     }
-                    StorageAccessMode.SAF -> try {
-                        val tree = android.net.Uri.parse(requireNotNull(access.safTreeUri))
-                        val source = android.net.Uri.parse(request.ref)
-                        if (tree.authority != source.authority) false else {
-                            val rootId = android.provider.DocumentsContract.getTreeDocumentId(tree)
-                            val sourceId = android.provider.DocumentsContract.getDocumentId(source)
-                            val bound = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, sourceId)
-                            val path = android.provider.DocumentsContract.findDocumentPath(appContext.contentResolver, bound)?.path
-                            path != null && rootId in path && path.lastOrNull() == sourceId
-                        }
-                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
-                    catch (_: Exception) { false }
+                    StorageAccessMode.SAF -> access.safTreeUri?.let {
+                        com.pocketsteward.app.storage.SafScopeAccess.contains(appContext, it, request.ref)
+                    } ?: false
                 }
             },
             refusal = { request, mode -> when (mode) {

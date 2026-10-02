@@ -29,7 +29,7 @@ object NonProjectMediaFiling {
             } else return null
         } else return null
         val name = destination.substringAfterLast('/')
-        val home = ProjectHomeCandidate(name, destination, hierarchy = ProjectHierarchyStrategy.FLAT)
+        val home = ProjectHomeCandidate(name, destination, hierarchy = ProjectHierarchyStrategy.FLAT, categoryHome = true)
         return FilingDecision(artifact, name, home, null, destination, FilingConfidence.PROBABLE,
             listOf(FilingEvidence(if (artifact.imageLabels.isNotEmpty()) FilingEvidenceKind.IMAGE_CONTENT else FilingEvidenceKind.MEDIA_METADATA, explanation, 70)), createsProjectHome = true)
     }

@@ -35,11 +35,19 @@ class EvidenceAnalysisCoordinator(private val context: Context, scope: Coroutine
         }.onFailure { _error.value = "Saved evidence analysis could not be read. Start a new analysis from the current review." }
     } } } }
 
-    suspend fun start(sources: List<EvidenceAnalysisSource>, mode: StorageAccessMode, grant: String?, images: Boolean, content: Boolean, retryUnavailable: Boolean = false): String = withContext(Dispatchers.IO) {
+    suspend fun start(sources: List<EvidenceAnalysisSource>, mode: StorageAccessMode, grant: String?, images: Boolean, content: Boolean, retryUnavailable: Boolean = false,
+        folders: List<EvidenceAnalysisFolder> = emptyList(), automatic: Boolean = false): String = withContext(Dispatchers.IO) {
         admission.withLock {
             val old = runCatching { store.latest() }.getOrNull()
+            val request = EvidenceAnalysisRequest(UUID.randomUUID().toString(), mode, grant, images, content, retryUnavailable, sources.sortedBy { it.record.stableRef }, folders, automatic)
+            request.validate()
+            // Automatic refresh never replaces a paused/failed/manual job or repeats an unchanged inventory.
+            if (automatic && old != null && (old.status != EvidenceAnalysisStatus.COMPLETED || request.sameInventoryAs(store.request(old.id)))) return@withLock old.id
             require(old == null || old.status !in setOf(EvidenceAnalysisStatus.QUEUED, EvidenceAnalysisStatus.RUNNING)) { "An evidence analysis is already running. Pause it before starting another." }
-            val request = EvidenceAnalysisRequest(UUID.randomUUID().toString(), mode, grant, images, content, retryUnavailable, sources.sortedBy { it.record.stableRef })
+            if (old != null && old.status != EvidenceAnalysisStatus.COMPLETED) {
+                store.update(old.id) { it.copy(status = EvidenceAnalysisStatus.PAUSED, pauseRequested = true) }
+                WorkManager.getInstance(context).cancelUniqueWork(uniqueName(old.id))
+            }
             store.saveRequest(request)
             _error.value = null
             _progress.value = store.progress(request.id)
@@ -76,7 +84,7 @@ class EvidenceAnalysisCoordinator(private val context: Context, scope: Coroutine
     private fun enqueue(id: String) {
         val request = OneTimeWorkRequestBuilder<EvidenceAnalysisWorker>()
             .setInputData(workDataOf(EvidenceAnalysisWorker.KEY_JOB_ID to id))
-            .setConstraints(BackgroundWorkPolicy.contentIndexConstraints())
+            .setConstraints(if (store.request(id).automatic) BackgroundWorkPolicy.libraryContentIndexConstraints() else BackgroundWorkPolicy.contentIndexConstraints())
             .addTag(EvidenceAnalysisWorker.WORK_TAG).build()
         WorkManager.getInstance(context).enqueueUniqueWork(uniqueName(id), ExistingWorkPolicy.KEEP, request)
     }
