@@ -25,6 +25,6 @@ Updated 2026-10-02. [GOAL_APP_COMPLETION_SPEC.md](GOAL_APP_COMPLETION_SPEC.md) i
 | MODEL-01 | Open | Optional connected edition, configured semantic providers/local runtimes, protected credentials and fallback. |
 | MEDIA-01 | Partly implemented before dev12 | Grounded local labels/OCR/descriptions exist; improved capabilities and optional richer caption backend remain. |
 | ACCEPT-01 | Open | All physical-phone rows in the accepted specification remain unverified. |
-| REL-01 | Published dev15; dev16 follow-up validating | 669 unit tests, lint, debug/instrumentation assembly, native races, SQLite/release-tool checks, canonical signing, 16 KiB alignment and verified source/public ZIP/APK passed. Final whole-app acceptance/release remains open. |
+| REL-01 | Published dev16 stabilization checkpoint | 670 unit tests, lint, debug/instrumentation assembly, native races, SQLite/release-tool checks, canonical signing, 16 KiB alignment and verified source/public ZIP/APK and matching-source GitHub validation passed. Final whole-app acceptance/release remains open. |
 
 AppFunctions remains conditionally deferred pending SDK/invocation maturity. A dedicated project database remains conditional on demonstrated need. Optional backend availability must be explained and tested; it does not replace deterministic organization.
