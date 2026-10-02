@@ -436,7 +436,8 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
     val originalSources = snapshots.baselines
     val nextSession = FilingSession(result, scope.root, emptySet(), intake.retainedUncertainSourceRefs,
         (homes + continuation?.session?.homes.orEmpty()).distinctBy { it.path }, existingHomeRefs,
-        manualAssignments = continuation?.assignments.orEmpty(), reviewId = java.util.UUID.randomUUID().toString(), originalSources = originalSources)
+        manualAssignments = continuation?.assignments.orEmpty(), reviewId = java.util.UUID.randomUUID().toString(), originalSources = originalSources,
+        newHomeRoot = workflowHomeRoot ?: scope.root)
     showPlanPreview(
         goal = if (checkpointOnly) "Sort Uncertain" else "Inbox filing",
         operations = plan.operations,

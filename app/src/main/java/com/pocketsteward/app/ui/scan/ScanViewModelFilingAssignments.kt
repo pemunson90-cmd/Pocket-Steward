@@ -9,6 +9,8 @@ import com.pocketsteward.app.filing.InboxFilingResult
 import com.pocketsteward.app.filing.InboxFilingSafPlanAdapter
 import com.pocketsteward.app.filing.ProjectHomeCandidate
 import com.pocketsteward.app.saved.ProjectHierarchyStrategy
+import com.pocketsteward.app.saved.WorkflowDestination
+import com.pocketsteward.app.saved.WorkflowPreferences
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.rawValue
@@ -28,7 +30,13 @@ internal data class FilingSession(
     val manualAssignments: Map<String, com.pocketsteward.app.filing.FilingDecision>? = null,
     val reviewId: String? = null,
     val originalSources: Map<String, com.pocketsteward.app.plan.SourcePrecondition>? = null,
+    val newHomeRoot: FileRef? = null,
 )
+
+internal fun FilingSession.rebuildPlan(result: InboxFilingResult, scopeLabel: String): com.pocketsteward.app.filing.InboxFilingPlan =
+    if (root is FileRef.Direct) InboxFilingPlanAdapter.build(result, root, existingDirectories, retainedUncertainSourceRefs)
+    else InboxFilingSafPlanAdapter.build(result, root, existingSafHomes, scopeLabel, retainedUncertainSourceRefs,
+        newHomeRoot = newHomeRoot ?: root)
 
 internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTitle: String, role: FilingRole, chosenHomePath: String? = null, releaseFolder: String? = null, rememberChoice: Boolean = false) {
     if (filingEditJob?.isActive == true || busy.value != null) return
@@ -46,15 +54,24 @@ internal fun ScanViewModel.assignFilingFiles(sourceRefs: Set<String>, projectTit
                 home.name.equals(title, true) || home.aliases.any { it.equals(title, true) }
             }.distinctBy { it.path }
             require(matching.size <= 1) { "More than one home matches this title. Choose a distinct project title or resolve the duplicate homes first." }
-            val home = matching.singleOrNull() ?: ProjectHomeCandidate(
-                title, session.root.rawValue().trimEnd('/') + if (session.root is FileRef.Direct) "/Documents/$title" else "/$title",
-                hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
-                roleFolders = settingsRepository.hierarchyTemplate.first().roleFolders,
-            )
+            val home = matching.singleOrNull() ?: run {
+                val base = if (session.root is FileRef.Direct) {
+                    val roots = sourceRefs.mapNotNull { sourceRootFor(it, current.scopes) }.toSet()
+                    require(roots.isNotEmpty()) { "The selection is no longer in this review. Rebuild it first." }
+                    val bases = current.scopes.filter { it.root.rawValue() in roots }.map { scope ->
+                        workflowDestination(scope, StorageAccessMode.DIRECT) ?: requireNotNull(workflowDestination(scope, StorageAccessMode.DIRECT,
+                            WorkflowPreferences(destination = WorkflowDestination.DOCUMENTS)))
+                    }.distinct()
+                    require(bases.size == 1) { "This workflow uses several source-local destinations. Assign one source folder at a time or choose an existing project home." }
+                    bases.single()
+                } else session.newHomeRoot ?: session.root
+                ProjectHomeCandidate(title, base.rawValue().trimEnd('/') + "/$title",
+                    hierarchy = ProjectHierarchyStrategy.PROJECT_ROLES,
+                    roleFolders = settingsRepository.hierarchyTemplate.first().roleFolders)
+            }
             val result = withContext(Dispatchers.Default) { FilingAssignments.assign(session.result, sourceRefs, home, role, releaseFolder) }
             val plan = withContext(Dispatchers.Default) {
-                if (session.root is FileRef.Direct) InboxFilingPlanAdapter.build(result, session.root, session.existingDirectories, session.retainedUncertainSourceRefs)
-                else InboxFilingSafPlanAdapter.build(result, session.root, session.existingSafHomes, current.scopes.first().label, session.retainedUncertainSourceRefs)
+                session.rebuildPlan(result, current.scopes.first().label)
             }
             val nextSession = session.copy(result = result, homes = (session.homes + home).distinctBy { it.path },
                 manualAssignments = session.manualAssignments.orEmpty() + result.decisions.filter { it.artifact.stableRef in sourceRefs }.associateBy { it.artifact.stableRef },
@@ -128,8 +145,7 @@ internal fun ScanViewModel.deferFilingFiles(sourceRefs: Set<String>) {
         try {
             val result = withContext(Dispatchers.Default) { com.pocketsteward.app.filing.FilingDispositionPolicy.defer(session.result, sourceRefs) }
             val plan = withContext(Dispatchers.Default) {
-                if (session.root is FileRef.Direct) InboxFilingPlanAdapter.build(result, session.root, session.existingDirectories, session.retainedUncertainSourceRefs)
-                else InboxFilingSafPlanAdapter.build(result, session.root, session.existingSafHomes, current.scopes.first().label, session.retainedUncertainSourceRefs)
+                session.rebuildPlan(result, current.scopes.first().label)
             }
             val nextSession = session.copy(result = result,
                 manualAssignments = session.manualAssignments.orEmpty() + result.decisions.filter { it.artifact.stableRef in sourceRefs }.associateBy { it.artifact.stableRef },

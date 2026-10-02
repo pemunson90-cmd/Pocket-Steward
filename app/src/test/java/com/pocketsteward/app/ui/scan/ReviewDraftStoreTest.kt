@@ -44,6 +44,35 @@ class ReviewDraftStoreTest {
         assertThat(store.load()).isEqualTo(updated)
         assertThat(store.load()!!.preview.workflowPreferences).isEqualTo(preferences)
     }
+    @Test fun selectedTreeAssignmentsAndDeferralKeepTheOpaqueWorkflowBaseAfterRestart() {
+        val original = draft()
+        val base = FileRef.Saf("content://provider/tree/Root%3Aone/document/UnrelatedOpaqueDestination")
+        val home = ProjectHomeCandidate("Lilith", "${base.rawValue()}/Lilith",
+            hierarchy = com.pocketsteward.app.saved.ProjectHierarchyStrategy.PROJECT_ROLES)
+        val result = original.filingSession!!.result.let { old -> InboxFilingResult(old.decisions.map {
+            it.copy(projectHome = home, destinationDirectory = "${home.path}/Notes")
+        }) }
+        val session = original.filingSession.copy(result = result, homes = listOf(home), existingSafHomes = emptyMap(), newHomeRoot = base)
+        val plan = session.rebuildPlan(result, "Granted tree")
+        val updated = original.copy(filingSession = session, preview = original.preview.copy(
+            accepted = plan.operations, acceptedScopeLabels = List(plan.operations.size) { "Granted tree" },
+            filingPresentation = plan.presentation,
+            workflowPreferences = com.pocketsteward.app.saved.WorkflowPreferences(
+                destination = com.pocketsteward.app.saved.WorkflowDestination.CHOSEN_FOLDER, destinationFolder = base.rawValue())))
+        val store = ReviewDraftStore(temporary.newFolder().resolve("draft")); store.save(updated)
+        val restored = store.load()!!.filingSession!!
+        assertThat(restored.newHomeRoot).isEqualTo(base)
+        assertThat(restored.rebuildPlan(restored.result, "Granted tree")).isEqualTo(plan)
+        val source = result.decisions.single().artifact.stableRef
+        val assigned = FilingAssignments.assign(restored.result, setOf(source), home, FilingRole.DRAFTS)
+        val changed = restored.rebuildPlan(assigned, "Granted tree")
+        assertThat(changed.operations.filterIsInstance<PlannedOperation.Move>().single().destination)
+            .isEqualTo(base.child("Lilith").child("Drafts").child("a.txt"))
+        val deferred = restored.rebuildPlan(FilingDispositionPolicy.defer(assigned, setOf(source)), "Granted tree")
+        // This source already belongs to the checkpoint and remains in place.
+        assertThat(deferred.operations.filterIsInstance<PlannedOperation.Move>()).isEmpty()
+        assertThat(deferred.operations.filterIsInstance<PlannedOperation.CreateDirectory>()).isEmpty()
+    }
     @Test fun pendingLearningSurvivesRestartWithoutLearningUncheckedActions() {
         val original = draft()
         val operation = original.preview.accepted.single() as PlannedOperation.Copy
