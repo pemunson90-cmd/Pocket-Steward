@@ -2,7 +2,7 @@
 
 User outcome: organize Downloads and its existing 16k-file Uncertain checkpoint into justified project/category homes. Keep related documents, images, builds and archives together. For an approved complete review, only Uncertain should remain in Downloads unless protected, inaccessible, conflicting, explicitly held or newly arrived items have visible reasons.
 
-This is the next implementation focus within GOAL_APP_COMPLETION_SPEC.md. Other mandatory app-completion packages remain open in APP_COMPLETION_REGISTER.md. Dev16 is a stabilization baseline, not completion of this outcome.
+This is the next implementation focus within GOAL_APP_COMPLETION_SPEC.md. Other mandatory app-completion packages remain open in APP_COMPLETION_REGISTER.md. Dev18 is a review-decision checkpoint, not completion of this outcome.
 
 ## What already works
 
@@ -38,3 +38,12 @@ Existing folders remain intact unless the user explicitly reviews a consolidatio
 - Review/approval remains explicit. Partial failures preserve recoverable files and journal state; all safety and physical-phone gates above pass before closing this outcome.
 
 Start with FILING-01. It makes incomplete coverage measurable and gives later recognition/continuation work a concrete acceptance target.
+
+
+## Dev18 checkpoint and next implementation boundary
+
+After the user confirmed no dev17 tab crashes on the Fold 7, the first review stage of FILING-01 was implemented in dev18. FilingInventoryPolicy accounts for each represented source once, and the real review/approval flow requires destination confirmation, explicit Uncertain deferral or Keep for undecided sources. Keep/deferral choices survive saved review and continuation; original unresolved-source baselines are preserved. Overlapping roots cannot plan both an intact folder and descendants, which are counted as indexed coverage only. See DEV18_FILING_REVIEW_REPORT.md.
+
+FILING-01 remains open. Next, persist a versioned complete-inventory description with the approved task before foreground execution starts, including every intake root/source/outcome and original folder coverage. Keep it separate from the operation authority: it must not select actions or widen storage access. Extend the existing task manifest/history path to reconcile that description with operation journals and live source/destination listings off the UI thread. Report approved moves, retained Uncertain items, explicit keeps, protection/access/conflict/interruption reasons and newly arrived items separately. Old tasks without such metadata must say coverage is unavailable. Only then can post-task results assert that every eligible original item has an explained fate.
+
+Acceptance remains the 1k/4k/16k mixed inventory, intact bundles, overlapping roots, interruption/recovery/Undo, revoked access and new-arrival gates above. Complete resumable evidence/recognition/learning follows that accounting boundary; moving more guesses into Uncertain does not close recognition coverage.
