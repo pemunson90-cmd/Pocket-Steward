@@ -86,6 +86,10 @@ class EvidenceAnalysisFoldersTest {
         assertThat(EvidenceAnalysisStore(directory).request(request.id)).isEqualTo(request)
         assertThat(request.sameInventoryAs(request.copy(id = UUID.randomUUID().toString(), automatic = false))).isTrue()
         assertThat(request.sameInventoryAs(request.copy(sources = request.sources.map { it.copy(record = it.record.copy(sizeBytes = 100)) }))).isFalse()
+        val revised = request.copy(observedRevision = "${UUID.randomUUID()}:12")
+        assertThat(request.sameInventoryAs(revised)).isFalse()
+        val other = EvidenceAnalysisStore(temporary.newFolder()); other.saveRequest(revised)
+        assertThat(other.request(revised.id).observedRevision).isEqualTo(revised.observedRevision)
         assertThat(runCatching { request.copy(folders = emptyList()).validate() }.isFailure).isTrue()
     }
 

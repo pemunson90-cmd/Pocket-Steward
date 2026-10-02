@@ -39,6 +39,7 @@ class InboxObservation(
     private val settings: SettingsRepository,
     private val tasks: TaskRunDao,
     private val scope: CoroutineScope,
+    private val onEvidenceChange: (Set<String>) -> Unit,
 ) {
     private val started = AtomicBoolean(false)
     private val permissionState = MutableStateFlow(Environment.isExternalStorageManager())
@@ -100,13 +101,14 @@ class InboxObservation(
                         else "Choose storage access to enable inbox monitoring.") }
                     return@collectLatest
                 }
-                val paths = watchPaths(roots.map { it.path })
+                val coverage = watchPaths(roots.map { it.path })
+                val paths = coverage.paths
                 synchronized(watchLock) {
                     val expected = generation
                     paths.forEach { watchedPath ->
                         val observer = object : FileObserver(File(watchedPath), EVENT_MASK) {
                             override fun onEvent(event: Int, path: String?) {
-                                if (event and EVENT_MASK != 0 && generation == expected) noticeChange(watchedPath)
+                                if (event and EVENT_MASK != 0 && generation == expected) noticeChange(watchedPath, path)
                             }
                         }
                         observer.startWatching()
@@ -115,7 +117,9 @@ class InboxObservation(
                 }
                 mutableStatus.update { it.copy(watchedFolders = paths, message =
                     if (paths.isEmpty()) "No accessible inbox folders. Scheduled refresh remains enabled."
-                    else "Watching ${paths.size} folders while the app process is running. Scheduled refresh covers time away.") }
+                    else "Watching ${paths.size} folders while the app process is running. " +
+                        if (coverage.limited) "Watch coverage is limited; scheduled refresh covers the rest."
+                        else "Scheduled refresh covers time away.") }
                 if (paths.isNotEmpty()) {
                     // Also catch changes made while this process was absent or permissions were revoked.
                     synchronized(watchLock) { changedDirectories += paths }
@@ -125,7 +129,10 @@ class InboxObservation(
         }
     }
 
-    private fun noticeChange(directory: String) {
+    private fun noticeChange(directory: String, relativePath: String?) {
+        val changed = relativePath?.takeIf { path -> path.isNotBlank() && !path.startsWith('/') && path.none(Char::isISOControl) && path.split('/').none { it == "." || it == ".." } }
+            ?.let { "$directory/$it" } ?: directory
+        onEvidenceChange(setOf(changed))
         synchronized(watchLock) { changedDirectories += directory }
         mutableStatus.update { it.copy(lastChangeAt = System.currentTimeMillis()) }
         refreshQueue.notice()
@@ -134,21 +141,29 @@ class InboxObservation(
     private suspend fun rebuildCheckpointWatches(expectedGeneration: Long) {
         val roots = settings.inboxRoots.first()
         if (generation != expectedGeneration) return
-        val paths = watchPaths(roots.map { it.path })
-        if (paths == status.value.watchedFolders) return
+        val coverage = watchPaths(roots.map { it.path })
+        val paths = coverage.paths
+        if (generation != expectedGeneration) return
+        if (paths == status.value.watchedFolders) {
+            mutableStatus.update { it.copy(message = "Watching ${paths.size} folders while the app process is running. " +
+                if (coverage.limited) "Watch coverage is limited; scheduled refresh covers the rest." else "Scheduled refresh covers time away.") }
+            return
+        }
         synchronized(watchLock) {
+            if (generation != expectedGeneration) return
             stopWatches()
             paths.forEach { watchedPath ->
                 val observer = object : FileObserver(File(watchedPath), EVENT_MASK) {
                     override fun onEvent(event: Int, path: String?) {
-                        if (event and EVENT_MASK != 0 && generation == expectedGeneration) noticeChange(watchedPath)
+                        if (event and EVENT_MASK != 0 && generation == expectedGeneration) noticeChange(watchedPath, path)
                     }
                 }
                 observer.startWatching()
                 watches += observer
             }
         }
-        mutableStatus.update { it.copy(watchedFolders = paths) }
+        mutableStatus.update { it.copy(watchedFolders = paths, message = "Watching ${paths.size} folders while the app process is running. " +
+            if (coverage.limited) "Watch coverage is limited; scheduled refresh covers the rest." else "Scheduled refresh covers time away.") }
     }
 
     private fun stopWatches() = synchronized(watchLock) {
@@ -156,31 +171,15 @@ class InboxObservation(
         watches.clear()
     }
 
-    private fun watchPaths(roots: List<String>): List<String> {
+    private fun watchPaths(roots: List<String>): InboxWatchCoverage {
         val storage = Environment.getExternalStorageDirectory().canonicalPath
-        return roots.distinct().take(InboxObservationPolicy.MAX_ROOTS).flatMap { raw ->
-            try {
-                val root = File(raw).canonicalFile
-                if (!InboxObservationPolicy.isWithinStorage(storage, root.path) || !root.isDirectory || !root.canRead()) {
-                    emptyList()
-                } else {
-                    val paths = mutableListOf(root.path)
-                    Files.newDirectoryStream(root.toPath()).use { children ->
-                        children.forEach { child ->
-                            if (child.fileName.toString().equals("Uncertain", ignoreCase = true) &&
-                                !Files.isSymbolicLink(child) && Files.isDirectory(child) && Files.isReadable(child)) {
-                                paths += child.toFile().canonicalPath
-                            }
-                        }
-                    }
-                    paths
-                }
-            } catch (_: Exception) { emptyList() }
-        }.distinct().take(InboxObservationPolicy.MAX_ROOTS * 2)
+        return InboxWatchPlanner.plan(storage, roots, excluded = { path ->
+            com.pocketsteward.app.scan.ScanReadPolicy.excludedPrivateDirectory(storage, com.pocketsteward.app.storage.FileRef.Direct(path))
+        })
     }
 
     companion object {
-        private const val EVENT_MASK = FileObserver.CREATE or FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE or
+        private const val EVENT_MASK = FileObserver.CREATE or FileObserver.MOVED_TO or FileObserver.MODIFY or FileObserver.CLOSE_WRITE or
             FileObserver.DELETE or FileObserver.MOVED_FROM or FileObserver.DELETE_SELF or FileObserver.MOVE_SELF or FileObserver.ATTRIB
     }
 }

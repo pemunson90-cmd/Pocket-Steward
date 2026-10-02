@@ -580,7 +580,9 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Inbox monitoring", style = MaterialTheme.typography.titleMedium)
                 Text(inboxObservation.message)
-                inboxObservation.watchedFolders.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                inboxObservation.watchedFolders.take(8).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                if (inboxObservation.watchedFolders.size > 8) Text("${inboxObservation.watchedFolders.size - 8} more nested folders monitored",
+                    style = MaterialTheme.typography.bodySmall)
                 inboxObservation.lastChangeAt?.let { at ->
                     Text("Last change noticed: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(at))}",
                         style = MaterialTheme.typography.bodySmall)

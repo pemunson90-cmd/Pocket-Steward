@@ -29,4 +29,16 @@ class MutationInventoryPolicyTest {
         val operations = List(16_000) { n -> PlannedOperation.Move(FileRef.Direct("/storage/0/Download/$n.txt"), FileRef.Direct("/storage/0/Documents/Lilith/Notes/$n.txt"), "Approved") }
         assertThat(MutationInventoryPolicy.directories(operations)).hasSize(2)
     }
+    @Test fun evidenceInvalidationPreservesUnchangedCopySourcesAndOpaqueBoundaries() {
+        val source = FileRef.Direct("/storage/0/Download/a.txt")
+        val destination = FileRef.Direct("/storage/0/Documents/a.txt")
+        val copied = MutationInventoryPolicy.evidenceChanges(listOf(PlannedOperation.Copy(source, destination, "Approved")))
+        assertThat(copied.refs).containsExactly(destination.absolutePath)
+        assertThat(copied.full).isFalse()
+        val renamed = MutationInventoryPolicy.evidenceChanges(listOf(PlannedOperation.Rename(source, "b.txt", "Approved")))
+        assertThat(renamed.refs).containsExactly(source.absolutePath, "/storage/0/Download/b.txt")
+        val opaque = MutationInventoryPolicy.evidenceChanges(listOf(PlannedOperation.Move(FileRef.Saf("content://provider/document/opaque"), destination, "Approved")))
+        assertThat(opaque.full).isTrue()
+        assertThat(opaque.refs).containsExactly(destination.absolutePath)
+    }
 }

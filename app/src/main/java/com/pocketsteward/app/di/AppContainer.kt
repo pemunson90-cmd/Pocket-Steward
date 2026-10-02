@@ -63,7 +63,8 @@ class AppContainer(context: Context) {
     val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
 
     val inboxObservation: com.pocketsteward.app.library.InboxObservation by lazy {
-        com.pocketsteward.app.library.InboxObservation(appContext, settingsRepository, database.taskRunDao(), appScope)
+        com.pocketsteward.app.library.InboxObservation(appContext, settingsRepository, database.taskRunDao(), appScope,
+            onEvidenceChange = { paths -> noticeEvidenceChanges(paths) })
     }
 
     /** One walker per scan root, shared by the background library and manual scans. */
@@ -87,6 +88,26 @@ class AppContainer(context: Context) {
     }
 
     val inventoryInvalidations by lazy { com.pocketsteward.app.library.DirectoryInvalidationStore(java.io.File(appContext.noBackupFilesDir, "inventory-invalidations.json")) }
+    val observedEvidence by lazy { com.pocketsteward.app.evidence.ObservedEvidenceStore(java.io.File(appContext.noBackupFilesDir, "observed-evidence-revisions")) }
+    private val evidenceFlushScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+    private fun evidenceRevision(ref: String): String = observedEvidence.revision(
+        if (ref.startsWith('/')) java.io.File(ref).canonicalPath else ref)
+    private fun noticeEvidenceChanges(paths: Set<String>, full: Boolean = false) {
+        val canonical = runCatching { paths.mapTo(hashSetOf()) { if (it.startsWith('/')) java.io.File(it).canonicalPath else it } }
+        observedEvidence.observe(canonical.getOrDefault(emptySet()), full || canonical.isFailure)
+        if (!evidenceFlushScheduled.compareAndSet(false, true)) return
+        appScope.launch {
+            try {
+                do { kotlinx.coroutines.delay(250) } while (observedEvidence.flush() && observedEvidence.hasPending())
+            } finally {
+                evidenceFlushScheduled.set(false)
+                if (observedEvidence.hasPending()) {
+                    // A failed save does not spin; live cache reads fail closed and retry the save.
+                    if (observedEvidence.flush()) noticeEvidenceChanges(emptySet())
+                }
+            }
+        }
+    }
 
     private suspend fun queueMutationInventory(operations: List<com.pocketsteward.app.plan.PlannedOperation>, undo: Boolean = false) {
         val trashSources = operations.mapNotNull { operation -> when (operation) {
@@ -103,6 +124,9 @@ class AppContainer(context: Context) {
             catch (_: Exception) { full = true }
         }
         val paths = com.pocketsteward.app.library.MutationInventoryPolicy.directories(operations, trashDestinations)
+        val evidenceChanges = com.pocketsteward.app.library.MutationInventoryPolicy.evidenceChanges(operations, trashDestinations)
+        noticeEvidenceChanges(evidenceChanges.refs, evidenceChanges.full)
+        observedEvidence.flush()
         val saved = if (full || paths.isEmpty()) inventoryInvalidations.markFull() else inventoryInvalidations.mark(paths)
         com.pocketsteward.app.service.LibraryRefreshWorker.afterMutation(appContext, fullFallback = !saved)
     }
@@ -129,6 +153,7 @@ class AppContainer(context: Context) {
             // app cache, so it works for both direct paths and persisted SAF
             // document URIs. Storage access stays behind the gateway.
             pdfExtractor = AndroidPdfContentExtractor(appContext),
+            observedRevision = ::evidenceRevision,
         )
 
     fun contentIndexRepository(mode: StorageAccessMode): ContentIndexRepository =
@@ -216,7 +241,7 @@ class AppContainer(context: Context) {
         )
     }
 
-    val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext) }
+    val metadataEnricher: MetadataEnricher by lazy { MetadataEnricher(appContext, ::evidenceRevision) }
     val imageUnderstanding: ImageUnderstanding by lazy { ImageUnderstanding(appContext,
         readFingerprint = { record -> contentInspector(if (record.stableRef.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).evidenceFingerprint(record) },
         observeMetadata = { ref -> contentInspector(if (ref.startsWith("content://")) StorageAccessMode.SAF else StorageAccessMode.DIRECT).observeMetadata(ref) },

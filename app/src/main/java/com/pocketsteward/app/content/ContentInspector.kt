@@ -12,6 +12,7 @@ import kotlinx.coroutines.ensureActive
 class ContentInspector(
     private val gateway: StorageGateway,
     private val pdfExtractor: PdfContentExtractor? = null,
+    private val observedRevision: (String) -> String? = { null },
 ) {
     suspend fun observeMetadata(stableRef: String): com.pocketsteward.app.storage.FileMetadata =
         gateway.stat(parseFileRef(stableRef))
@@ -20,11 +21,14 @@ class ContentInspector(
 
     suspend fun evidenceFingerprint(stableRef: String, sizeBytes: Long): String {
         val context = kotlinx.coroutines.currentCoroutineContext()
-        return gateway.openRead(parseFileRef(stableRef)).use { input ->
+        val revision = observedRevision(stableRef)
+        val sample = gateway.openRead(parseFileRef(stableRef)).use { input ->
             com.pocketsteward.app.evidence.EvidenceFingerprint.read(input, sizeBytes) {
                 context.ensureActive()
             }
         }
+        check(observedRevision(stableRef) == revision) { "Source was written during its cache sample." }
+        return sample + if (revision == null) "" else ":observed:$revision"
     }
 
     suspend fun extract(record: FileRecord, budget: ContentInspectionBudget = ContentInspectionBudget.FULL): ContentExtraction {

@@ -43,6 +43,7 @@ data class MetadataEnrichment(
  */
 class MetadataEnricher(
     private val context: Context,
+    private val observedRevision: (String) -> String? = { null },
 ) {
     private val evidenceCache = MetadataEvidenceCache(File(context.cacheDir, "artifact-evidence-v3"))
 
@@ -173,8 +174,11 @@ class MetadataEnricher(
     }
 
     private fun sourceSample(record: FileRecord): String? = try {
+        val revision = observedRevision(record.stableRef)
         val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
-        input?.use { com.pocketsteward.app.evidence.EvidenceFingerprint.read(it, record.sizeBytes) }
+        val sample = input?.use { com.pocketsteward.app.evidence.EvidenceFingerprint.read(it, record.sizeBytes) }
+        check(observedRevision(record.stableRef) == revision) { "Source was written during metadata sampling." }
+        sample?.let { it + if (revision == null) "" else ":observed:$revision" }
     } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
     catch (_: Exception) { null }
 

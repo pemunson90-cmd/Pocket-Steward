@@ -20,9 +20,10 @@ class EvidenceAnalysisStore(private val directory: File) {
         request.validate()
         require(!path(request.id, "request").exists()) { "Analysis request already exists." }
         write(path(request.id, "request")) { out ->
-            out.writeInt(3); out.writeUTF(request.id); out.writeUTF(request.mode.name); out.optional(request.grant)
+            out.writeInt(4); out.writeUTF(request.id); out.writeUTF(request.mode.name); out.optional(request.grant)
             out.writeBoolean(request.images); out.writeBoolean(request.content); out.writeBoolean(request.retryUnavailable)
             out.writeBoolean(request.automatic)
+            out.optional(request.observedRevision)
             out.writeInt(request.folders.size)
             request.folders.forEach { folder ->
                 out.writeUTF(folder.ref); out.writeLong(folder.baseline.sizeBytes)
@@ -43,11 +44,12 @@ class EvidenceAnalysisStore(private val directory: File) {
         prune(request.id)
     }
     @Synchronized fun request(id: String): EvidenceAnalysisRequest = read(path(id, "request")) { input ->
-        val version = input.readInt().also { require(it in 1..3) }
+        val version = input.readInt().also { require(it in 1..4) }
         val storedId = input.readUTF(); require(storedId == id)
         val mode = StorageAccessMode.valueOf(input.readUTF()); val grant = input.optional()
         val images = input.readBoolean(); val content = input.readBoolean(); val retry = input.readBoolean()
         val automatic = version >= 3 && input.readBoolean()
+        val observedRevision = if (version >= 4) input.optional() else null
         val folders = if (version >= 2) List(input.readInt().also { require(it in 0..100_000) }) {
             val ref = input.readUTF(); val size = input.readLong(); val modified = if (input.readBoolean()) input.readLong() else null
             EvidenceAnalysisFolder(ref, SourcePrecondition(size, modified, input.readUTF(), input.readInt()))
@@ -61,7 +63,7 @@ class EvidenceAnalysisStore(private val directory: File) {
             EvidenceAnalysisSource(FileRecord(stableRef = ref, displayName = name, extension = extension, mimeType = mime,
                 absolutePathOrUri = ref, parentRef = parent, sizeBytes = size, createdAt = null, modifiedAt = modified,
                 lastScannedAt = 0, isDirectory = false, isHidden = name.startsWith('.')), root, folder)
-        }, folders, automatic).also { it.validate() }
+        }, folders, automatic, observedRevision).also { it.validate() }
     }
     @Synchronized fun latest(): EvidenceAnalysisProgress? {
         if (!File(directory, "latest").exists()) return null

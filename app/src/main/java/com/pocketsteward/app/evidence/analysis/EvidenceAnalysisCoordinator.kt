@@ -36,10 +36,10 @@ class EvidenceAnalysisCoordinator(private val context: Context, scope: Coroutine
     } } } }
 
     suspend fun start(sources: List<EvidenceAnalysisSource>, mode: StorageAccessMode, grant: String?, images: Boolean, content: Boolean, retryUnavailable: Boolean = false,
-        folders: List<EvidenceAnalysisFolder> = emptyList(), automatic: Boolean = false): String = withContext(Dispatchers.IO) {
+        folders: List<EvidenceAnalysisFolder> = emptyList(), automatic: Boolean = false, observedRevision: String? = null): String = withContext(Dispatchers.IO) {
         admission.withLock {
             val old = runCatching { store.latest() }.getOrNull()
-            val request = EvidenceAnalysisRequest(UUID.randomUUID().toString(), mode, grant, images, content, retryUnavailable, sources.sortedBy { it.record.stableRef }, folders, automatic)
+            val request = EvidenceAnalysisRequest(UUID.randomUUID().toString(), mode, grant, images, content, retryUnavailable, sources.sortedBy { it.record.stableRef }, folders, automatic, observedRevision)
             request.validate()
             // Automatic refresh never replaces a paused/failed/manual job or repeats an unchanged inventory.
             if (automatic && old != null && (old.status != EvidenceAnalysisStatus.COMPLETED || request.sameInventoryAs(store.request(old.id)))) return@withLock old.id

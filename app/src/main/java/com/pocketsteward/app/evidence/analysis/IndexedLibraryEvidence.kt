@@ -40,5 +40,6 @@ suspend fun AppContainer.analyzeIndexedLibrary(retryUnavailable: Boolean = false
     if (sources.isEmpty() && automatic) return@withContext null
     require(sources.isNotEmpty()) { "No eligible indexed files yet. Refresh the library inventory first." }
     evidenceAnalysis.start(sources.values.toList(), mode, access.safTreeUri.takeIf { mode == StorageAccessMode.SAF },
-        privacy.imageAnalysisEnabled, privacy.contentInspectionEnabled, retryUnavailable, automatic = automatic)
+        privacy.imageAnalysisEnabled, privacy.contentInspectionEnabled, retryUnavailable, automatic = automatic,
+        observedRevision = observedEvidence.inventoryRevision())
 }

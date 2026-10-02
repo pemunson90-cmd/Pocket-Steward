@@ -7,11 +7,15 @@ import com.pocketsteward.app.storage.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
 import java.lang.reflect.Proxy
+import java.io.File
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import org.junit.Test
 
 class ContentIndexFreshnessTest {
-    private class Fixture {
-        var bytes = "Project: Lilith".toByteArray()
+    @get:Rule val temporary = TemporaryFolder()
+    private class Fixture(initial: ByteArray = "Project: Lilith".toByteArray(), revision: (String) -> String? = { null }) {
+        var bytes = initial
         val record = FileRecord(stableRef = "/Downloads/a.txt", displayName = "a.txt", extension = "txt", mimeType = "text/plain",
             absolutePathOrUri = "/Downloads/a.txt", parentRef = "/Downloads", sizeBytes = bytes.size.toLong(),
             createdAt = null, modifiedAt = 100, lastScannedAt = 100, isDirectory = false, isHidden = false)
@@ -42,7 +46,7 @@ class ContentIndexFreshnessTest {
                 else -> error(name)
             }
         }
-        val repository = ContentIndexRepository(dao, ContentInspector(gateway), inspectionAllowed = { allowed })
+        val repository = ContentIndexRepository(dao, ContentInspector(gateway, observedRevision = revision), inspectionAllowed = { allowed })
         suspend fun inspect() = repository.ensureDocument(ContentIndexCandidate(record, "/Downloads"))
     }
     @Test fun unchangedDocumentUsesCacheAfterVerifyingSource() = runTest {
@@ -112,6 +116,18 @@ class ContentIndexFreshnessTest {
         assertThat(f.segments.joinToString { it.body }).contains("NSTL")
         assertThat(f.segments.joinToString { it.body }).doesNotContain("Lilith")
         assertThat(f.record.quickFingerprint).isNull() // Duplicate fingerprints are never overwritten.
+    }
+    @Test fun anObservedWriteOutsideTheByteSampleReplacesIndexedTextWithoutChangingMetadata() = runTest {
+        val revisions = com.pocketsteward.app.evidence.ObservedEvidenceStore(File(temporary.newFolder(), "revisions"))
+        val bytes = ("x".repeat(5000) + "Project: Lilith" + "x".repeat(5000)).toByteArray()
+        val f = Fixture(bytes, revisions::revision)
+        f.inspect()
+        f.bytes = String(bytes).replace("Project: Lilith", "Project: NSTL!!").toByteArray()
+        assertThat(f.inspect().reused).isTrue() // The bounded prefix and size/date are unchanged.
+        revisions.observe(setOf(f.record.stableRef))
+        assertThat(f.inspect().reused).isFalse()
+        assertThat(f.segments.joinToString { it.body }).contains("NSTL")
+        assertThat(f.segments.joinToString { it.body }).doesNotContain("Lilith")
     }
     @Test fun byteChangeDuringExtractionWithUnchangedMetadataCannotPublishText() = runTest {
         val f = Fixture()

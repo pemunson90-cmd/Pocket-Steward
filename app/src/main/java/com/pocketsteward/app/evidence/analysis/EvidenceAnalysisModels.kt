@@ -18,10 +18,12 @@ data class EvidenceAnalysisRequest(
     val sources: List<EvidenceAnalysisSource>,
     val folders: List<EvidenceAnalysisFolder> = emptyList(),
     val automatic: Boolean = false,
+    val observedRevision: String? = null,
 ) {
     fun validate() {
         require(UUID.fromString(id).toString() == id)
         require(images || content)
+        require(observedRevision == null || observedRevision.matches(Regex("[a-f0-9-]{36}:[0-9]{1,19}")))
         require(sources.size in 1..100_000)
         require(sources.map { it.record.stableRef }.distinct().size == sources.size)
         require(sources.all { it.sourceRoot.isNotBlank() && it.record.stableRef.isNotBlank() && !it.record.isDirectory && it.record.sizeBytes >= 0 })
@@ -34,7 +36,7 @@ data class EvidenceAnalysisRequest(
     }
 
     fun sameInventoryAs(other: EvidenceAnalysisRequest): Boolean = mode == other.mode && grant == other.grant &&
-        images == other.images && content == other.content && folders == other.folders && sources.size == other.sources.size &&
+        images == other.images && content == other.content && observedRevision == other.observedRevision && folders == other.folders && sources.size == other.sources.size &&
         sources.zip(other.sources).all { (a, b) -> a.sourceRoot == b.sourceRoot && a.folderUnitRef == b.folderUnitRef &&
             a.record.stableRef == b.record.stableRef && a.record.displayName == b.record.displayName && a.record.extension == b.record.extension &&
             a.record.mimeType == b.record.mimeType && a.record.parentRef == b.record.parentRef && a.record.sizeBytes == b.record.sizeBytes &&
