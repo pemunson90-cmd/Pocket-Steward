@@ -30,13 +30,24 @@ class ContentIndexRepository(
     private val dao: ContentIndexDao,
     private val inspector: ContentInspector,
     private val inspectionAllowed: suspend () -> Boolean = { true },
+    private val coordination: ContentIndexCoordination = ContentIndexCoordination.Shared,
 ) {
     private companion object {
         const val STATE_CHECKPOINT_INTERVAL = 25
     }
 
+    internal fun lifecycleEpoch(): Long = coordination.epoch()
+
     /** Enrich one observed document without pruning unrelated rows or claiming a whole root is indexed. */
     suspend fun ensureDocument(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget = com.pocketsteward.app.content.ContentInspectionBudget.FULL): ContentIndexInspection {
+        val epoch = coordination.epoch()
+        return inspectAtEpoch(candidate, budget, epoch)
+    }
+
+    private suspend fun inspectAtEpoch(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget, epoch: Long): ContentIndexInspection =
+        coordination.document(candidate.record.stableRef, epoch) { ensureDocumentLocked(candidate, budget, epoch) }
+
+    private suspend fun ensureDocumentLocked(candidate: ContentIndexCandidate, budget: com.pocketsteward.app.content.ContentInspectionBudget, epoch: Long): ContentIndexInspection {
         currentCoroutineContext().ensureActive()
         if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
         var record = candidate.record
@@ -53,7 +64,7 @@ class ContentIndexRepository(
         }
         if (freshnessFailure == null && ContentIndexPolicy.canReuse(existing, record, budget.profile)) {
             if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
-            dao.putScope(IndexedDocumentScope(record.stableRef, root))
+            coordination.commit(epoch) { dao.putScope(IndexedDocumentScope(record.stableRef, root)) }
             return ContentIndexInspection(requireNotNull(existing), reused = true)
         }
         val extraction = if (freshnessFailure != null) ContentExtraction.Failed(freshnessFailure) else {
@@ -79,7 +90,7 @@ class ContentIndexRepository(
         }.copy(extractionProfile = budget.profile, coverageComplete = extraction is ContentExtraction.Text && !extraction.truncated)
         currentCoroutineContext().ensureActive()
         if (!inspectionAllowed()) throw CancellationException("Content inspection is off.")
-        dao.replaceDocument(document, segments)
+        coordination.commit(epoch) { dao.replaceDocument(document, segments) }
         return ContentIndexInspection(document, reused = false)
     }
 
@@ -126,6 +137,7 @@ class ContentIndexRepository(
         sourceRoots: List<String>,
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> },
     ): ContentIndexRefreshSummary {
+        val epoch = coordination.epoch()
         val normalizedRoots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
         require(normalizedRoots.isNotEmpty()) { "Content index refresh needs at least one source root." }
 
@@ -141,11 +153,11 @@ class ContentIndexRepository(
             val indexedRefs = dao.getStableRefsForRoot(root)
             for (stale in indexedRefs) {
                 if (stale !in currentRefs) {
-                    dao.removeFromRoot(stale, root)
+                    coordination.commit(epoch) { dao.removeFromRoot(stale, root) }
                     removedStale++
                 }
             }
-            dao.putState(
+            saveState(epoch,
                 ContentIndexState(
                     sourceRoot = root,
                     eligibleCount = byRoot[root].orEmpty().size,
@@ -172,7 +184,9 @@ class ContentIndexRepository(
             currentCoroutineContext().ensureActive()
             val record = candidate.record
             val root = candidate.sourceRoot.trimEnd('/')
-            val inspection = ensureDocument(candidate)
+            coordination.check(epoch)
+            val inspection = inspectAtEpoch(candidate, com.pocketsteward.app.content.ContentInspectionBudget.FULL, epoch)
+            coordination.check(epoch)
             if (inspection.reused) reused++ else when (inspection.document.extractionStatus) {
                 IndexedExtractionStatus.INDEXED.name -> extracted++
                 IndexedExtractionStatus.UNSUPPORTED.name -> unsupported++
@@ -181,7 +195,7 @@ class ContentIndexRepository(
 
             processed++
             processedByRoot[root] = (processedByRoot[root] ?: 0) + 1
-            dao.putState(
+            saveState(epoch,
                 ContentIndexState(
                     sourceRoot = root,
                     eligibleCount = byRoot[root].orEmpty().size,
@@ -197,7 +211,7 @@ class ContentIndexRepository(
 
         for (root in normalizedRoots) {
             val state = dao.getState(root)
-            dao.putState(
+            saveState(epoch,
                 ContentIndexState(
                     sourceRoot = root,
                     eligibleCount = byRoot[root].orEmpty().size,
@@ -221,51 +235,65 @@ class ContentIndexRepository(
     }
 
     suspend fun queueRoot(sourceRoot: String, eligibleCount: Int): ContentIndexJob {
-        val root = sourceRoot.trimEnd('/')
-        require(root.isNotBlank()) { "Content index queue needs a source root." }
-        val now = System.currentTimeMillis()
-        val current = dao.getJob(root)
-        val resumable = current != null &&
-            current.extractorVersion == ContentIndexPolicy.EXTRACTOR_VERSION &&
-            current.status in setOf(
-                ContentIndexJobStatus.QUEUED.name,
-                ContentIndexJobStatus.RUNNING.name,
-                ContentIndexJobStatus.PAUSED.name,
-            )
+        val epoch = coordination.epoch()
+        return coordination.commit(epoch) {
+            val root = sourceRoot.trimEnd('/')
+            require(root.isNotBlank()) { "Content index queue needs a source root." }
+            val now = System.currentTimeMillis()
+            val current = dao.getJob(root)
+            val resumable = current != null &&
+                current.extractorVersion == ContentIndexPolicy.EXTRACTOR_VERSION &&
+                current.status in setOf(
+                    ContentIndexJobStatus.QUEUED.name,
+                    ContentIndexJobStatus.RUNNING.name,
+                    ContentIndexJobStatus.PAUSED.name,
+                )
 
-        val job = if (resumable) {
-            current!!.copy(
-                eligibleCount = eligibleCount,
-                updatedAt = now,
-                error = null,
-            )
-        } else {
-            ContentIndexJob(
-                sourceRoot = root,
-                status = ContentIndexJobStatus.QUEUED.name,
-                cursorRef = null,
-                eligibleCount = eligibleCount,
-                processedCount = 0,
-                reused = 0,
-                extracted = 0,
-                unsupported = 0,
-                failed = 0,
-                removedStale = 0,
-                startedAt = now,
-                updatedAt = now,
-                extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
-                error = null,
-            )
+            val job = if (resumable) {
+                current!!.copy(
+                    eligibleCount = eligibleCount,
+                    updatedAt = now,
+                    error = null,
+                )
+            } else {
+                ContentIndexJob(
+                    sourceRoot = root,
+                    status = ContentIndexJobStatus.QUEUED.name,
+                    cursorRef = null,
+                    eligibleCount = eligibleCount,
+                    processedCount = 0,
+                    reused = 0,
+                    extracted = 0,
+                    unsupported = 0,
+                    failed = 0,
+                    removedStale = 0,
+                    startedAt = now,
+                    updatedAt = now,
+                    extractorVersion = ContentIndexPolicy.EXTRACTOR_VERSION,
+                    error = null,
+                )
+            }
+            coordination.check(epoch)
+            dao.putJob(job)
+            job
         }
-        dao.putJob(job)
-        return job
     }
 
     suspend fun refreshRootResumable(
         candidates: List<ContentIndexCandidate>,
         sourceRoot: String,
         shouldPause: () -> Boolean = { false },
+        epoch: Long = coordination.epoch(),
         onProgress: (ContentIndexJob) -> Unit = {},
+    ): ContentIndexJob {
+        return coordination.root(sourceRoot, epoch) {
+            refreshRootLocked(candidates, sourceRoot, shouldPause, onProgress, epoch)
+        }
+    }
+
+    private suspend fun refreshRootLocked(
+        candidates: List<ContentIndexCandidate>, sourceRoot: String,
+        shouldPause: () -> Boolean, onProgress: (ContentIndexJob) -> Unit, epoch: Long,
     ): ContentIndexJob {
         val root = sourceRoot.trimEnd('/')
         require(root.isNotBlank()) { "Content index refresh needs a source root." }
@@ -312,32 +340,27 @@ class ContentIndexRepository(
             )
         }
 
-        var startIndex = 0
-        if (resumable && job.cursorRef != null) {
-            val cursor = job.cursorRef!!
-            startIndex = sorted.indexOfFirst { it.record.stableRef > cursor }
-                .let { if (it < 0) sorted.size else it }
-        }
+        // Reconcile the current manifest from the beginning. Verified cache entries avoid extraction;
+        // the old lexical cursor cannot prove that earlier files were neither added nor changed.
+        job = job.copy(cursorRef = null, processedCount = 0, reused = 0, extracted = 0, unsupported = 0, failed = 0)
 
-        if (startIndex == 0) {
-            val currentRefs = sorted.mapTo(hashSetOf()) { it.record.stableRef }
-            val indexedRefs = dao.getStableRefsForRoot(root)
-            var removed = 0
-            for (stale in indexedRefs) {
-                if (stale !in currentRefs) {
-                    dao.removeFromRoot(stale, root)
-                    removed++
-                }
+        val currentRefs = sorted.mapTo(hashSetOf()) { it.record.stableRef }
+        val indexedRefs = dao.getStableRefsForRoot(root)
+        var removed = 0
+        for (stale in indexedRefs) {
+            if (stale !in currentRefs) {
+                coordination.commit(epoch) { dao.removeFromRoot(stale, root) }
+                removed++
             }
-            job = job.copy(removedStale = removed)
         }
+        job = job.copy(removedStale = removed)
 
-        dao.putJob(job)
-        dao.putState(
+        saveJob(epoch, job)
+        saveState(epoch,
             ContentIndexState(
                 sourceRoot = root,
                 eligibleCount = sorted.size,
-                processedCount = startIndex,
+                processedCount = 0,
                 completed = false,
                 startedAt = job.startedAt,
                 updatedAt = System.currentTimeMillis(),
@@ -346,7 +369,7 @@ class ContentIndexRepository(
         )
         onProgress(job)
 
-        for (index in startIndex until sorted.size) {
+        for (index in sorted.indices) {
             currentCoroutineContext().ensureActive()
 
             if (shouldPause()) {
@@ -354,14 +377,16 @@ class ContentIndexRepository(
                     status = ContentIndexJobStatus.PAUSED.name,
                     updatedAt = System.currentTimeMillis(),
                 )
-                dao.putJob(job)
+                saveJob(epoch, job)
                 onProgress(job)
                 return job
             }
 
             val candidate = sorted[index]
             val record = candidate.record
-            val inspection = ensureDocument(candidate)
+            coordination.check(epoch)
+            val inspection = inspectAtEpoch(candidate, com.pocketsteward.app.content.ContentInspectionBudget.FULL, epoch)
+            coordination.check(epoch)
             job = when {
                 inspection.reused -> job.copy(reused = job.reused + 1)
                 inspection.document.extractionStatus == IndexedExtractionStatus.INDEXED.name -> job.copy(extracted = job.extracted + 1)
@@ -379,10 +404,10 @@ class ContentIndexRepository(
             // Cursor durability is intentionally file-granular. A service
             // timeout can therefore repeat at most the current file, never
             // lose an entire folder's indexing progress.
-            dao.putJob(job)
+            saveJob(epoch, job)
 
             if ((index + 1) % STATE_CHECKPOINT_INTERVAL == 0 || index == sorted.lastIndex) {
-                dao.putState(
+                saveState(epoch,
                     ContentIndexState(
                         sourceRoot = root,
                         eligibleCount = sorted.size,
@@ -403,8 +428,8 @@ class ContentIndexRepository(
             updatedAt = System.currentTimeMillis(),
             error = null,
         )
-        dao.putJob(job)
-        dao.putState(
+        saveJob(epoch, job)
+        saveState(epoch,
             ContentIndexState(
                 sourceRoot = root,
                 eligibleCount = sorted.size,
@@ -419,18 +444,23 @@ class ContentIndexRepository(
         return job
     }
 
-    suspend fun markPaused(sourceRoot: String, reason: String? = null) {
-        val root = sourceRoot.trimEnd('/')
-        val current = dao.getJob(root) ?: return
-        if (current.status == ContentIndexJobStatus.COMPLETED.name) return
-        dao.putJob(
-            current.copy(
-                status = ContentIndexJobStatus.PAUSED.name,
-                updatedAt = System.currentTimeMillis(),
-                error = reason?.take(500),
-            ),
-        )
+    suspend fun markPaused(sourceRoot: String, reason: String? = null, epoch: Long = coordination.epoch()) {
+        coordination.pause(sourceRoot, epoch) {
+            val root = sourceRoot.trimEnd('/')
+            val current = dao.getJob(root) ?: return@pause
+            if (current.status == ContentIndexJobStatus.COMPLETED.name) return@pause
+            dao.putJob(
+                current.copy(
+                    status = ContentIndexJobStatus.PAUSED.name,
+                    updatedAt = System.currentTimeMillis(),
+                    error = reason?.take(500),
+                ),
+            )
+        }
     }
+
+    private suspend fun saveJob(epoch: Long, job: ContentIndexJob) = coordination.commit(epoch) { dao.putJob(job) }
+    private suspend fun saveState(epoch: Long, state: ContentIndexState) = coordination.commit(epoch) { dao.putState(state) }
 
     suspend fun jobs(sourceRoots: List<String>): List<ContentIndexJob> {
         val roots = sourceRoots.map { it.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
@@ -492,7 +522,7 @@ class ContentIndexRepository(
         rootCount = dao.countRoots(),
     )
 
-    suspend fun clear() = dao.clearAll()
+    suspend fun clear() = coordination.clear { dao.clearAll() }
 }
 
 private fun ContentExtraction.Text.toSegments(stableRef: String): List<IndexedSegment> {

@@ -17,13 +17,14 @@ plugins {
 android {
     namespace = "com.pocketsteward.app"
     compileSdk = 36
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.pocketsteward.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 54
-        versionName = "1.4.0-dev14"
+        versionCode = 55
+        versionName = "1.4.0-dev15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -60,6 +61,7 @@ android {
         debug {
             isDebuggable = true
             canonicalDevelopmentSigning?.let { signingConfig = it }
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         }
     }
 
@@ -70,6 +72,13 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     packaging {

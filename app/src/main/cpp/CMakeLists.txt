@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(pocketsteward_fs C)
+add_library(pocketsteward_fs SHARED no_replace_move.c)
+target_compile_options(pocketsteward_fs PRIVATE -Wall -Wextra -Werror -fstack-protector-strong)
+target_link_options(pocketsteward_fs PRIVATE "-Wl,-z,max-page-size=16384")

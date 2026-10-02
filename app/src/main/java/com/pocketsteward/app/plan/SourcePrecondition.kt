@@ -6,6 +6,8 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.security.MessageDigest
 import java.nio.ByteBuffer
 import java.nio.file.Files
@@ -60,6 +62,7 @@ object SourcePreconditions {
         var entries = 0
         var bytes = 0L
         while (pending.isNotEmpty()) {
+            currentCoroutineContext().ensureActive()
             val (directory, relative) = pending.removeFirst()
             require(visited.add(directory.rawValue())) { "Folder contains a repeated directory; review cannot be completed." }
             if (directory is FileRef.Direct) {
@@ -67,6 +70,7 @@ object SourcePreconditions {
             }
             val children = gateway.listChildren(directory).sortedBy { it.displayName }
             for (child in children) {
+                currentCoroutineContext().ensureActive()
                 require(++entries <= 100_000) { "Folder has too many entries for one reviewed move; choose a smaller folder." }
                 if (child.ref is FileRef.Direct) {
                     require(!Files.isSymbolicLink(Paths.get(child.ref.absolutePath))) { "Folder contains a symbolic link; review it separately." }

@@ -52,7 +52,7 @@ class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val agentModel: AgentModel,
     private val loadContentIndexOverview: suspend () -> ContentIndexOverview,
-    private val clearContentIndexCache: () -> Boolean,
+    private val clearContentIndexCache: suspend () -> Boolean,
     private val applyScheduledCleanup: (ScheduledCleanupSettings) -> Unit,
     private val loadRuntimeDiagnostics: suspend () -> RuntimeDiagnosticsSnapshot,
     private val loadLibraryStatus: suspend () -> com.pocketsteward.app.library.LibraryStatus =

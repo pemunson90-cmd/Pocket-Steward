@@ -19,4 +19,12 @@ class ScanLocks {
     fun isBusy(key: String): Boolean = lockFor(key).isLocked
 
     suspend fun <T> withScanLock(key: String, block: suspend () -> T): T = lockFor(key).withLock { block() }
+
+    /** A retiring runner must not wait for, or change, another runner's checkpoint. */
+    suspend fun withScanLockIfAvailable(key: String, block: suspend () -> Unit): Boolean {
+        val lock = lockFor(key)
+        if (!lock.tryLock()) return false
+        try { block() } finally { lock.unlock() }
+        return true
+    }
 }

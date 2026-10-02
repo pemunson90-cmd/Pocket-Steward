@@ -76,13 +76,22 @@ class FileTaskForegroundService : Service() {
                 }
                 activeTaskRunId = taskRunId
                 pauseRequested.set(false)
-                startForegroundCompat(
+                try { startForegroundCompat(
                     buildNotification(
                         title = "Pocket Steward is working",
                         text = "Recovering task state…",
                         indeterminate = true,
                     ),
-                )
+                ) } catch (_: IllegalStateException) {
+                    runCatching { container.enqueueFileTaskFallback(taskRunId) }
+                    activeTaskRunId = null
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                } catch (_: SecurityException) {
+                    activeTaskRunId = null
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
                 runningJob = serviceScope.launch {
                     runTask(taskRunId, startId)
                 }

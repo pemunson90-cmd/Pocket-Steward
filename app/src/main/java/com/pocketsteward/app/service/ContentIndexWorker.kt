@@ -30,6 +30,7 @@ class ContentIndexWorker(
             ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
             ?: StorageAccessMode.DIRECT
         val repository = container.contentIndexRepository(mode)
+        val epoch = repository.lifecycleEpoch()
         var activeRoot: String? = null
 
         return try {
@@ -44,6 +45,7 @@ class ContentIndexWorker(
                     candidates = candidates,
                     sourceRoot = root,
                     shouldPause = { isStopped },
+                    epoch = epoch,
                 )
                 if (finalJob.status == ContentIndexJobStatus.PAUSED.name || isStopped) break
             }
@@ -52,24 +54,25 @@ class ContentIndexWorker(
         } catch (cancel: CancellationException) {
             withContext(NonCancellable) {
                 activeRoot?.let {
-                    repository.markPaused(it, "Background indexing was interrupted and can resume.")
+                    runCatching { repository.markPaused(it, "Background indexing was interrupted and can resume.", epoch) }
                 }
             }
             throw cancel
         } catch (security: SecurityException) {
             withContext(NonCancellable) {
                 activeRoot?.let {
-                    repository.markPaused(
+                    runCatching { repository.markPaused(
                         it,
                         "Storage access is unavailable. Restore access to resume indexing.",
-                    )
+                        epoch,
+                    ) }
                 }
             }
             Result.failure()
         } catch (t: Throwable) {
             withContext(NonCancellable) {
                 activeRoot?.let {
-                    repository.markPaused(it, t.message ?: "Background indexing stopped.")
+                    runCatching { repository.markPaused(it, t.message ?: "Background indexing stopped.", epoch) }
                 }
             }
             if (BackgroundWorkPolicy.shouldRetry(runAttemptCount)) {

@@ -108,6 +108,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -217,48 +220,50 @@ internal fun ScanViewModel.watchIndexedSearch(
 ) {
     indexSearchWatchJob?.cancel()
     indexSearchWatchJob = viewModelScope.launch {
-        val repository = container.contentIndexRepository(mode)
-        while (true) {
-            delay(1_000)
+        try {
+            val repository = container.contentIndexRepository(mode)
+            while (true) {
+                delay(1_000)
 
-            val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: break
-            if (current.query != query) break
+                val current = _review.value as? ScanUiState.IndexedContentSearchReview ?: break
+                if (current.query != query) break
 
-            val jobs = withContext(Dispatchers.IO) { repository.jobs(roots) }
-            val rows = withContext(Dispatchers.IO) {
-                repository.search(query = query, sourceRoots = roots)
-            }
-            val grouped = withContext(Dispatchers.Default) {
-                ContentSearchView.group(rows, query)
-            }
-            val states = withContext(Dispatchers.IO) {
-                roots.mapNotNull { repository.state(it) }
-            }
-            val refresh = withContext(Dispatchers.IO) {
-                repository.jobSummary(roots)
-            }
-
-            _review.value = current.copy(
-                allResults = grouped,
-                refreshSummary = refresh,
-                indexStates = states,
-                indexJobs = jobs,
-            )
-
-            val terminal = jobs.isNotEmpty() && jobs.all { job ->
-                job.status in setOf(
-                    ContentIndexJobStatus.COMPLETED.name,
-                    ContentIndexJobStatus.PAUSED.name,
-                    ContentIndexJobStatus.FAILED.name,
-                )
-            }
-            if (terminal) {
-                if (savedSearchId != null) {
-                    settingsRepository.touchSavedSearch(savedSearchId, grouped.size)
+                val jobs = withContext(Dispatchers.IO) { repository.jobs(roots) }
+                val rows = withContext(Dispatchers.IO) {
+                    repository.search(query = query, sourceRoots = roots)
                 }
-                break
+                val grouped = withContext(Dispatchers.Default) {
+                    ContentSearchView.group(rows, query)
+                }
+                val states = withContext(Dispatchers.IO) {
+                    roots.mapNotNull { repository.state(it) }
+                }
+                val refresh = withContext(Dispatchers.IO) {
+                    repository.jobSummary(roots)
+                }
+
+                currentCoroutineContext().ensureActive()
+                val update = current.copy(allResults = grouped, refreshSummary = refresh, indexStates = states, indexJobs = jobs)
+                _review.update { latest ->
+                    mergeIndexedSearchUpdate(current, latest, update)
+                }
+
+                val terminal = jobs.isNotEmpty() && jobs.all { job ->
+                    job.status in setOf(
+                        ContentIndexJobStatus.COMPLETED.name,
+                        ContentIndexJobStatus.PAUSED.name,
+                        ContentIndexJobStatus.FAILED.name,
+                    )
+                }
+                if (terminal) {
+                    if (savedSearchId != null) {
+                        settingsRepository.touchSavedSearch(savedSearchId, grouped.size)
+                    }
+                    break
+                }
             }
-        }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (failure: Exception) { _error.value = "Content search stopped: ${failure.message ?: "refresh the search to retry"}" }
     }
 }
 

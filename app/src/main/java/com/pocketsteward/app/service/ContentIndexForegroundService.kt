@@ -38,10 +38,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * cursor after every file so Android timeouts/process death can resume.
  */
 class ContentIndexForegroundService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val pauseRequested = AtomicBoolean(false)
     private var runningJob: Job? = null
     private var activeRoot: String? = null
+    private val requests = com.pocketsteward.app.content.index.ContentIndexRequestQueue()
+    private var latestStartId = 0
 
     private val container
         get() = (application as PocketStewardApplication).container
@@ -54,8 +56,10 @@ class ContentIndexForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         when (intent?.action) {
             ACTION_PAUSE -> {
+                if (runningJob?.isActive != true) { stopSelf(startId); return START_NOT_STICKY }
                 pauseRequested.set(true)
                 updateNotification(
                     title = "Pausing content indexing",
@@ -75,100 +79,91 @@ class ContentIndexForegroundService : Service() {
                     stopSelf(startId)
                     return START_NOT_STICKY
                 }
-                if (runningJob?.isActive == true) return START_NOT_STICKY
-
-                pauseRequested.set(false)
-                startForegroundCompat(
-                    buildNotification(
-                        title = "Pocket Steward is indexing",
-                        text = "Preparing searchable document content…",
-                        indeterminate = true,
-                    ),
-                )
                 val mode = intent.getStringExtra(EXTRA_MODE)
                     ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
                     ?: StorageAccessMode.DIRECT
-                runningJob = scope.launch {
-                    runRoots(roots, mode, startId)
+                requests.add(roots, mode)
+                if (runningJob?.isActive == true) return START_NOT_STICKY
+                pauseRequested.set(false)
+                try {
+                    startForegroundCompat(buildNotification("Pocket Steward is indexing", "Preparing searchable document content…", indeterminate = true))
+                } catch (_: IllegalStateException) {
+                    requests.drain().groupBy { it.mode }.forEach { (queuedMode, pending) ->
+                        runCatching { container.enqueueContentIndexFallback(pending.map { it.root }, queuedMode) }
+                    }
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                } catch (_: SecurityException) {
+                    requests.drain()
+                    stopSelf(startId)
+                    return START_NOT_STICKY
                 }
+                runningJob = scope.launch { runRoots() }
             }
         }
         return START_NOT_STICKY
     }
 
-    private suspend fun runRoots(
-        roots: List<String>,
-        mode: StorageAccessMode,
-        startId: Int,
-    ) {
-        val repository = container.contentIndexRepository(mode)
+    private suspend fun runRoots() {
+        var repository: com.pocketsteward.app.content.index.ContentIndexRepository? = null
+        var activeEpoch = 0L
         try {
-            var rootsCompleted = 0
-            for (root in roots) {
-                if (pauseRequested.get()) break
-                activeRoot = root
-
-                val records = container.database.fileRecordDao()
-                    .getFilesUnderScopeRoot(root)
-                val candidates = records.map { record ->
-                    ContentIndexCandidate(record = record, sourceRoot = root)
+            while (!pauseRequested.get()) {
+                val request = requests.take() ?: break
+                activeRoot = request.root
+                val currentRepository = container.contentIndexRepository(request.mode)
+                repository = currentRepository
+                activeEpoch = currentRepository.lifecycleEpoch()
+                val finalJob = withContext(Dispatchers.IO) {
+                    val records = container.database.fileRecordDao().getFilesUnderScopeRoot(request.root)
+                    currentRepository.refreshRootResumable(records.map { ContentIndexCandidate(it, request.root) }, request.root, pauseRequested::get, epoch = activeEpoch) { job ->
+                        updateNotification(
+                            title = if (pauseRequested.get()) "Pausing content indexing" else "Indexing ${request.root.substringAfterLast('/').ifBlank { "files" }}",
+                            text = "${job.processedCount} of ${job.eligibleCount} files",
+                            completed = job.processedCount, total = job.eligibleCount,
+                        )
+                    }
                 }
-
-                val finalJob = repository.refreshRootResumable(
-                    candidates = candidates,
-                    sourceRoot = root,
-                    shouldPause = pauseRequested::get,
-                ) { job ->
-                    updateNotification(
-                        title = if (pauseRequested.get()) {
-                            "Pausing content indexing"
-                        } else {
-                            "Indexing ${root.substringAfterLast('/').ifBlank { "files" }}"
-                        },
-                        text = buildString {
-                            append("${job.processedCount} of ${job.eligibleCount} files")
-                            if (roots.size > 1) {
-                                append(" · folder ${rootsCompleted + 1} of ${roots.size}")
-                            }
-                        },
-                        completed = job.processedCount,
-                        total = job.eligibleCount,
-                    )
-                }
-
                 if (finalJob.status == ContentIndexJobStatus.PAUSED.name) break
-                rootsCompleted++
             }
-
             if (pauseRequested.get()) {
-                postTerminalNotification(
-                    title = "Content indexing paused",
-                    text = "Progress is saved and will resume at the next file.",
-                )
+                val queued = requests.drain()
+                withContext(Dispatchers.IO) {
+                    queued.forEach { container.contentIndexRepository(it.mode).markPaused(it.root, "Paused by you.") }
+                }
+                postTerminalNotification("Content indexing paused", "Progress is saved. Resume from Content search.")
             } else {
-                postTerminalNotification(
-                    title = "Content index ready",
-                    text = "Search can reuse indexed document contents.",
-                )
+                postTerminalNotification("Content index ready", "Search can reuse indexed document contents.")
             }
         } catch (cancel: CancellationException) {
-            withContext(NonCancellable) {
-                activeRoot?.let { repository.markPaused(it, "Indexing was interrupted and can resume.") }
+            withContext(NonCancellable + Dispatchers.IO) {
+                activeRoot?.let { root -> runCatching { repository?.markPaused(root, "Indexing was interrupted and can resume.", activeEpoch) } }
             }
+            pausePendingRoots("Indexing was interrupted and can resume.", activeEpoch)
             throw cancel
-        } catch (t: Throwable) {
-            withContext(NonCancellable) {
-                activeRoot?.let { repository.markPaused(it, t.message ?: "Indexing stopped.") }
+        } catch (failure: Exception) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                activeRoot?.let { root -> runCatching { repository?.markPaused(root, failure.message ?: "Indexing stopped.", activeEpoch) } }
             }
-            postTerminalNotification(
-                title = "Content indexing stopped",
-                text = "Progress was saved. It can resume later.",
-            )
+            pausePendingRoots("Indexing stopped and can resume.", activeEpoch)
+            postTerminalNotification("Content indexing stopped", "Progress was saved. It can resume later.")
         } finally {
+            // Admission and completion both run on Main: a new request cannot be lost between
+            // observing an empty queue and retiring the runner.
+            requests.drain()
             activeRoot = null
             runningJob = null
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf(startId)
+            stopSelf(latestStartId)
+        }
+    }
+
+    private suspend fun pausePendingRoots(reason: String, epoch: Long) {
+        val queued = requests.drain()
+        withContext(NonCancellable + Dispatchers.IO) {
+            queued.forEach { request ->
+                runCatching { container.contentIndexRepository(request.mode).markPaused(request.root, reason, epoch) }
+            }
         }
     }
 

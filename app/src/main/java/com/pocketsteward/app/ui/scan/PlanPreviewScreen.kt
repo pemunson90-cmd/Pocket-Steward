@@ -187,6 +187,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
             ) {
                 OutlinedButton(
                     onClick = viewModel::selectRecommendedPlanOperations,
+                    enabled = busy == null,
                     contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
                     Text(if (preview.filingPresentation != null) "Strong only" else "Safe only", maxLines = 1)
@@ -199,12 +200,14 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                             viewModel.selectAllPlanOperations()
                         }
                     },
+                    enabled = busy == null,
                     contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
                     Text("Select all", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = viewModel::clearPlanSelection,
+                    enabled = busy == null,
                     contentPadding = PaddingValues(horizontal = Spacing.tight),
                 ) {
                     Text("Clear", maxLines = 1)
@@ -275,6 +278,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                         items(projectGroups, key = { it.destinationPath }) { group ->
                             FilingDestinationCard(
                                 group = group,
+                                selectionEnabled = busy == null,
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
@@ -296,6 +300,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                         items(filing.checkpointGroups, key = { "checkpoint:${it.destinationPath}" }) { group ->
                             FilingDestinationCard(
                                 group = group,
+                                selectionEnabled = busy == null,
                                 preview = preview,
                                 sourceOperationIndices = sourceOperationIndices,
                                 onSetSelected = viewModel::setPlanOperationSelected,
@@ -427,6 +432,7 @@ fun PlanPreviewScreen(viewModel: ScanViewModel, onBack: () -> Unit) {
                                 ) {
                                     Checkbox(
                                         checked = selected,
+                                        enabled = busy == null,
                                         onCheckedChange = { checked ->
                                             viewModel.setPlanOperationSelected(index, checked)
                                         },
@@ -703,6 +709,7 @@ private fun FilingOverviewCard(filing: FilingReviewPresentation) {
 @Composable
 private fun FilingDestinationCard(
     group: com.pocketsteward.app.filing.FilingReviewGroup,
+    selectionEnabled: Boolean,
     preview: ScanUiState.PlanPreview,
     sourceOperationIndices: Map<String, Int>,
     onSetSelected: (Int, Boolean) -> Unit,
@@ -775,7 +782,7 @@ private fun FilingDestinationCard(
                             Checkbox(
                                 checked = checked,
                                 onCheckedChange = { value -> operationIndex?.let { onSetSelected(it, value) } },
-                                enabled = operationIndex != null,
+                                enabled = selectionEnabled && operationIndex != null,
                             )
                             FileVisual(name = item.displayName, isDirectory = item.isDirectory, location = item.sourceRef, size = 28.dp)
                             Column(modifier = Modifier.weight(1f)) {

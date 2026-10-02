@@ -17,7 +17,7 @@ class DuplicateDetectorCacheTest {
     @Test
     fun cachedQuickAndFullHashesAvoidAllFileReads() = runTest {
         val bytes = "same content".toByteArray()
-        val quick = "cached-quick"
+        val quick = "duplicate-window-v2:cached-quick"
         val full = "cached-sha"
         val a = record("/root/a.txt", bytes.size.toLong()).copy(
             quickFingerprint = quick,
@@ -39,6 +39,17 @@ class DuplicateDetectorCacheTest {
         assertThat(groups).hasSize(1)
         assertThat(groups.single().members).hasSize(2)
         assertThat(gateway.readCount).isEqualTo(0)
+    }
+
+    @Test
+    fun legacyShortReadFingerprintsAreRecomputed() = runTest {
+        val bytes = "same content".toByteArray()
+        val a = record("/root/a.txt", bytes.size.toLong()).copy(quickFingerprint = "old-one-byte-digest")
+        val b = record("/root/b.txt", bytes.size.toLong()).copy(quickFingerprint = "old-full-prefix-digest")
+        val gateway = CountingGateway(mapOf(FileRef.Direct(a.stableRef) to bytes, FileRef.Direct(b.stableRef) to bytes))
+
+        assertThat(DuplicateDetector(gateway).findDuplicates(listOf(a, b))).hasSize(1)
+        assertThat(gateway.readCount).isEqualTo(4)
     }
 
     @Test

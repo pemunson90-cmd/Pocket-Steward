@@ -5,6 +5,8 @@ import com.pocketsteward.app.data.db.FileRecordDao
 import com.pocketsteward.app.storage.StorageGateway
 import com.pocketsteward.app.storage.parseFileRef
 import java.security.MessageDigest
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /** Where the cascade currently is, for a UI that would otherwise show nothing for minutes. */
 data class DedupeProgress(val phase: String, val processed: Int, val total: Int)
@@ -88,16 +90,26 @@ class DuplicateDetector(
     }
 
     private suspend fun quickFingerprint(record: FileRecord): String {
-        record.quickFingerprint?.takeIf { it.isNotBlank() }?.let { return it }
+        record.quickFingerprint?.takeIf { it.startsWith(QUICK_PREFIX) }?.let { return it }
 
         val digest = MessageDigest.getInstance("SHA-256")
         val ref = parseFileRef(record.stableRef)
         gateway.openRead(ref).use { stream ->
             val buffer = ByteArray(QUICK_FINGERPRINT_BYTES)
-            val read = stream.read(buffer)
-            if (read > 0) digest.update(buffer, 0, read)
+            var count = 0
+            while (count < buffer.size) {
+                currentCoroutineContext().ensureActive()
+                val read = stream.read(buffer, count, buffer.size - count)
+                if (read < 0) break
+                if (read == 0) {
+                    val byte = stream.read()
+                    if (byte < 0) break
+                    buffer[count++] = byte.toByte()
+                } else count += read
+            }
+            digest.update(buffer, 0, count)
         }
-        val value = digest.digest().toHex()
+        val value = QUICK_PREFIX + digest.digest().toHex()
         if (stillSameIndexedFile(record, ref)) {
             fileRecordDao?.updateQuickFingerprint(record.stableRef, value)
         }
@@ -112,6 +124,7 @@ class DuplicateDetector(
         gateway.openRead(ref).use { stream ->
             val buffer = ByteArray(READ_CHUNK_BYTES)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val read = stream.read(buffer)
                 if (read <= 0) break
                 digest.update(buffer, 0, read)
@@ -152,6 +165,7 @@ class DuplicateDetector(
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private companion object {
+        const val QUICK_PREFIX = "duplicate-window-v2:"
         const val QUICK_FINGERPRINT_BYTES = 4096
         const val READ_CHUNK_BYTES = 64 * 1024
         const val PHASE_FINGERPRINT = "Fingerprinting"

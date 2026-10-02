@@ -496,6 +496,7 @@ class ScanViewModel(
     internal val _draftSaveStatus = MutableStateFlow("Restoring saved review…")
     val draftSaveStatus: StateFlow<String> = _draftSaveStatus
     internal val reviewDraftStore = ReviewDraftStore(File(container.appContextForUi.noBackupFilesDir, "review/last-draft.psreview"))
+    internal var selectionDependencies: PlanSelection.Dependencies? = null
     internal var filingEditJob: Job? = null
     internal var filingPlanningJob: Job? = null
     val hasActiveFilingWork: Boolean get() = filingPlanningJob?.isActive == true || filingEditJob?.isActive == true
@@ -578,7 +579,7 @@ class ScanViewModel(
      */
     private suspend fun routeToDestination(state: ScanUiState) {
         when (state) {
-            is ScanUiState.Idle -> Unit
+            is ScanUiState.Idle -> _busy.value = null
 
             is ScanUiState.Scanning -> {
                 _scanning.value = state.progress
@@ -674,6 +675,7 @@ class ScanViewModel(
     fun cancelFilingWork() {
         filingPlanningJob?.cancel()
         filingEditJob?.cancel()
+        _busy.value = null
         if (_uiState.value is ScanUiState.Working) _uiState.value = ScanUiState.Idle
     }
 
@@ -864,6 +866,7 @@ class ScanViewModel(
         _preview.value = null
         _review.value = null
         filingSession = null
+        selectionDependencies = null
         userScanCancellationRequested = false
 
         val job = viewModelScope.launch {
@@ -1299,24 +1302,17 @@ class ScanViewModel(
         operations: List<PlannedOperation>,
         sourceRefs: Set<String>,
     ): Set<Int> {
-        val selectedMoveDestinations = operations.mapIndexedNotNull { index, operation ->
-            when (operation) {
-                is PlannedOperation.Move -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
-                is PlannedOperation.Copy -> if (operation.source.rawValue() in sourceRefs) index to operation.destination.rawValue() else null
+        val indices = operations.mapIndexedNotNull { index, op ->
+            val source = when (op) {
+                is PlannedOperation.Move -> op.source
+                is PlannedOperation.Copy -> op.source
                 else -> null
             }
-        }
-        val selected = selectedMoveDestinations.mapTo(linkedSetOf()) { it.first }
-        val destinations = selectedMoveDestinations.map { it.second }
-        operations.forEachIndexed { index, operation ->
-            if (operation is PlannedOperation.CreateDirectory) {
-                val dir = operation.parent.child(operation.name).rawValue().trimEnd('/')
-                if (destinations.any { destination -> destination == dir || destination.startsWith("$dir/") }) {
-                    selected += index
-                }
-            }
-        }
-        return selected
+            index.takeIf { source?.rawValue() in sourceRefs }
+        }.toSet()
+        val graph = selectionDependencies?.takeIf { it.matches(operations) }
+            ?: PlanSelection.dependencies(operations).also { selectionDependencies = it }
+        return graph.includeParents(indices)
     }
 
     internal suspend fun showPlanPreview(
@@ -1552,6 +1548,7 @@ class ScanViewModel(
         cancelFilingWork()
         scanJob?.cancel()
         filingSession = null
+        selectionDependencies = null
         autoStarted = false
         entryCacheRestoreAttempted = true
         _summary.value = null

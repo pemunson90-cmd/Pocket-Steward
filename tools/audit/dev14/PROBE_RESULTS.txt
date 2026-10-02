@@ -1,0 +1,10 @@
+Source: a8c939cfd65b5b5f74b0bb06401cb24bb39da3f2 (dev14 app tree)
+Audit probes: 6 tests, 0 failures, 0 errors
+AUDIT duplicates: identical bytes, legal short-read stream => no duplicate group
+AUDIT cancel: actual job cancelled and event Idle; busy remains Planning
+AUDIT rename primitive: external destination was replaced after absence precheck (host filesystem)
+AUDIT checkbox files=1000 createDirs=800 milliseconds=[208, 100, 28]
+AUDIT checkbox files=4000 createDirs=800 milliseconds=[251, 93, 191]
+AUDIT checkbox files=16000 createDirs=800 milliseconds=[467, 358, 351]
+AUDIT resume: COMPLETED 3/3, a.txt was never indexed
+AUDIT concurrent cache: full job remains COMPLETED, content downgraded to FILING

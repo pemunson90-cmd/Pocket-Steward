@@ -160,8 +160,12 @@ class AppContainer(context: Context) {
             inspector = contentInspector(StorageAccessMode.DIRECT),
         ).overview()
 
-    fun clearContentIndex(): Boolean {
-        return ContentSearchDatabase.delete(appContext)
+    suspend fun clearContentIndex(): Boolean {
+        pauseContentIndexing()
+        com.pocketsteward.app.content.index.ContentIndexCoordination.Shared.clear {
+            ContentSearchDatabase.getInstance(appContext).contentIndexDao().clearAll()
+        }
+        return true
     }
 
     private val mutationRunnerGate = com.pocketsteward.app.executor.MutationRunnerGate()
@@ -234,7 +238,7 @@ class AppContainer(context: Context) {
         }
     }
 
-    private fun enqueueFileTaskFallback(taskRunId: Long) {
+    internal fun enqueueFileTaskFallback(taskRunId: Long) {
         val request = OneTimeWorkRequestBuilder<FileTaskWorker>()
             .setInputData(workDataOf(FileTaskWorker.KEY_TASK_RUN_ID to taskRunId))
             .setConstraints(BackgroundWorkPolicy.fileMutationConstraints())
@@ -294,7 +298,7 @@ class AppContainer(context: Context) {
         }
     }
 
-    private fun enqueueContentIndexFallback(roots: List<String>, mode: StorageAccessMode) {
+    internal fun enqueueContentIndexFallback(roots: List<String>, mode: StorageAccessMode) {
         val request = OneTimeWorkRequestBuilder<ContentIndexWorker>()
             .setInputData(
                 workDataOf(

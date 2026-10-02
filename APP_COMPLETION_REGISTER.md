@@ -1,10 +1,11 @@
 # Active completion register
 
-Updated 2026-10-01. [GOAL_APP_COMPLETION_SPEC.md](GOAL_APP_COMPLETION_SPEC.md) is the accepted build specification. This register records implementation and acceptance separately; a checkpoint release does not close the app-completion goal. Historical feature traceability remains in MASTER_PLAN_RECONCILIATION.md and APP_COMPLETION_PROGRESS.md.
+Updated 2026-10-02. [GOAL_APP_COMPLETION_SPEC.md](GOAL_APP_COMPLETION_SPEC.md) is the accepted build specification. This register records implementation and acceptance separately; a checkpoint release does not close the app-completion goal. Historical feature traceability remains in MASTER_PLAN_RECONCILIATION.md and APP_COMPLETION_PROGRESS.md.
 
 | Package | Current state | Remaining acceptance/work |
 |---|---|---|
 | REG-01 | Implemented | Keep this register current through the final acceptance matrix. |
+| AUDIT-01 | A01–A08 repairs implemented for dev15 | [Stabilization report](DEV15_STABILIZATION_REPORT.md): no-replace/exclusive destinations, cancellation/selection scaling, index admission/resume/concurrency, cache lifecycle and latest-review publication. Host regressions/native races verify repairs; physical crash/ANR/memory/lifecycle/filesystem acceptance remains open. |
 | SCALE-01 | Implemented for dev12 | Bounded 200-image/40-OCR admission, cached evidence, cancellation and failure fairness tested on the host JVM. Run actual Android ML/device checks. |
 | SCALE-02 | Implemented for dev12 | Continue/retry actions preserve intake, explicit assignments, release/home edits, deselections and original baselines. Checksummed private progress journal and matching draft revisions survive restart. Physical lifecycle acceptance remains open. |
 | SCALE-03 | Partly implemented | Cold/warm 1k/4k/16k engine/adaptor benchmarks with 200 homes; scanner/index/IO, memory and UI/device measurements remain open. |
@@ -24,6 +25,6 @@ Updated 2026-10-01. [GOAL_APP_COMPLETION_SPEC.md](GOAL_APP_COMPLETION_SPEC.md) i
 | MODEL-01 | Open | Optional connected edition, configured semantic providers/local runtimes, protected credentials and fallback. |
 | MEDIA-01 | Partly implemented before dev12 | Grounded local labels/OCR/descriptions exist; improved capabilities and optional richer caption backend remain. |
 | ACCEPT-01 | Open | All physical-phone rows in the accepted specification remain unverified. |
-| REL-01 | Published dev14 checkpoint | Local gates, canonical signing, verified app-tree publication and public ZIP/APK retrieval passed. Final whole-app acceptance/release remains open. |
+| REL-01 | Dev15 local gates passed; packaging underway | 669 unit tests, lint, debug/instrumentation assembly, native races, SQLite and release-tool checks passed. Canonical signing and verified publication follow. Final whole-app acceptance/release remains open. |
 
 AppFunctions remains conditionally deferred pending SDK/invocation maturity. A dedicated project database remains conditional on demonstrated need. Optional backend availability must be explained and tested; it does not replace deterministic organization.

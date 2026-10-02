@@ -7,6 +7,11 @@ import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * [StorageGateway] backed by direct java.io.File access under
@@ -118,15 +123,18 @@ class DirectStorageGateway(
             )
         }
         return try {
-            target.writeText(content)
+            Files.newOutputStream(target.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use {
+                it.write(content.toByteArray(Charsets.UTF_8))
+            }
             MutationResult.Success(FileRef.Direct(target.absolutePath), changed = true)
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
-            val removed = !target.exists() || target.delete()
             MutationResult.Failure(
                 buildString {
                     append(t.message ?: "Failed to write ${target.absolutePath}")
-                    if (!removed) {
-                        append(". A partial file remains and needs review: ${target.absolutePath}")
+                    if (target.exists()) {
+                        append(". The destination was preserved and needs review: ${target.absolutePath}")
                     }
                 },
                 t,
@@ -162,20 +170,20 @@ class DirectStorageGateway(
             )
         }
         return try {
-            sourceFile.copyTo(destinationFile, overwrite = false)
+            copyExclusively(sourceFile, destinationFile)
             val verified = destinationFile.length() == sourceFile.length() &&
                 sha256(sourceFile).contentEquals(sha256(destinationFile))
             if (!verified) {
-                destinationFile.delete()
                 MutationResult.Failure(
-                    "Copied file did not verify against the source; the destination was removed.",
+                    "Copied file did not verify against the source; both paths were preserved for review.",
                 )
             } else {
                 MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
             }
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
-            destinationFile.takeIf { it.exists() }?.delete()
-            MutationResult.Failure("Copy failed: ${t.message}", t)
+            MutationResult.Failure("Copy failed: ${t.message}. Any destination was preserved for review.", t)
         }
     }
 
@@ -211,6 +219,8 @@ class DirectStorageGateway(
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
         val destination = try {
             trashDestination(source)
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
             return MutationResult.Failure(t.message ?: "Could not resolve Trash destination", t)
         }
@@ -255,7 +265,7 @@ class DirectStorageGateway(
         DirectProtection.refusalDestination(Environment.getExternalStorageDirectory().absolutePath, destinationFile.absolutePath)
             ?.let { MutationResult.Failure(it) }
 
-    private fun moveFile(sourceFile: File, destinationFile: File): MutationResult {
+    private suspend fun moveFile(sourceFile: File, destinationFile: File): MutationResult {
         protectionFailure(sourceFile)?.let { return it }
         if (!sourceFile.exists()) return MutationResult.Failure("Source does not exist: ${sourceFile.absolutePath}")
         if (destinationFile.exists()) return MutationResult.Failure("Destination already exists: ${destinationFile.absolutePath}")
@@ -270,8 +280,14 @@ class DirectStorageGateway(
         }
         protectionFailureDestination(destinationFile)?.let { return it }
 
-        if (sourceFile.renameTo(destinationFile)) {
+        currentCoroutineContext().ensureActive()
+        val renameError = try { NoReplaceMove.move(sourceFile, destinationFile) }
+        catch (failure: java.io.IOException) { return MutationResult.Failure(failure.message ?: "Safe move unavailable.", failure) }
+        if (renameError == 0) {
             return MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
+        }
+        if (!NoReplaceMove.permitsCopyFallback(renameError)) {
+            return MutationResult.Failure("Move refused without replacing any destination (filesystem error $renameError). Both paths were preserved.")
         }
 
         if (sourceFile.isDirectory) {
@@ -289,20 +305,18 @@ class DirectStorageGateway(
             )
         }
 
-        // renameTo fails across filesystem boundaries (e.g. internal storage
-        // to an SD card) even when both are under MANAGE_EXTERNAL_STORAGE.
-        // Fall back to copy-verify-delete. The source is not removed until the
+        // A kernel no-replace rename may be unsupported or cross a filesystem boundary.
+        // Fall back to exclusive copy-verify-delete. The source is not removed until the
         // destination has the same byte length and SHA-256.
         return try {
-            sourceFile.copyTo(destinationFile, overwrite = false)
+            copyExclusively(sourceFile, destinationFile)
 
             val sizeMatches = sourceFile.length() == destinationFile.length()
             val hashMatches = sizeMatches &&
                 sha256(sourceFile).contentEquals(sha256(destinationFile))
             if (!hashMatches) {
-                destinationFile.delete()
                 return MutationResult.Failure(
-                    "Cross-volume copy could not be verified; the partial destination was removed and the source was kept.",
+                    "Cross-volume copy could not be verified; both paths were preserved for review.",
                 )
             }
 
@@ -315,31 +329,24 @@ class DirectStorageGateway(
                 )
             }
             protectionFailure(sourceFile)?.let { blocked ->
-                val removed = destinationFile.delete()
-                return if (removed) blocked else MutationResult.Failure(
-                    blocked.reason + " The verified destination copy remains; both files need review.")
+                return MutationResult.Failure(blocked.reason + " Both paths were preserved for review.")
             }
             if (!sourceFile.delete()) {
-                // Restore the pre-move shape if the provider/filesystem lets
-                // us. A failed move should not silently manufacture a second
-                // durable copy that the journal considers FAILED.
-                val rolledBack = destinationFile.delete()
+                // Preserve both paths for NEEDS_REVIEW; deleting by destination pathname
+                // could remove a file replaced by another app after verification.
                 return MutationResult.Failure(
-                    if (rolledBack) {
-                        "Copied and verified the destination but could not remove the original; the destination copy was removed and the source was kept."
-                    } else {
-                        "Copied and verified the destination but could not remove the original, and the destination copy could not be removed. Both paths now exist and need review."
-                    },
+                    "Copied and verified the destination but could not remove the original. Both paths were preserved for review.",
                 )
             }
             MutationResult.Success(FileRef.Direct(destinationFile.absolutePath))
+        } catch (cancel: CancellationException) {
+            throw cancel
         } catch (t: Throwable) {
-            val removed = !destinationFile.exists() || destinationFile.delete()
             MutationResult.Failure(
                 buildString {
                     append("Copy+verify+delete fallback failed: ${t.message}")
-                    if (!removed) {
-                        append(". A destination copy remains and needs review: ${destinationFile.absolutePath}")
+                    if (destinationFile.exists()) {
+                        append(". The destination was preserved and needs review: ${destinationFile.absolutePath}")
                     }
                 },
                 t,
@@ -347,11 +354,26 @@ class DirectStorageGateway(
         }
     }
 
-    private fun sha256(file: File): ByteArray {
+    private suspend fun copyExclusively(source: File, destination: File) {
+        Files.newOutputStream(destination.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { output ->
+            source.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count > 0) output.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    private suspend fun sha256(file: File): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered(64 * 1024).use { input ->
             val buffer = ByteArray(64 * 1024)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val read = input.read(buffer)
                 if (read <= 0) break
                 digest.update(buffer, 0, read)

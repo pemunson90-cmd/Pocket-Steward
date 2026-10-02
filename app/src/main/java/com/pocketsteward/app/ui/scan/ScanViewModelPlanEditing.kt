@@ -256,13 +256,14 @@ internal fun ScanViewModel.editPlanOperation(
                 return@launch
             }
 
-            _preview.value = current.copy(
+            val latest = planEditPublicationBase(current, _preview.value)
+            _preview.value = latest.copy(
                 accepted = validated.accepted,
                 rejected = current.rejected,
                 acceptedScopeLabels = validated.accepted.map { operation ->
                     scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
                 },
-                selectedIndices = current.selectedIndices
+                selectedIndices = latest.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
             )
@@ -375,12 +376,13 @@ internal fun ScanViewModel.editSafPlanDestinationGroup(
                 return@launch
             }
 
-            _preview.value = current.copy(
+            val latest = planEditPublicationBase(current, _preview.value)
+            _preview.value = latest.copy(
                 accepted = validated.accepted,
                 acceptedScopeLabels = validated.accepted.map { operation ->
                     scopeForOperation(operation, current.scopes)?.label ?: current.scopeLabel
                 },
-                selectedIndices = current.selectedIndices
+                selectedIndices = latest.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
             )
 
@@ -587,7 +589,8 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                     homes = (session.homes + changed.values.mapNotNull { it.projectHome }).distinctBy { it.path },
                     reviewId = java.util.UUID.randomUUID().toString())
             } else null
-            _preview.value = current.copy(
+            val latest = planEditPublicationBase(current, _preview.value)
+            _preview.value = latest.copy(
                 accepted = validated.accepted,
                 acceptedScopeLabels = validated.accepted.map { operation ->
                     scopeForOperation(operation, current.scopes)?.label ?: "Approved destination"
@@ -595,7 +598,7 @@ internal fun ScanViewModel.editPlanDestinationGroup(
                 // An edit must never change what the user selected.
                 // Operations stay in the same order because an invalid
                 // transformed plan is rejected as a whole above.
-                selectedIndices = current.selectedIndices
+                selectedIndices = latest.selectedIndices
                     .filterTo(linkedSetOf()) { it in validated.accepted.indices },
                 authorizedDestinationRoots = extraRoots,
                 filingPresentation = updatedFilingPresentation?.copy(reviewSessionId = nextSession?.reviewId),
@@ -618,67 +621,17 @@ internal fun ScanViewModel.learnableFilenameTerm(names: List<String>): String? =
     com.pocketsteward.app.filing.ProjectEvidenceTerms.learnFilenameTerm(names)
 
 internal fun ScanViewModel.setPlanOperationSelected(index: Int, selected: Boolean) {
+    if (hasActiveFilingWork || busy.value != null) return
     val current = _preview.value ?: return
-    var updated = PlanSelection.setSelected(
-        operations = current.accepted,
-        current = current.selectedIndices,
-        index = index,
-        selected = selected,
-    )
-
-    // A nested filing move may depend on one or more CreateDirectory actions.
-    // Selecting the file should never leave its required parent unchecked.
-    if (selected) {
-        val destination = when (val operation = current.accepted.getOrNull(index)) {
-            is PlannedOperation.Move -> operation.destination.rawValue()
-            is PlannedOperation.Copy -> operation.destination.rawValue()
-            else -> null
-        }
-        if (destination != null) {
-            current.accepted.forEachIndexed { createIndex, operation ->
-                if (operation is PlannedOperation.CreateDirectory) {
-                    val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
-                    if (destination == directory || destination.startsWith("$directory/")) {
-                        updated = PlanSelection.setSelected(
-                            operations = current.accepted,
-                            current = updated,
-                            index = createIndex,
-                            selected = true,
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (current.filingPresentation != null) {
-        val selectedDestinations = current.accepted.mapIndexedNotNull { operationIndex, operation ->
-            if (operationIndex !in updated) return@mapIndexedNotNull null
-            when (operation) {
-                is PlannedOperation.Move -> operation.destination.rawValue()
-                is PlannedOperation.Copy -> operation.destination.rawValue()
-                else -> null
-            }
-        }
-        current.accepted.forEachIndexed { createIndex, operation ->
-            if (operation is PlannedOperation.CreateDirectory) {
-                val directory = operation.parent.child(operation.name).rawValue().trimEnd('/')
-                val needed = selectedDestinations.any { destination ->
-                    destination == directory || destination.startsWith("$directory/")
-                }
-                updated = if (needed) {
-                    updated + createIndex
-                } else {
-                    updated - createIndex
-                }
-            }
-        }
-    }
+    val graph = selectionDependencies?.takeIf { it.matches(current.accepted) }
+        ?: PlanSelection.dependencies(current.accepted).also { selectionDependencies = it }
+    val updated = PlanSelection.setSelected(current.accepted, current.selectedIndices, index, selected, graph)
 
     _preview.value = current.copy(selectedIndices = updated)
 }
 
 internal fun ScanViewModel.selectAllPlanOperations() {
+    if (hasActiveFilingWork || busy.value != null) return
     val current = _preview.value ?: return
     _preview.value = current.copy(
         selectedIndices = PlanSelection.allSelected(current.accepted),
@@ -686,6 +639,7 @@ internal fun ScanViewModel.selectAllPlanOperations() {
 }
 
 internal fun ScanViewModel.selectRecommendedPlanOperations() {
+    if (hasActiveFilingWork || busy.value != null) return
     val current = _preview.value ?: return
     val filing = current.filingPresentation
     if (filing == null) {
@@ -702,6 +656,7 @@ internal fun ScanViewModel.selectRecommendedPlanOperations() {
 }
 
 internal fun ScanViewModel.selectSafePlanOperations() {
+    if (hasActiveFilingWork || busy.value != null) return
     val current = _preview.value ?: return
     _preview.value = current.copy(
         selectedIndices = PlanSelection.safeSelected(current.accepted),
@@ -709,6 +664,7 @@ internal fun ScanViewModel.selectSafePlanOperations() {
 }
 
 internal fun ScanViewModel.clearPlanSelection() {
+    if (hasActiveFilingWork || busy.value != null) return
     val current = _preview.value ?: return
     _preview.value = current.copy(
         selectedIndices = PlanSelection.noneSelected(),

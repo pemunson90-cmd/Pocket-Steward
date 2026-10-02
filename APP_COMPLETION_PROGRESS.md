@@ -105,6 +105,8 @@ Dev11 is published as a GitHub prerelease. The complete published app tree at `7
 
 ## Remaining completion work
 
+Dev15 stabilization repairs all eight dev14 audit findings before further feature work: no-replace/exclusive file destinations, safe failed-copy retention, filing cancellation and indexed selection dependencies, admitted/resumable/concurrent indexing, coordinated live cache clear, short-read duplicate hashing and preservation of latest review choices. The final host/Android-build gates passed 669 unit tests, lint with zero errors and 85 warnings, debug/instrumentation assembly, production native races, three SQLite tools and six release-tool tests. Instrumentation remains unexecuted. See DEV15_STABILIZATION_REPORT.md and DEV15_USER_GUIDE.md; phone crash/ANR, peak-memory/thermal and corpus acceptance remain open.
+
 - Target-phone acceptance of durable review restoration, overlapping content scopes and bounded bulk extraction; any defects discovered in acceptance remain open.
 - Unified evidence/correction learning across semantic and deterministic workflows; broader release convention discovery and selected-tree convention parity.
 - Expanded archive formats where safe; optional generative image captions, bounded large-image batch acceptance and project/topic template coverage.

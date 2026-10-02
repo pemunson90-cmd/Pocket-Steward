@@ -84,10 +84,5 @@ abstract class ContentSearchDatabase : RoomDatabase() {
                     .also { instance = it }
             }
 
-        fun delete(context: Context): Boolean {
-            instance?.close()
-            instance = null
-            return context.applicationContext.deleteDatabase(DATABASE_NAME)
-        }
     }
 }
