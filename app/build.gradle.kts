@@ -134,6 +134,9 @@ dependencies {
     // format bugs fixed only in this library and lint flags it.
     implementation("androidx.exifinterface:exifinterface:1.4.1")
     implementation("org.apache.commons:commons-compress:1.28.0")
+    // LZMA/LZMA2 decoding of compressed 7z headers only (bounded); 0BSD. Same
+    // version Commons Compress 1.28.0 declares as its optional xz dependency.
+    implementation("org.tukaani:xz:1.10")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")

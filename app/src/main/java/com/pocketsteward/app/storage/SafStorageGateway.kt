@@ -20,30 +20,23 @@ class SafStorageGateway(
     private val context: Context,
 ) : StorageGateway {
     private val protection = SafProtection(context)
+    private val documents = SafDocuments(context)
+    private val nativeFolders = SafNativeFolderMover(context, documents, protection)
 
     override suspend fun rootOf(scope: StorageScope): FileRef {
         check(scope is StorageScope.Tree) {
             "SafStorageGateway only serves StorageScope.Tree, got $scope"
         }
         val treeUri = Uri.parse(scope.rootRef.documentUri)
-        val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(
-            treeUri,
-            DocumentsContract.getTreeDocumentId(treeUri),
-        )
+        val rootDocUri = documents.documentUri(treeUri)
         return FileRef.Saf(rootDocUri.toString())
     }
 
     override suspend fun listChildren(directory: FileRef): List<FileEntry> {
         val doc = resolve(directory)
         check(doc.isDirectory) { "SAF reference is not a directory: ${directory.rawValue()}" }
-        return doc.listFiles().mapNotNull { child ->
-            val name = child.name ?: return@mapNotNull null
-            FileEntry(
-                ref = FileRef.Saf(child.uri.toString()),
-                displayName = name,
-                isDirectory = child.isDirectory,
-                parentRef = directory,
-            )
+        return documents.children(doc.uri).map { child ->
+            FileEntry(FileRef.Saf(child.uri.toString()), child.name, child.directory, FileRef.Saf(doc.uri.toString()))
         }
     }
 
@@ -53,19 +46,62 @@ class SafStorageGateway(
             if (!DocumentsContract.isTreeUri(uri) && !DocumentsContract.isDocumentUri(context, uri)) return sharedMetadata(ref, uri)
         }
         val doc = resolve(ref)
-        val name = doc.name ?: "unknown"
+        val observed = documents.stat(doc.uri)
+        val name = observed.name
         val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         return FileMetadata(
             ref = FileRef.Saf(doc.uri.toString()),
             displayName = name,
             extension = extension,
-            mimeType = doc.type,
-            sizeBytes = if (doc.isDirectory) 0 else doc.length(),
+            mimeType = observed.mime,
+            sizeBytes = observed.size,
             createdAtEpochMs = null,
-            modifiedAtEpochMs = doc.lastModified().takeIf { it > 0 },
-            isDirectory = doc.isDirectory,
+            modifiedAtEpochMs = observed.modified,
+            isDirectory = observed.directory,
             isHidden = name.startsWith("."),
         )
+    }
+
+    override suspend fun locationOf(ref: FileRef): FileRef.Child? {
+        val uri = resolve(ref).uri
+        // Single-document/share grants do not authorize an accessible parent tree.
+        return if (DocumentsContract.isTreeUri(uri)) documents.location(uri) else null
+    }
+
+    override suspend fun intactFolderMoveRefusal(ref: FileRef): String? = try {
+        val doc = documents.stat(resolve(ref).uri)
+        check(doc.directory) { "This source is no longer a folder." }
+        documents.location(doc.uri)
+        if (doc.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE == 0)
+            "This provider does not support native intact-folder moves. The bundle stays together at source."
+        else protection.refusal(doc.uri)
+    } catch (failure: Exception) { failure.message ?: "Folder access/capability could not be verified." }
+
+    override suspend fun verifyExists(ref: FileRef): Boolean {
+        if (ref is FileRef.Saf) {
+            val uri = Uri.parse(ref.documentUri)
+            if (!DocumentsContract.isTreeUri(uri) && !DocumentsContract.isDocumentUri(context, uri)) {
+                return requireNotNull(context.contentResolver.openAssetFileDescriptor(uri, "r")) {
+                    "Source access could not verify whether this shared document exists."
+                }.use { true }
+            }
+        }
+        return existingUri(ref) != null
+    }
+
+    /** An empty, completed cursor means absence; query/security/loading failures remain errors. */
+    private fun existingUri(ref: FileRef): Uri? = when (ref) {
+        is FileRef.Saf -> documents.find(Uri.parse(ref.documentUri))?.uri
+        is FileRef.Child -> {
+            val parent = existingUri(ref.parent)
+            if (parent == null) null else {
+                check(documents.stat(parent).directory) { "Expected provider parent is no longer a directory." }
+                val matches = documents.children(parent).filter { it.name.equals(ref.name, ignoreCase = true) }
+                check(matches.size <= 1) { "Provider child name is ambiguous: ${ref.name}" }
+                matches.singleOrNull()?.uri
+            }
+        }
+        is FileRef.Direct -> error("Direct reference has no provider location.")
     }
 
     override suspend fun exists(ref: FileRef): Boolean = runCatching {
@@ -237,6 +273,12 @@ class SafStorageGateway(
 
     override suspend fun move(source: FileRef, destination: FileRef): MutationResult {
         protectionFailure(source)?.let { return it }
+        val sourceDocForType = resolveOrFailure(source, "source") ?: return MutationResult.Failure("Could not resolve SAF source.")
+        if (sourceDocForType.isDirectory) {
+            val target = destinationTarget(destination, sourceDocForType.name)
+                ?: return MutationResult.Failure("Could not resolve the folder destination parent.")
+            return nativeFolders.move(sourceDocForType.uri, target.first.uri, target.second)
+        }
         val copied = copy(source, destination)
         if (copied !is MutationResult.Success) return copied
 
@@ -244,17 +286,14 @@ class SafStorageGateway(
             return MutationResult.Failure(blocked.reason + " Verified destination copy remains; both documents need review.")
         }
         protectionFailure(source)?.let { blocked ->
-            val removed = runCatching { resolve(copied.resultRef).delete() }.getOrDefault(false)
-            return if (removed) blocked else MutationResult.Failure(blocked.reason + " Verified destination copy remains; both documents need review.")
+            return MutationResult.Failure(blocked.reason + " The verified destination copy remains; inspect both locations before retrying.")
         }
         val sourceDoc = resolveOrFailure(source, "source")
         if (sourceDoc == null || !sourceDoc.delete()) {
-            // A failed move must not leave an untracked extra copy if the
-            // provider lets us clean it up.
-            runCatching { resolve(copied.resultRef).delete() }
+            // A refused/interrupted provider delete cannot prove that the original remains.
+            // Keep the verified output; deleting it here could remove the only surviving copy.
             return MutationResult.Failure(
-                "Copied the file to the SAF destination, but could not remove the original. " +
-                    "The new copy was removed when possible.",
+                "The provider could not confirm removal of the original. The verified destination copy was retained; inspect both locations.",
             )
         }
         return copied
@@ -270,6 +309,20 @@ class SafStorageGateway(
             ?: return MutationResult.Failure("Could not resolve SAF source.")
         if (!sourceDoc.exists()) return MutationResult.Failure("Source no longer exists.")
 
+        if (sourceDoc.isDirectory) {
+            val parent = runCatching { requireNotNull(locationOf(source)) { "Source parent tree access is unavailable." } }.getOrElse {
+                return MutationResult.Failure(it.message ?: "Folder parent access is unavailable.", it)
+            }
+            return nativeFolders.move(sourceDoc.uri, resolve(parent.parent).uri, newName)
+        }
+        val parent = runCatching { requireNotNull(locationOf(source)) { "Source parent tree access is unavailable." } }.getOrElse {
+            return MutationResult.Failure(it.message ?: "Source parent access is unavailable.", it)
+        }
+        val collision = childNamed(resolve(parent.parent), newName)
+        if (collision != null && !documents.sameDocument(collision.uri, sourceDoc.uri)) {
+            return MutationResult.Failure("Refusing to overwrite an existing SAF document: $newName")
+        }
+        destinationProtectionFailure(resolve(parent.parent), newName)?.let { return it }
         return try {
             if (!sourceDoc.renameTo(newName)) {
                 MutationResult.Failure("SAF provider refused to rename the document.")
@@ -293,7 +346,7 @@ class SafStorageGateway(
         val steward = FileRef.Child(root, "PocketSteward")
         val trash = FileRef.Child(steward, "Trash")
         val suffix = sha256(source.rawValue()).take(12)
-        return FileRef.Child(trash, "$suffix-$name")
+        return if (sourceDoc.isDirectory) trash.child(suffix).child(name) else FileRef.Child(trash, "$suffix-$name")
     }
 
     override suspend fun trash(source: FileRef): MutationResult {
@@ -301,26 +354,32 @@ class SafStorageGateway(
         val destination = runCatching { trashDestination(source) }.getOrElse {
             return MutationResult.Failure(it.message ?: "Could not resolve SAF Trash destination.", it)
         }
-        val trash = (destination as FileRef.Child).parent
-        val steward = (trash as FileRef.Child).parent
-
-        when (val first = createDirectory((steward as FileRef.Child).parent, steward.name)) {
-            is MutationResult.Failure -> return first
-            is MutationResult.Success -> Unit
+        val root = treeRootFor(source)
+        val steward = root.child("PocketSteward")
+        val trash = steward.child("Trash")
+        for ((parent, name) in listOf(root to "PocketSteward", steward to "Trash")) {
+            when (val created = createDirectory(parent, name)) {
+                is MutationResult.Failure -> return created
+                is MutationResult.Success -> Unit
+            }
         }
-        when (val second = createDirectory(steward, (trash as FileRef.Child).name)) {
-            is MutationResult.Failure -> return second
-            is MutationResult.Success -> Unit
+        val destinationParent = (destination as FileRef.Child).parent
+        if (destinationParent != trash) {
+            val bucket = destinationParent as FileRef.Child
+            when (val created = createDirectory(bucket.parent, bucket.name)) {
+                is MutationResult.Failure -> return created
+                is MutationResult.Success -> Unit
+            }
         }
         return move(source, destination)
     }
 
     override suspend fun removeEmptyDirectory(ref: FileRef): MutationResult {
+        if (!verifyExists(ref)) return MutationResult.Success(ref, changed = false)
         val doc = resolveOrFailure(ref, "directory")
             ?: return MutationResult.Failure("Could not resolve SAF directory.")
-        if (!doc.exists()) return MutationResult.Success(ref, changed = false)
         if (!doc.isDirectory) return MutationResult.Failure("Undo target is not a directory.")
-        if (doc.listFiles().isNotEmpty()) {
+        if (documents.children(doc.uri).isNotEmpty()) {
             return MutationResult.Failure("Directory is no longer empty; refusing to remove it.")
         }
         protectionFailure(ref)?.let { return it }
@@ -380,10 +439,11 @@ class SafStorageGateway(
         return FileRef.Saf(root.toString())
     }
 
-    private fun childNamed(parent: DocumentFile, name: String): DocumentFile? =
-        parent.listFiles().firstOrNull {
-            it.name?.equals(name, ignoreCase = true) == true
-        }
+    private fun childNamed(parent: DocumentFile, name: String): DocumentFile? {
+        val matches = documents.children(parent.uri).filter { it.name.equals(name, ignoreCase = true) }
+        check(matches.size <= 1) { "Provider has ambiguous child names: $name" }
+        return matches.singleOrNull()?.let { DocumentFile.fromTreeUri(context, it.uri) }
+    }
 
     private fun safeName(name: String): Boolean =
         name.isNotBlank() &&

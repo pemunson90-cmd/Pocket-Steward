@@ -41,7 +41,11 @@ class ArchiveInspectorTest {
         assertThat(result.complete).isFalse()
     }
     @Test fun unsupportedAndDamagedContainersHaveExplicitLimitations() {
-        assertThat(ArchiveInspector.stream(ByteArrayInputStream(byteArrayOf(1)), "7z").note).contains("not supported")
+        assertThat(ArchiveInspector.stream(ByteArrayInputStream(byteArrayOf(1)), "cab").note).contains("not supported")
+        // RAR/7z need positional reads; the plain stream overload never pretends to list them.
+        val sevenZip = ArchiveInspector.stream(ByteArrayInputStream(byteArrayOf(1)), "7z")
+        assertThat(sevenZip.complete).isFalse()
+        assertThat(sevenZip.note).contains("seekable")
         assertThat(ArchiveInspector.stream(ByteArrayInputStream(byteArrayOf(1)), "tgz").complete).isFalse()
     }
     private fun tar(): ByteArray = ByteArrayOutputStream().also { out -> TarArchiveOutputStream(out).use { tar ->

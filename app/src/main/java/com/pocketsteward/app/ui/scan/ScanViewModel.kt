@@ -1421,7 +1421,7 @@ class ScanViewModel(
                 val inventory = preview.filingPresentation?.let { filing ->
                     com.pocketsteward.app.filing.FilingTaskInventoryBuilder.build(
                         com.pocketsteward.app.filing.FilingInventoryPolicy.build(filing, preview.accepted, preview.selectedIndices, preview.rejected),
-                        selectedOperations, filing.intakeSnapshot, filing.indexedFolderDescendantCount,
+                        selectedOperations, filing.intakeSnapshot, filing.indexedFolderDescendantCount, preview.reviewedSources,
                     )
                 }
                 val plan = AgentPlan(preview.goal, selectedOperations, preview.reviewedSources, inventory)

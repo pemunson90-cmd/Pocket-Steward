@@ -66,7 +66,7 @@ class FilingReconciliationTest {
         val report = requireNotNull(FilingReconciler.check(plan(), listOf(record()), inaccessible))
         assertThat(report.roots.all { it.error != null }).isTrue()
         val cancelled = object : StorageGateway by gateway() {
-            override suspend fun exists(ref: FileRef): Boolean = throw CancellationException("pause")
+            override suspend fun verifyExists(ref: FileRef): Boolean = throw CancellationException("pause")
         }
         assertThat(runCatching { FilingReconciler.check(plan(), listOf(record()), cancelled) }.exceptionOrNull()).isInstanceOf(CancellationException::class.java)
     }

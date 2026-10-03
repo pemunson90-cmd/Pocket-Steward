@@ -3,9 +3,25 @@ package com.pocketsteward.app.plan
 import com.google.common.truth.Truth.assertThat
 import com.pocketsteward.app.report.TaskManifest
 import com.pocketsteward.app.storage.FileRef
+import com.pocketsteward.app.storage.FileRefJournalCodec
 import org.junit.Test
 
 class DurablePlanCodecTest {
+    @Test fun selectedTreeLocationSurvivesRestartAndVersionFourRemainsReadable() {
+        val source = FileRef.Saf("content://provider/tree/grant/document/retained-id")
+        val destination = FileRef.Child(FileRef.Saf("content://provider/tree/grant/document/home-id"), "bundle")
+        val original = FileRefJournalCodec.encode(FileRef.Child(FileRef.Saf("content://provider/tree/grant/document/inbox-id"), "bundle"))
+        val expected = SourcePrecondition(42, 123, "a".repeat(64), 2, original)
+        val encoded = DurablePlanCodec.encode("Move folder", listOf(PlannedOperation.Move(source, destination, "reviewed")), mapOf(0 to expected))
+        assertThat(DurablePlanCodec.decodeOrNull(encoded)!!.sourcePreconditions).containsExactly(0, expected)
+        assertThat(SourcePreconditions.matches(expected, expected.copy(location = FileRefJournalCodec.encode(destination)))).isFalse()
+        val legacy = encoded.lineSequence().map { line -> when {
+            line == "@psplan\t5" -> "@psplan\t4"
+            line.startsWith("@pspre\t") -> line.split('\t').take(6).joinToString("\t")
+            else -> line
+        } }.joinToString("\n")
+        assertThat(DurablePlanCodec.decodeOrNull(legacy)!!.sourcePreconditions).containsExactly(0, expected.copy(location = null))
+    }
     @Test
     fun folderSnapshotSurvivesPauseAndResumeEncoding() {
         val operation = PlannedOperation.Move(FileRef.Direct("/Download/Lilith"), FileRef.Direct("/Documents/Lilith"), "keep folder intact")
@@ -114,8 +130,8 @@ class DurablePlanCodecTest {
         val operations = listOf(PlannedOperation.Move(FileRef.Direct("/a"), FileRef.Direct("/b"), "move"))
         val expected = SourcePrecondition(42L, 123L)
         val v2 = DurablePlanCodec.encode("Legacy file", operations, mapOf(0 to expected))
-            .replace("@psplan\t4", "@psplan\t2")
-            .replace("@pspre\t0\t42\t123\tnull\t0", "@pspre\t0\t42\t123")
+            .replace("@psplan\t5", "@psplan\t2")
+            .replace("@pspre\t0\t42\t123\tnull\t0\tnull", "@pspre\t0\t42\t123")
         assertThat(DurablePlanCodec.decodeOrNull(v2)?.sourcePreconditions).containsExactly(0, expected)
     }
 
@@ -129,7 +145,7 @@ class DurablePlanCodecTest {
             ),
         )
         val v1 = DurablePlanCodec.encode("Legacy durable", operations)
-            .replace("@psplan\t4", "@psplan\t1")
+            .replace("@psplan\t5", "@psplan\t1")
 
         val decoded = DurablePlanCodec.decodeOrNull(v1)
 

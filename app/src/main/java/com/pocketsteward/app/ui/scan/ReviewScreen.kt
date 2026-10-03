@@ -1482,7 +1482,10 @@ private fun RichMetadataReview(
                             add("APK $pkg${record.apkVersionName?.let { " · $it" }.orEmpty()}")
                         }
                         entry.pdfPageCount?.let { add("PDF · $it page(s)") }
-                        entry.archiveEntryCount?.let { add("Archive · ${if (entry.archiveComplete == false) "at least " else ""}$it entries") }
+                        entry.archiveEntryCount?.let {
+                            add(if (it == 0 && entry.archiveComplete == false) "Archive · member listing unavailable"
+                                else "Archive · ${if (entry.archiveComplete == false) "at least " else ""}$it entries")
+                        }
                         entry.archiveNote?.let { add(it) }
                         entry.captureDate?.let { add("Camera date: $it") }
                         entry.mediaArtist?.let { add("Artist: $it") }

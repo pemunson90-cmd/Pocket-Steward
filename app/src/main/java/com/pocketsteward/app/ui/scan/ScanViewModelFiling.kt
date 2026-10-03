@@ -335,14 +335,13 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
     }
     val rootKey = scope.root.rawValue().trimEnd('/')
     val scannedRecords = allRecordsForScopes(summary.scopes)
-    val skippedFolders = scannedRecords.count { record ->
-        record.isDirectory && record.parentRef?.trimEnd('/') == rootKey &&
-            !record.displayName.equals("Uncertain", ignoreCase = true)
-    }
+    val skippedFolders = scannedRecords.count { it.isDirectory && it.parentRef?.trimEnd('/') == rootKey &&
+        it.displayName.lowercase() in GENERIC_TOP_LEVEL_FOLDERS && !it.displayName.equals("Uncertain", true) }
     val intake = InboxFilingIntake.select(
-        scannedRecords, setOf(rootKey), checkpointOnly, includeDirectories = false,
+        scannedRecords, setOf(rootKey), checkpointOnly, includeDirectories = true,
     )
-    val records = intake.records.filter { allowlist == null || it.stableRef in allowlist }
+    val records = intake.records.filterNot { it.isDirectory && it.displayName.lowercase() in GENERIC_TOP_LEVEL_FOLDERS }
+        .filter { allowlist == null || ((continuation != null || !it.isDirectory) && it.stableRef in allowlist) }
     if (records.isEmpty()) {
         _uiState.value = ScanUiState.Error(
             if (checkpointOnly) "No files are waiting in an Uncertain checkpoint inside the granted inbox."
@@ -367,7 +366,8 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
     }
     val freshRecords = records.map { enriched.getValue(it.stableRef).record }
     val snapshots = filingOriginalSources(freshRecords.filter { enriched[it.stableRef]?.sourceError == null }, summary.mode, continuation)
-    val unavailableSources = enriched.mapNotNull { (ref, metadata) -> metadata.sourceError?.let { ref to it } }.toMap() + snapshots.errors
+    val folderMaterial = prepareFilingFolderEvidence(scannedRecords, freshRecords, snapshots.baselines, summary)
+    val unavailableSources = enriched.mapNotNull { (ref, metadata) -> metadata.sourceError?.let { ref to it } }.toMap() + snapshots.errors + folderMaterial.errors
     val readableRecords = freshRecords.filter { it.stableRef !in unavailableSources }
     val imageEvidence = prepareFilingImages(readableRecords, continuation?.retryUnavailable == true)
     val content = prepareFilingContent(readableRecords, summary)
@@ -408,29 +408,47 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             imageLabels = imageEvidence.evidence[updated.stableRef]?.let { insight -> insight.labels.map { it.label } + if (insight.likelyScreenshot) listOf("screenshot") else emptyList() }.orEmpty(),
                     imageText = imageEvidence.evidence[updated.stableRef]?.detectedText.orEmpty(),
             indexedText = indexedText[updated.stableRef].orEmpty(),
+            isDirectory = updated.isDirectory,
         )
     }
     val workflowHomeRoot = workflowDestination(scope, summary.mode)
     val inferred = withContext(Dispatchers.Default) {
         val context = kotlinx.coroutines.currentCoroutineContext()
-        InboxFilingEngine.resolve(
+        val keywords = settingsRepository.projectKeywords.first()
+        val corrections = settingsRepository.correctionRules.first()
+        val roles = settingsRepository.hierarchyTemplate.first().roleFolders
+        val topics = settingsRepository.documentTopicRules.first()
+        val childrenResult = InboxFilingEngine.resolve(folderMaterial.children, emptyList(), homes, keywords, corrections,
+            scope.root.rawValue(), roles, documentTopics = topics, checkCancelled = { context.ensureActive() })
+        val resolved = InboxFilingEngine.resolve(
             artifacts = artifacts,
             persistedHomes = emptyList(),
             discoveredHomes = homes,
-            projectKeywords = settingsRepository.projectKeywords.first(),
-            correctionRules = settingsRepository.correctionRules.first(),
+            projectKeywords = keywords,
+            correctionRules = corrections,
             storageRoot = scope.root.rawValue(),
-            newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
+            newProjectRoles = roles,
             newProjectRoots = artifacts.associate { it.stableRef to (workflowHomeRoot?.rawValue() ?: scope.root.rawValue()) },
-            documentTopics = settingsRepository.documentTopicRules.first(),
+            documentTopics = topics,
             newTopicRoots = artifacts.associate { it.stableRef to (workflowHomeRoot ?: scope.root.child("Documents")).rawValue() },
             checkCancelled = { context.ensureActive() },
         )
+        com.pocketsteward.app.filing.FilingFolderEvidence.reconcile(resolved, childrenResult, folderMaterial.ownerByChild,
+            folderMaterial.entryCounts, snapshots.baselines.filterValues { it.directoryDigest != null }.mapValues { it.value.directoryEntryCount })
     }
-    val result = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(inferred, continuation?.assignments.orEmpty()), unavailableSources)
     val existingHomeRefs = homes.associate { home ->
         home.path to requireNotNull(children.firstOrNull { it.ref.rawValue().trimEnd('/') == home.path }?.ref)
     }
+    val releases = withContext(Dispatchers.IO) {
+        com.pocketsteward.app.filing.FilingReleaseDiscovery.discover(inferred, gateway, existingHomeRefs) { done, total ->
+            _uiState.value = ScanUiState.Working("Checking release folders", "$done of $total project homes")
+        }
+    }
+    val reconciled = com.pocketsteward.app.filing.FilingReleaseConvention.reconcile(inferred, releases.directories, releases.unavailableHomes)
+    val assigned = FilingContinuationPolicy.applyAssignments(reconciled, continuation?.assignments.orEmpty())
+    val alreadyHome = assigned.decisions.filter { it.artifact.isDirectory && it.projectHome?.path == it.artifact.stableRef }
+        .associate { it.artifact.stableRef to "This folder is already the selected project home and stays in place. Choose another home in a fresh review to relocate it." }
+    val result = FilingSourceAvailability.block(assigned, unavailableSources + alreadyHome)
     val plan = withContext(Dispatchers.Default) {
         InboxFilingSafPlanAdapter.build(
             result = result,
@@ -456,7 +474,9 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             "Selected-folder access can file only inside this granted tree; it cannot discover project homes elsewhere on the device.",
             if (checkpointOnly) "Strong matches are selected by default. Probable matches wait for review. Unresolved files stay in their existing checkpoint."
             else "Strong matches are selected by default. Probable matches wait for review. Unresolved loose files move to Uncertain after review.",
-            "$skippedFolders existing folder(s) remain in the inbox; this pass does not move folder contents without a reviewed snapshot.",
+            folderMaterial.summary,
+            "$skippedFolders existing main/category folders are outside this inbox filing pass.",
+            "Folders move intact only when the provider supports a native move and the reviewed structure/protection can be verified. Unsupported or changed bundles stay at source.",
         ) + extraNotes + listOfNotNull(
             if (!metadataEnabled) "Metadata inspection is off; camera dates, media tags and archive entries were not read." else null,
             enriched.values.count { it.archiveComplete == false }.takeIf { it > 0 }?.let { "$it archives had partial or unavailable inspection. Only observed entry names were used as evidence." },
@@ -611,6 +631,10 @@ private suspend fun ScanViewModel.filingOriginalSources(records: List<FileRecord
                     if (continuation != null) requireNotNull(original[record.stableRef]) {
                         "This older review has no initial folder snapshot. Rebuild the review before filing this folder."
                     } else com.pocketsteward.app.plan.SourcePreconditions.capture(container.gatewayFor(mode), com.pocketsteward.app.storage.parseFileRef(record.stableRef))
+                } else if (mode == StorageAccessMode.SAF) {
+                    if (continuation != null) requireNotNull(original[record.stableRef]).also {
+                        require(it.location != null) { "Rebuild this older selected-tree review to capture its original location." }
+                    } else com.pocketsteward.app.plan.SourcePreconditions.capture(container.gatewayFor(mode), com.pocketsteward.app.storage.parseFileRef(record.stableRef))
                 } else requireNotNull(com.pocketsteward.app.plan.SourcePreconditions.from(record))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -646,7 +670,8 @@ internal fun ScanViewModel.continueFilingImageEvidence(retryUnavailable: Boolean
 private suspend fun ScanViewModel.enrichFreshFilingRecord(record: FileRecord, mode: StorageAccessMode, enabled: Boolean): com.pocketsteward.app.metadata.MetadataEnrichment {
     return try {
         val fresh = freshEvidenceRecord(record, mode)
-        if (enabled) container.metadataEnricher.enrich(fresh) else com.pocketsteward.app.metadata.MetadataEnrichment(fresh, false)
+        val inspectionContext = kotlinx.coroutines.currentCoroutineContext()
+        if (enabled) container.metadataEnricher.enrich(fresh) { inspectionContext.ensureActive() } else com.pocketsteward.app.metadata.MetadataEnrichment(fresh, false)
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { com.pocketsteward.app.metadata.MetadataEnrichment(record, false,
         sourceError = "This source could not be inspected. Refresh its inventory or restore access before filing.") }

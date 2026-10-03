@@ -252,7 +252,7 @@ class UndoExecutor(
         val destinationAfter = record.destinationAfter?.let(FileRefJournalCodec::decode)
             ?: return MutationResult.Failure("Journal has no post-operation destination to undo.")
 
-        return when (record.operationType) {
+        return try { when (record.operationType) {
             MutationOperationType.CREATE_DIRECTORY -> gateway.removeEmptyDirectory(destinationAfter)
             // Trashed, not deleted. Undoing a written file is the one place
             // where a real delete would be defensible — the app created the
@@ -262,7 +262,7 @@ class UndoExecutor(
             MutationOperationType.WRITE_TEXT_FILE,
             MutationOperationType.COPY,
             -> {
-                if (!gateway.exists(destinationAfter)) {
+                if (!gateway.verifyExists(destinationAfter)) {
                     MutationResult.Success(destinationAfter, changed = false)
                 } else {
                     gateway.trash(destinationAfter)
@@ -273,8 +273,8 @@ class UndoExecutor(
             MutationOperationType.TRASH,
             -> {
                 val original = FileRefJournalCodec.decode(record.sourceBefore)
-                val currentExists = gateway.exists(destinationAfter)
-                val originalExists = gateway.exists(original)
+                val currentExists = gateway.verifyExists(destinationAfter)
+                val originalExists = gateway.verifyExists(original)
                 when {
                     originalExists -> MutationResult.Failure(
                         "Original location is occupied; refusing to overwrite it: ${original.rawValue()}",
@@ -282,10 +282,20 @@ class UndoExecutor(
                     !currentExists -> MutationResult.Failure(
                         "Expected current file is missing; cannot prove what should be restored: ${destinationAfter.rawValue()}",
                     )
-                    else -> gateway.move(destinationAfter, original)
+                    record.sourceFingerprint?.let(StorageDigest::isFolderProof) == true &&
+                        !StorageDigest.matchesProof(gateway, destinationAfter, requireNotNull(record.sourceFingerprint)) ->
+                        MutationResult.Failure("The folder changed after its reviewed move; inspect it before restoring its original location.")
+                    else -> {
+                        val moved = gateway.move(destinationAfter, original)
+                        if (moved is MutationResult.Success && record.sourceFingerprint?.let(StorageDigest::isFolderProof) == true &&
+                            !StorageDigest.matchesProof(gateway, moved.resultRef, requireNotNull(record.sourceFingerprint))) {
+                            MutationResult.Failure("The provider returned the folder, but its structure could not be verified. Inspect both locations before retrying Undo.")
+                        } else moved
+                    }
                 }
             }
-        }
+        } } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (failure: Exception) { MutationResult.Failure("Undo could not verify current storage: ${failure.message ?: "restore provider access"}", failure) }
     }
 
     private suspend fun reindexAfterUndo(record: MutationRecord, scopeRootRef: String, gateway: StorageGateway) {

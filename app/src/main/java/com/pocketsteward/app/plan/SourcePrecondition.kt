@@ -28,6 +28,7 @@ data class SourcePrecondition(
     val modifiedAtEpochMs: Long?,
     val directoryDigest: String? = null,
     val directoryEntryCount: Int = 0,
+    val location: String? = null,
 )
 
 object SourcePreconditions {
@@ -44,6 +45,7 @@ object SourcePreconditions {
         )
 
     fun matches(expected: SourcePrecondition, current: SourcePrecondition): Boolean {
+        if (expected.location != null && expected.location != current.location) return false
         if (expected.directoryDigest != current.directoryDigest ||
             expected.directoryEntryCount != current.directoryEntryCount) return false
         if (expected.sizeBytes != current.sizeBytes) return false
@@ -54,7 +56,10 @@ object SourcePreconditions {
     /** Captures a folder as one reviewed unit without opening its file contents. */
     suspend fun capture(gateway: StorageGateway, source: FileRef): SourcePrecondition {
         val root = gateway.stat(source)
-        if (!root.isDirectory) return requireNotNull(from(root))
+        val location = if (source !is FileRef.Direct) gateway.locationOf(source) else null
+        require(location == null || location.name == root.displayName) { "Source name/location changed while checking it." }
+        val locationToken = location?.let(com.pocketsteward.app.storage.FileRefJournalCodec::encode)
+        if (!root.isDirectory) return requireNotNull(from(root)).copy(location = locationToken)
         val digest = MessageDigest.getInstance("SHA-256")
         val pending = ArrayDeque<Pair<FileRef, String>>()
         val visited = hashSetOf<String>()
@@ -90,6 +95,7 @@ object SourcePreconditions {
             modifiedAtEpochMs = root.modifiedAtEpochMs,
             directoryDigest = digest.digest().joinToString("") { "%02x".format(it) },
             directoryEntryCount = entries,
+            location = locationToken,
         )
     }
 }
@@ -139,8 +145,7 @@ object ReviewedSources {
             } catch (_: Throwable) {
                 continue
             }
-            captured[key] = if (metadata.isDirectory) SourcePreconditions.capture(gateway, source)
-            else requireNotNull(SourcePreconditions.from(metadata))
+            captured[key] = SourcePreconditions.capture(gateway, source)
         }
         return captured
     }

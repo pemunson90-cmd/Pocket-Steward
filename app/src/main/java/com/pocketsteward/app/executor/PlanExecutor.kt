@@ -299,7 +299,8 @@ class PlanExecutor(
                         sequence = sequence,
                         operationType = operation.toOperationType(),
                         sourceBefore = FileRefJournalCodec.encode(journalSource),
-                        destinationAfter = FileRefJournalCodec.encode(result.resultRef),
+                        destinationAfter = FileRefJournalCodec.encode(
+                            if (contentFingerprint?.let(StorageDigest::isFolderProof) == true) requireNotNull(expectedDestination) else result.resultRef),
                         sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
                         executedAt = System.currentTimeMillis(),
@@ -326,17 +327,15 @@ class PlanExecutor(
                 }
 
                 is MutationResult.Failure -> {
-                    val destinationRemains = expectedDestination?.let { destination ->
-                        runCatching { gateway.exists(destination) }.getOrDefault(false)
-                    } == true
-                    val journalStatus = if (destinationRemains) {
+                    val outcomeNeedsReview = failureNeedsReview(journalSource, expectedDestination)
+                    val journalStatus = if (outcomeNeedsReview) {
                         MutationStatus.NEEDS_REVIEW
                     } else {
                         MutationStatus.FAILED
                     }
-                    val recordedReason = if (destinationRemains) {
+                    val recordedReason = if (outcomeNeedsReview) {
                         needsReview = true
-                        "${result.reason} The expected destination exists after the reported failure, so execution stopped for review."
+                        "${result.reason} Original/destination state cannot certify a clean failure, so execution stopped for review."
                     } else {
                         result.reason
                     }
@@ -351,7 +350,7 @@ class PlanExecutor(
                             sourceFingerprint = contentFingerprint,
                             status = journalStatus,
                             executedAt = System.currentTimeMillis(),
-                            undoState = if (destinationRemains) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
+                            undoState = if (outcomeNeedsReview) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
                             undoAttemptedAt = null,
                             error = recordedReason,
                             undoError = null,
@@ -629,7 +628,8 @@ class PlanExecutor(
                         sequence = sequence,
                         operationType = operation.toOperationType(),
                         sourceBefore = FileRefJournalCodec.encode(journalSource),
-                        destinationAfter = FileRefJournalCodec.encode(result.resultRef),
+                        destinationAfter = FileRefJournalCodec.encode(
+                            if (contentFingerprint?.let(StorageDigest::isFolderProof) == true) requireNotNull(expectedDestination) else result.resultRef),
                         sourceFingerprint = contentFingerprint,
                         status = MutationStatus.COMMITTED,
                         executedAt = System.currentTimeMillis(),
@@ -655,17 +655,15 @@ class PlanExecutor(
                     }
                 }
                 is MutationResult.Failure -> {
-                    val destinationRemains = expectedDestination?.let { destination ->
-                        runCatching { gateway.exists(destination) }.getOrDefault(false)
-                    } == true
-                    val journalStatus = if (destinationRemains) {
+                    val outcomeNeedsReview = failureNeedsReview(journalSource, expectedDestination)
+                    val journalStatus = if (outcomeNeedsReview) {
                         MutationStatus.NEEDS_REVIEW
                     } else {
                         MutationStatus.FAILED
                     }
-                    val recordedReason = if (destinationRemains) {
+                    val recordedReason = if (outcomeNeedsReview) {
                         needsReview = true
-                        "${result.reason} The expected destination exists after the reported failure, so execution stopped for review."
+                        "${result.reason} Original/destination state cannot certify a clean failure, so execution stopped for review."
                     } else {
                         result.reason
                     }
@@ -680,7 +678,7 @@ class PlanExecutor(
                             sourceFingerprint = contentFingerprint,
                             status = journalStatus,
                             executedAt = System.currentTimeMillis(),
-                            undoState = if (destinationRemains) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
+                            undoState = if (outcomeNeedsReview) UndoState.BLOCKED else UndoState.NOT_AVAILABLE,
                             undoAttemptedAt = null,
                             error = recordedReason,
                             undoError = null,
@@ -749,10 +747,13 @@ class PlanExecutor(
             val source = operation.preconditionSource() ?: continue
             val key = source.rawValue()
             val reviewed = reviewedSources[key]
-            val exists = gateway.exists(source)
+            val exists = gateway.verifyExists(source)
             val current = if (exists) SourcePreconditions.capture(gateway, source) else null
 
             if (reviewed != null) {
+                check(current?.location == null || reviewed.location != null) {
+                    "This older selected-tree review has no original source location. Rebuild it before approval: $key"
+                }
                 ReviewedSources.failure(key, reviewed, exists, current)?.let { error(it) }
                 result[sequence] = current!!
                 continue
@@ -848,21 +849,26 @@ class PlanExecutor(
         is PlannedOperation.WriteTextFile -> childRef(operation.parent, operation.name)
     }
 
+    private suspend fun failureNeedsReview(original: FileRef, destination: FileRef?): Boolean = try {
+        destination?.let { gateway.verifyExists(it) } == true || !gateway.verifyExists(original)
+    } catch (cancel: CancellationException) { throw cancel }
+    catch (_: Exception) { true }
+
     private suspend fun journalFingerprint(operation: PlannedOperation): String? = when (operation) {
         is PlannedOperation.Copy -> StorageDigest.sha256(gateway, operation.source)
         is PlannedOperation.WriteTextFile -> StorageDigest.sha256(operation.content)
         is PlannedOperation.Move ->
-            if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
+            if (operation.source is FileRef.Direct) null else StorageDigest.proof(gateway, operation.source)
         is PlannedOperation.Rename ->
-            if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
+            if (operation.source is FileRef.Direct) null else StorageDigest.proof(gateway, operation.source)
         is PlannedOperation.Trash -> operation.sourceFingerprint
-            ?: if (operation.source is FileRef.Direct) null else StorageDigest.sha256(gateway, operation.source)
+            ?: if (operation.source is FileRef.Direct) null else StorageDigest.proof(gateway, operation.source)
         is PlannedOperation.CreateDirectory -> null
     }
 
     private suspend fun journalSourceBefore(operation: PlannedOperation): FileRef {
         val source = operation.sourceRef()
-        if (source !is FileRef.Saf) return source
+        if (source !is FileRef.Saf || operation is PlannedOperation.Copy) return source
 
         if (operation is PlannedOperation.CreateDirectory ||
             operation is PlannedOperation.WriteTextFile
@@ -870,6 +876,7 @@ class PlanExecutor(
             return source
         }
 
+        gateway.locationOf(source)?.let { return it }
         val record = fileRecordDao.getByStableRef(source.rawValue())
             ?: error("SAF source is not present in the current scan index.")
         val parent = record.parentRef?.let(::parseFileRef)
@@ -888,11 +895,12 @@ class PlanExecutor(
         }
         is FileRef.Child -> source.parent.child(newName)
         is FileRef.Saf -> {
+            val verified = gateway.locationOf(source)
             val record = fileRecordDao.getByStableRef(source.rawValue())
                 ?: error("SAF rename source is not present in the current scan index.")
             val parent = record.parentRef?.let(::parseFileRef)
                 ?: error("SAF rename source has no indexed parent.")
-            parent.child(newName)
+            (verified?.parent ?: parent).child(newName)
         }
     }
 
@@ -932,13 +940,13 @@ class PlanExecutor(
             }
             is PlannedOperation.Trash -> {
                 if (contentFingerprint != null) {
-                    val actual = StorageDigest.sha256(gateway, operation.source)
-                    if (!actual.equals(contentFingerprint, ignoreCase = true)) {
+                    if (!StorageDigest.matchesProof(gateway, operation.source, contentFingerprint)) {
                         MutationResult.Failure(
                             "Source content changed since duplicate review; refusing to move it to Trash.",
                         )
                     } else {
-                        gateway.trash(operation.source)
+                        val trashed = gateway.trash(operation.source)
+                        if (StorageDigest.isFolderProof(contentFingerprint)) verifyCreatedContent(trashed, contentFingerprint, "Trashed") else trashed
                     }
                 } else {
                     gateway.trash(operation.source)
@@ -965,10 +973,12 @@ class PlanExecutor(
             return result
         }
 
-        val actual = runCatching { StorageDigest.sha256(gateway, result.resultRef) }.getOrNull()
-        if (actual != null && actual.equals(expectedFingerprint, ignoreCase = true)) {
-            return result
-        }
+        val verified = try { StorageDigest.matchesProof(gateway, result.resultRef, expectedFingerprint) }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { false }
+        if (verified) return result
+        if (StorageDigest.isFolderProof(expectedFingerprint)) return MutationResult.Failure(
+            "$action folder structure could not be verified against its reviewed metadata. The folder was retained at the provider's result; inspect both locations.")
 
         val quarantine = runCatching { gateway.trash(result.resultRef) }.getOrNull()
         val cleanup = when (quarantine) {

@@ -52,8 +52,14 @@ class MutationRecovery(
                     error = "Interrupted operation has no expected destination; manual review required.",
                 )
             } else {
-                val sourceExists = gateway.exists(source)
-                val destinationExists = gateway.exists(destination)
+                val state = try { gateway.verifyExists(source) to gateway.verifyExists(destination) }
+                    catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch (failure: Exception) {
+                        mutationRecordDao.update(record.copy(status = MutationStatus.NEEDS_REVIEW, undoState = UndoState.BLOCKED,
+                            error = "Original/destination access could not verify this interrupted mutation: ${failure.message ?: "restore provider access"}"))
+                        continue
+                    }
+                val (sourceExists, destinationExists) = state
                 when (record.operationType) {
                     MutationOperationType.CREATE_DIRECTORY -> when {
                         destinationExists -> record.copy(
@@ -110,12 +116,20 @@ class MutationRecovery(
                     MutationOperationType.MOVE,
                     MutationOperationType.RENAME,
                     -> when {
-                        !sourceExists && destinationExists -> record.copy(
-                            status = MutationStatus.COMMITTED,
-                            executedAt = record.executedAt ?: System.currentTimeMillis(),
-                            undoState = UndoState.AVAILABLE,
-                            error = "Recovered after interruption: destination exists and source is gone.",
-                        )
+                        !sourceExists && destinationExists -> {
+                            val matches = record.sourceFingerprint?.let { proof ->
+                                try { StorageDigest.matchesProof(gateway, destination, proof) }
+                                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                                catch (_: Exception) { false }
+                            } ?: true // Legacy direct moves did not store a content witness.
+                            if (matches) record.copy(
+                                status = MutationStatus.COMMITTED,
+                                executedAt = record.executedAt ?: System.currentTimeMillis(),
+                                undoState = UndoState.AVAILABLE,
+                                error = "Recovered after interruption: destination exists, source location is empty, and available witness matches.",
+                            ) else record.copy(status = MutationStatus.NEEDS_REVIEW, undoState = UndoState.BLOCKED,
+                                error = "Interrupted destination does not match its recorded content or folder metadata witness; inspect both locations.")
+                        }
                         sourceExists && !destinationExists -> record.copy(
                             status = MutationStatus.FAILED,
                             executedAt = record.executedAt ?: System.currentTimeMillis(),
@@ -143,23 +157,21 @@ class MutationRecovery(
                                 error = "Recovered after interruption: Trash destination exists and source is gone.",
                             )
                         !sourceExists && destinationExists -> {
-                            val actual = runCatching {
-                                StorageDigest.sha256(gateway, destination)
-                            }.getOrNull()
-                            if (actual != null &&
-                                actual.equals(record.sourceFingerprint, ignoreCase = true)
-                            ) {
+                            val matches = try { StorageDigest.matchesProof(gateway, destination, requireNotNull(record.sourceFingerprint)) }
+                                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                                catch (_: Exception) { false }
+                            if (matches) {
                                 record.copy(
                                     status = MutationStatus.COMMITTED,
                                     executedAt = record.executedAt ?: System.currentTimeMillis(),
                                     undoState = UndoState.AVAILABLE,
-                                    error = "Recovered after interruption: trashed file matches the approved duplicate SHA-256.",
+                                    error = "Recovered after interruption: Trash destination matches its recorded content or folder metadata witness.",
                                 )
                             } else {
                                 record.copy(
                                     status = MutationStatus.NEEDS_REVIEW,
                                     undoState = UndoState.BLOCKED,
-                                    error = "Trash destination exists but its bytes do not match the approved duplicate SHA-256.",
+                                    error = "Trash destination does not match its recorded content or folder metadata witness.",
                                 )
                             }
                         }
@@ -226,7 +238,7 @@ class MutationRecovery(
 
             val recovered = when (record.operationType) {
                 MutationOperationType.CREATE_DIRECTORY -> {
-                    if (!gateway.exists(destinationAfter)) {
+                    if (!gateway.verifyExists(destinationAfter)) {
                         record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE, undoError = null)
                     } else {
                         val children = runCatching { gateway.listChildren(destinationAfter) }.getOrNull()
@@ -242,7 +254,7 @@ class MutationRecovery(
                 // safely be retried, because trashing is idempotent in the
                 // only direction that matters.
                 MutationOperationType.WRITE_TEXT_FILE -> {
-                    if (!gateway.exists(destinationAfter)) {
+                    if (!gateway.verifyExists(destinationAfter)) {
                         record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE, undoError = null)
                     } else {
                         record.copy(
@@ -256,9 +268,12 @@ class MutationRecovery(
                 MutationOperationType.TRASH,
                 -> {
                     val original = FileRefJournalCodec.decode(record.sourceBefore)
-                    val originalExists = gateway.exists(original)
-                    val currentExists = gateway.exists(destinationAfter)
+                    val originalExists = gateway.verifyExists(original)
+                    val currentExists = gateway.verifyExists(destinationAfter)
                     when {
+                        originalExists && !currentExists && record.sourceFingerprint?.let(StorageDigest::isFolderProof) == true &&
+                            !StorageDigest.matchesProof(gateway, original, requireNotNull(record.sourceFingerprint)) -> record.copy(
+                                undoState = UndoState.BLOCKED, undoError = "Returned folder does not match its reviewed structural metadata; inspect the original location.")
                         originalExists && !currentExists -> record.copy(
                             status = MutationStatus.UNDONE,
                             undoState = UndoState.UNDONE,
@@ -275,7 +290,7 @@ class MutationRecovery(
                     }
                 }
                 MutationOperationType.COPY -> {
-                    if (!gateway.exists(destinationAfter)) {
+                    if (!gateway.verifyExists(destinationAfter)) {
                         record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE, undoError = null)
                     } else {
                         record.copy(

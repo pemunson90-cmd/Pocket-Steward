@@ -46,6 +46,8 @@ class MetadataEnricher(
     private val observedRevision: (String) -> String? = { null },
 ) {
     private val evidenceCache = MetadataEvidenceCache(File(context.cacheDir, "artifact-evidence-v3"))
+    /** App-private; RAR/7z staging never writes beside the user's files. */
+    private val stagingDirectory = File(context.cacheDir, ArchiveStaging.DIRECTORY_NAME)
 
     fun supports(record: FileRecord): Boolean {
         if (record.isDirectory) return false
@@ -57,15 +59,20 @@ class MetadataEnricher(
             ext in ArchiveInspector.supportedExtensions
     }
 
-    fun enrich(record: FileRecord): MetadataEnrichment {
+    /**
+     * [checkCancelled] is polled during archive inspection and must throw to stop it;
+     * cancellation propagates instead of becoming an "unreadable archive" result.
+     */
+    fun enrich(record: FileRecord, checkCancelled: () -> Unit = ::interruptCheck): MetadataEnrichment {
+        checkCancelled()
         if (!supports(record)) return MetadataEnrichment(record, changed = false)
         if (!record.stableRef.startsWith("content://") && !File(record.stableRef).isFile) {
             return MetadataEnrichment(record, changed = false)
         }
 
-        val before = sourceSample(record)
+        val before = sourceSample(record, checkCancelled)
         evidenceCache.read(record, before)?.let { cached ->
-            if (sourceSample(record) == before) return cached
+            if (sourceSample(record, checkCancelled) == before) return cached
         }
 
         val cleared = record.copy(mediaType = null, width = null, height = null, durationMs = null,
@@ -136,14 +143,10 @@ class MetadataEnricher(
         }
 
         if (record.extension.lowercase() in ArchiveInspector.supportedExtensions) {
-            val inspection = runCatching {
-                if (!record.isSaf() && record.extension.lowercase() in setOf("zip", "apks", "xapk")) {
-                    ArchiveInspector.zipFile(File(record.stableRef))
-                } else {
-                    val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
-                    requireNotNull(input).use { ArchiveInspector.stream(it, record.extension) }
-                }
-            }.getOrElse { ArchiveInspection(0, emptyList(), false, "Archive could not be inspected. No files were extracted.") }
+            val inspection = try { inspectArchive(record, checkCancelled) } catch (failure: Exception) {
+                if (failure.isCancellation()) throw failure.asCancellation()
+                ArchiveInspection(0, emptyList(), false, "Archive could not be inspected. No files were extracted.")
+            }
             archiveCount = inspection.observedEntries
             archiveSample = inspection.names
             archiveComplete = inspection.complete
@@ -164,23 +167,50 @@ class MetadataEnricher(
             exifOrientation = orientation,
             captureDate = captureDate, mediaArtist = mediaArtist, mediaAlbum = mediaAlbum, mediaTitle = mediaTitle,
         ).let { result ->
-            val after = sourceSample(record)
+            val after = sourceSample(record, checkCancelled)
             if (before == null || after != before) {
                 // No observation derived from a changing source becomes project evidence.
                 MetadataEnrichment(cleared, changed = cleared != record, archiveComplete = if (record.extension.lowercase() in ArchiveInspector.supportedExtensions) false else null,
                     archiveNote = "Source evidence could not be verified; refresh the inventory before using it.")
-            } else result.also { evidenceCache.write(it, before) }
+            } else result.also { checkCancelled(); evidenceCache.write(it, before) }
         }
     }
 
-    private fun sourceSample(record: FileRecord): String? = try {
+    private fun inspectArchive(record: FileRecord, checkCancelled: () -> Unit): ArchiveInspection {
+        val extension = record.extension.lowercase()
+        if (extension in ArchiveInspector.randomAccessExtensions) {
+            if (!record.isSaf()) return ArchiveInspector.file(File(record.stableRef), extension, checkCancelled)
+            // Regular files behind SAF expose a seekable descriptor; pipes and virtual
+            // documents (statSize < 0) are staged to an owned app-private copy instead.
+            val descriptor = try { context.contentResolver.openFileDescriptor(record.uri(), "r") } catch (failure: Exception) {
+                if (failure.isCancellation()) throw failure.asCancellation()
+                null
+            }
+            if (descriptor != null) {
+                return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                    if (descriptor.statSize >= 0) ArchiveInspector.channel(input.channel, extension, checkCancelled)
+                    else ArchiveInspector.stream(input, extension, stagingDirectory, checkCancelled, record.sizeBytes)
+                }
+            }
+            return requireNotNull(context.contentResolver.openInputStream(record.uri())).use { input ->
+                ArchiveInspector.stream(input, extension, stagingDirectory, checkCancelled, record.sizeBytes)
+            }
+        }
+        if (!record.isSaf() && extension in setOf("zip", "apks", "xapk")) return ArchiveInspector.zipFile(File(record.stableRef), checkCancelled)
+        val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
+        return requireNotNull(input).use { ArchiveInspector.stream(it, record.extension, checkCancelled) }
+    }
+
+    private fun sourceSample(record: FileRecord, checkCancelled: () -> Unit): String? = try {
         val revision = observedRevision(record.stableRef)
         val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
-        val sample = input?.use { com.pocketsteward.app.evidence.EvidenceFingerprint.read(it, record.sizeBytes) }
+        val sample = input?.use { com.pocketsteward.app.evidence.EvidenceFingerprint.read(it, record.sizeBytes, checkCancelled) }
         check(observedRevision(record.stableRef) == revision) { "Source was written during metadata sampling." }
         sample?.let { it + if (revision == null) "" else ":observed:$revision" }
-    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-    catch (_: Exception) { null }
+    } catch (failure: Exception) {
+        if (failure.isCancellation()) throw failure.asCancellation()
+        null
+    }
 
     private fun imageBounds(record: FileRecord): Pair<Int, Int>? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }

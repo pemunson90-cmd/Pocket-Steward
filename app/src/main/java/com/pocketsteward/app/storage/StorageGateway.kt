@@ -13,7 +13,15 @@ interface StorageGateway {
     suspend fun list(scope: StorageScope): List<FileEntry> = listChildren(rootOf(scope))
     suspend fun stat(ref: FileRef): FileMetadata
     suspend fun exists(ref: FileRef): Boolean
+    /** Mutation/recovery checks must distinguish absence from unavailable or incomplete provider access. */
+    suspend fun verifyExists(ref: FileRef): Boolean = exists(ref)
     suspend fun openRead(ref: FileRef): InputStream
+
+    /** Optional provider-verified parent/name; opaque IDs alone do not prove a source location. */
+    suspend fun locationOf(ref: FileRef): FileRef.Child? = null
+
+    /** Read-only admission for native intact-folder filing; unsupported providers leave the bundle in place. */
+    suspend fun intactFolderMoveRefusal(ref: FileRef): String? = null
 
     /**
      * Returns Success(changed=false) when the directory already existed.

@@ -10,32 +10,9 @@ internal class SafProtection(private val context: Context) {
     private data class Node(val id: String, val name: String, val directory: Boolean)
     private data class Route(val tree: Uri, val path: List<String>)
 
-    private fun children(tree: Uri, id: String): List<Node> {
-        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
-        val result = mutableListOf<Node>()
-        resolver.query(
-            uri,
-            arrayOf(
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE,
-            ),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            while (cursor.moveToNext()) {
-                check(result.size < 100_000) { "Protection check exceeds the bounded folder limit" }
-                result += Node(
-                    cursor.getString(0) ?: error("Missing provider identity"),
-                    cursor.getString(1) ?: error("Missing filename"),
-                    cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR,
-                )
-            }
-            check(!cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) { "Provider listing still loading" }
-        } ?: error("Provider listing unavailable")
-        return result
-    }
+    private fun children(tree: Uri, id: String): List<Node> = SafDocuments(context)
+        .children(DocumentsContract.buildDocumentUriUsingTree(tree, id))
+        .map { Node(it.id, it.name, it.directory) }
 
     private fun route(source: Uri): Route {
         val authority = source.authority ?: error("Provider unavailable")

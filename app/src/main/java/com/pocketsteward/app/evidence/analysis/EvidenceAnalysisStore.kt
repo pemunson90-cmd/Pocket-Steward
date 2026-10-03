@@ -20,7 +20,7 @@ class EvidenceAnalysisStore(private val directory: File) {
         request.validate()
         require(!path(request.id, "request").exists()) { "Analysis request already exists." }
         write(path(request.id, "request")) { out ->
-            out.writeInt(4); out.writeUTF(request.id); out.writeUTF(request.mode.name); out.optional(request.grant)
+            out.writeInt(5); out.writeUTF(request.id); out.writeUTF(request.mode.name); out.optional(request.grant)
             out.writeBoolean(request.images); out.writeBoolean(request.content); out.writeBoolean(request.retryUnavailable)
             out.writeBoolean(request.automatic)
             out.optional(request.observedRevision)
@@ -28,7 +28,7 @@ class EvidenceAnalysisStore(private val directory: File) {
             request.folders.forEach { folder ->
                 out.writeUTF(folder.ref); out.writeLong(folder.baseline.sizeBytes)
                 out.writeBoolean(folder.baseline.modifiedAtEpochMs != null); folder.baseline.modifiedAtEpochMs?.let { out.writeLong(it) }
-                out.writeUTF(requireNotNull(folder.baseline.directoryDigest)); out.writeInt(folder.baseline.directoryEntryCount)
+                out.writeUTF(requireNotNull(folder.baseline.directoryDigest)); out.writeInt(folder.baseline.directoryEntryCount); out.optional(folder.baseline.location)
             }
             out.writeInt(request.sources.size)
             request.sources.forEach { source ->
@@ -44,7 +44,7 @@ class EvidenceAnalysisStore(private val directory: File) {
         prune(request.id)
     }
     @Synchronized fun request(id: String): EvidenceAnalysisRequest = read(path(id, "request")) { input ->
-        val version = input.readInt().also { require(it in 1..4) }
+        val version = input.readInt().also { require(it in 1..5) }
         val storedId = input.readUTF(); require(storedId == id)
         val mode = StorageAccessMode.valueOf(input.readUTF()); val grant = input.optional()
         val images = input.readBoolean(); val content = input.readBoolean(); val retry = input.readBoolean()
@@ -52,7 +52,7 @@ class EvidenceAnalysisStore(private val directory: File) {
         val observedRevision = if (version >= 4) input.optional() else null
         val folders = if (version >= 2) List(input.readInt().also { require(it in 0..100_000) }) {
             val ref = input.readUTF(); val size = input.readLong(); val modified = if (input.readBoolean()) input.readLong() else null
-            EvidenceAnalysisFolder(ref, SourcePrecondition(size, modified, input.readUTF(), input.readInt()))
+            EvidenceAnalysisFolder(ref, SourcePrecondition(size, modified, input.readUTF(), input.readInt(), if (version >= 5) input.optional() else null))
         } else emptyList()
         val count = input.readInt().also { require(it in 1..100_000) }
         EvidenceAnalysisRequest(id, mode, grant, images, content, retry, List(count) {

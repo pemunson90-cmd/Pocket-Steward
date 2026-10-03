@@ -121,7 +121,10 @@ internal object ReviewDraftCodec {
         require(preview.scopes.map { it.root.rawValue() }.distinct().size == preview.scopes.size)
         // A draft must not lose the original review baseline and recapture changed files later.
         require(preview.accepted.mapNotNull(ReviewedSources::sourceOf).all { it.rawValue() in preview.reviewedSources })
-        preview.reviewedSources.values.forEach { require(it.sizeBytes >= 0 && it.directoryEntryCount >= 0) }
+        preview.reviewedSources.values.forEach {
+            require(it.sizeBytes >= 0 && it.directoryEntryCount >= 0)
+            it.location?.let { location -> require(FileRefJournalCodec.decode(location) is FileRef.Child) }
+        }
         require(ReviewDraftPolicy.matchesFilingSession(preview, draft.filingSession))
         draft.filingSession?.let { session ->
             require(preview.filingPresentation != null)

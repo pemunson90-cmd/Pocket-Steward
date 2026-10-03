@@ -13,7 +13,7 @@ data class FilingReleaseLayout(val directories: Set<String>, val unavailableHome
 
 /** Live, read-only observation of only homes relevant to this review. No 100-home cutoff. */
 object FilingReleaseDiscovery {
-    suspend fun discover(result: InboxFilingResult, gateway: StorageGateway, onProgress: (Int, Int) -> Unit = { _, _ -> }): FilingReleaseLayout {
+    suspend fun discover(result: InboxFilingResult, gateway: StorageGateway, existingHomes: Map<String, FileRef> = emptyMap(), onProgress: (Int, Int) -> Unit = { _, _ -> }): FilingReleaseLayout {
         val decisions = result.proposed.filter { !it.artifact.isDirectory && it.release != null &&
             it.projectHome?.hierarchy in setOf(ProjectHierarchyStrategy.VERSIONED, ProjectHierarchyStrategy.PROJECT_ROLES) }
         val homes = decisions.groupBy { requireNotNull(it.projectHome) }
@@ -26,16 +26,26 @@ object FilingReleaseDiscovery {
             try {
                 require(observations < MAX_OBSERVATIONS) { "Release discovery reached its safety limit; narrow this review or choose release folders explicitly." }
                 val listing = mutableMapOf<String, List<String>>()
+                // Display-name paths describe conventions; only concrete provider references perform reads.
+                val references = mutableMapOf<String, FileRef>()
+                val base = home.path.trimEnd('/')
+                if (base.startsWith("content://") || base.startsWith("ps-child:")) {
+                    existingHomes[base]?.let { references[base] = it }
+                } else references[base] = FileRef.Direct(base)
                 suspend fun children(path: String): List<String> {
                     listing[path]?.let { return it }
                     currentCoroutineContext().ensureActive()
-                    val ref = FileRef.Direct(path)
+                    val ref = references[path] ?: return emptyList<String>().also { listing[path] = it }
                     if (!gateway.exists(ref)) return emptyList<String>().also { listing[path] = it }
                     require(gateway.stat(ref).isDirectory) { "A required release folder is now a file." }
                     val observed = gateway.listChildren(ref)
                     observations += observed.size
                     require(observations <= MAX_OBSERVATIONS) { "Release discovery reached its safety limit; narrow this review or choose release folders explicitly." }
-                    val folders = observed.filter { it.isDirectory }.map { it.ref.rawValue().trimEnd('/') }
+                    val folders = observed.filter { it.isDirectory }.map { child ->
+                        val logical = "$path/${child.displayName}"
+                        references[logical] = child.ref
+                        logical
+                    }
                     directories += path
                     directories += folders
                     listing[path] = folders
@@ -49,7 +59,6 @@ object FilingReleaseDiscovery {
                     }
                     return parents
                 }
-                val base = home.path.trimEnd('/')
                 val roots = FilingReleaseConvention.releaseParents(home).flatMap { root ->
                     if (root == base) listOf(base) else walk(base, root.removePrefix("$base/"))
                 }.distinct()

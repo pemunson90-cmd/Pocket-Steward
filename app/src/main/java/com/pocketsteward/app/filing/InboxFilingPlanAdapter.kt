@@ -260,6 +260,7 @@ object InboxFilingSafPlanAdapter {
             operations += PlannedOperation.CreateDirectory(newHomeRoot.parent, newHomeRoot.name, "Create or reuse the workflow's reviewed home base inside the granted tree.")
             plannedDirectories += newHomeRoot.rawValue()
         }
+        val countsByHome = proposed.groupingBy { it.projectHome?.path?.trimEnd('/') }.eachCount()
         proposed.groupBy { decision ->
             val home = requireNotNull(decision.projectHome)
             home.path.trimEnd('/') to decision.destinationDirectory
@@ -273,11 +274,16 @@ object InboxFilingSafPlanAdapter {
                 home.path.removePrefix(newHomeRoot.rawValue().trimEnd('/') + "/").split('/')
             } else listOf(projectName)
             require(homeParts.isNotEmpty() && homeParts.all { InboxFilingEngine.sanitizeSegment(it) == it }) { "Unsafe project folder." }
+            val folderBecomesHome = existingHomeRef == null && decisions.size == 1 &&
+                first.artifact.isDirectory && first.createsProjectHome && countsByHome[home.path.trimEnd('/')] == 1 &&
+                homeParts.last() == first.artifact.displayName && first.destinationDirectory == home.path
+            var homeParent: FileRef = newHomeRoot
             var homeRef: FileRef = existingHomeRef ?: newHomeRoot
             if (existingHomeRef == null) {
-                for (part in homeParts) {
+                for ((index, part) in homeParts.withIndex()) {
                     val child = homeRef.child(part)
-                    if (plannedDirectories.add(child.rawValue())) operations += PlannedOperation.CreateDirectory(homeRef, part, "Create or reuse the reviewed project/category home inside the granted tree.")
+                    if (index == homeParts.lastIndex) homeParent = homeRef
+                    if (!(folderBecomesHome && index == homeParts.lastIndex) && plannedDirectories.add(child.rawValue())) operations += PlannedOperation.CreateDirectory(homeRef, part, "Create or reuse the reviewed project/category home inside the granted tree.")
                     homeRef = child
                 }
             }
@@ -286,7 +292,7 @@ object InboxFilingSafPlanAdapter {
             val relativeParts = requireNotNull(first.destinationDirectory).removePrefix(home.path.trimEnd('/'))
                 .trim('/').split('/').filter { it.isNotBlank() }
             require(relativeParts.all { InboxFilingEngine.sanitizeSegment(it) == it }) { "Unsafe selected-tree destination." }
-            var destinationRef = homeRef
+            var destinationRef = if (folderBecomesHome) homeParent else homeRef
             for (part in relativeParts) {
                 val child = destinationRef.child(part)
                 if (plannedDirectories.add(child.rawValue())) {
@@ -329,6 +335,7 @@ object InboxFilingSafPlanAdapter {
                         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
                         destinationPath = displayDestination,
                         contentExcerpt = decision.artifact.indexedText.take(400).takeIf { it.isNotBlank() },
+                        isDirectory = decision.artifact.isDirectory,
                     )
                 },
                 hierarchy = home.hierarchy,
@@ -371,6 +378,7 @@ object InboxFilingSafPlanAdapter {
                             confidence = decision.confidence,
                             evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
                             destinationPath = "$scopeLabel › Uncertain",
+                            isDirectory = decision.artifact.isDirectory,
                         )
                     },
                     editableDirectDestination = false,
@@ -394,6 +402,7 @@ object InboxFilingSafPlanAdapter {
                         evidence = decision.evidence.sortedByDescending { it.weight }.map { it.detail }.distinct().take(4),
                         destinationPath = null,
                         contentExcerpt = decision.artifact.indexedText.take(400).takeIf { it.isNotBlank() },
+                        isDirectory = decision.artifact.isDirectory,
                     )
                 },
                 checkpointGroups = checkpointGroups,

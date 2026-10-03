@@ -113,6 +113,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -537,7 +538,8 @@ internal fun ScanViewModel.enrichMetadata(summary: ScanUiState.Summary) {
                     total = eligible.size,
                 )
                 val enrichment = withContext(Dispatchers.IO) {
-                    container.metadataEnricher.enrich(record)
+                    val inspectionContext = kotlinx.coroutines.currentCoroutineContext()
+                    container.metadataEnricher.enrich(record) { inspectionContext.ensureActive() }
                 }
                 if (enrichment.changed) {
                     withContext(Dispatchers.IO) {
@@ -552,7 +554,8 @@ internal fun ScanViewModel.enrichMetadata(summary: ScanUiState.Summary) {
                 entries = entries,
                 attempted = eligible.size,
             )
-        } catch (t: Throwable) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (t: Throwable) {
             _uiState.value = ScanUiState.Error(t.message ?: t.javaClass.simpleName)
         }
     }

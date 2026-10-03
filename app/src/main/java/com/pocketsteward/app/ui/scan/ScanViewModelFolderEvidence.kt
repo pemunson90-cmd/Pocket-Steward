@@ -45,6 +45,8 @@ internal suspend fun ScanViewModel.prepareFilingFolderEvidence(indexed: List<Fil
         currentCoroutineContext().ensureActive()
         _uiState.value = ScanUiState.Working("Checking intact-folder evidence", "${folderIndex + 1} of ${folders.size} · ${folder.displayName}")
         try {
+            val folderGateway = container.gatewayFor(summary.mode)
+            folderGateway.intactFolderMoveRefusal(parseFileRef(folder.stableRef))?.let { error(it) }
             val expected = requireNotNull(baselines[folder.stableRef])
             require(expected.directoryDigest != null && SourcePreconditions.matches(expected,
                 SourcePreconditions.capture(container.gatewayFor(summary.mode), parseFileRef(folder.stableRef)))) { "Folder changed after its original review." }

@@ -73,7 +73,7 @@ object TaskManifest {
      * moment each file moved.
      */
     fun duplicateAssertion(entries: List<ManifestEntry>): DuplicateAssertion {
-        val trashed = entries.filter { it.operation == "TRASH" && it.succeeded }
+        val trashed = entries.filter { it.operation == "TRASH" && it.succeeded && it.fingerprint?.startsWith("ps-folder-v1:") != true }
         return DuplicateAssertion(
             groups = trashed.mapNotNull { it.fingerprint }.distinct().size,
             kept = trashed.mapNotNull { keeperPathFrom(it.reason) }.distinct().size,
@@ -103,7 +103,7 @@ object TaskManifest {
         appendLine("Operations recorded: ${entries.size}")
         appendLine()
 
-        val trashed = entries.filter { it.operation == "TRASH" && it.succeeded }
+        val trashed = entries.filter { it.operation == "TRASH" && it.succeeded && it.fingerprint?.startsWith("ps-folder-v1:") != true }
         if (trashed.isNotEmpty()) {
             val assertion = duplicateAssertion(entries)
             appendLine("## ${assertion.headline()}")
@@ -126,6 +126,19 @@ object TaskManifest {
                 }
                 appendLine()
             }
+        }
+
+        val foldersTrashed = entries.filter { it.operation == "TRASH" && it.succeeded && it.fingerprint?.startsWith("ps-folder-v1:") == true }
+        if (foldersTrashed.isNotEmpty()) {
+            appendLine("### Intact folders moved to Trash")
+            appendLine()
+            appendLine("Folder witnesses describe names and metadata; they do not prove whole-byte equality or duplication.")
+            for (entry in foldersTrashed) {
+                appendLine("- was: ${entry.originalPath}")
+                appendLine("  now: ${entry.resultPath ?: "(destination not recorded)"}")
+                appendLine("  structural witness: ${entry.fingerprint}")
+            }
+            appendLine()
         }
 
         val moved = entries.filter { it.operation != "TRASH" && it.succeeded }

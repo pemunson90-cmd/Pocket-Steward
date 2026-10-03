@@ -22,6 +22,7 @@ data class FilingTaskItem(
     val reason: String,
     val operationSequence: Int? = null,
     val destination: String? = null,
+    val originalLocation: String? = null,
 )
 
 data class FilingTaskInventory(
@@ -36,6 +37,7 @@ data class FilingTaskInventory(
         require(items.none { it.outcome == FilingOutcome.NEEDS_DECISION }) { "Incomplete filing inventory." }
         items.forEach { item ->
             FileRefJournalCodec.decode(item.source)
+            item.originalLocation?.let { require(FileRefJournalCodec.decode(it) is com.pocketsteward.app.storage.FileRef.Child) }
             val selected = item.outcome in setOf(FilingOutcome.DESTINATION, FilingOutcome.CHECKPOINT, FilingOutcome.COPY_RETAINED)
             require(selected == (item.operationSequence != null)) { "Inventory selection does not match its outcome." }
             if (selected) {
@@ -73,6 +75,7 @@ object FilingTaskInventoryBuilder {
         approved: List<PlannedOperation>,
         intake: FilingIntakeSnapshot?,
         indexedFolderDescendants: Int,
+        reviewedSources: Map<String, com.pocketsteward.app.plan.SourcePrecondition> = emptyMap(),
     ): FilingTaskInventory {
         val sequences = approved.mapIndexedNotNull { sequence, op ->
             ReviewedSources.sourceOf(op)?.rawValue()?.let { it to sequence }
@@ -89,6 +92,7 @@ object FilingTaskInventoryBuilder {
                 FileRefJournalCodec.encode(parseFileRef(entry.item.sourceRef)), entry.item.displayName,
                 entry.item.isDirectory, entry.outcome, entry.reason, sequence,
                 destination?.let(FileRefJournalCodec::encode),
+                reviewedSources[entry.item.sourceRef]?.location,
             )
         }, intake, indexedFolderDescendants).also { it.validate(approved) }
     }

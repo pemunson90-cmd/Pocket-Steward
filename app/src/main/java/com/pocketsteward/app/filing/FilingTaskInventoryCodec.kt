@@ -28,13 +28,13 @@ object FilingTaskInventoryCodec {
             }
         }
         DataOutputStream(bounded).use { out ->
-            out.writeInt(1)
+            out.writeInt(2)
             out.writeInt(inventory.indexedFolderDescendants)
             out.writeInt(inventory.items.size)
             inventory.items.forEach { item ->
                 out.string(item.source); out.string(item.displayName); out.writeBoolean(item.directory)
                 out.string(item.outcome.name); out.string(item.reason)
-                out.writeInt(item.operationSequence ?: -1); out.nullable(item.destination)
+                out.writeInt(item.operationSequence ?: -1); out.nullable(item.destination); out.nullable(item.originalLocation)
             }
             out.writeBoolean(inventory.intake != null)
             inventory.intake?.let { intake ->
@@ -54,13 +54,13 @@ object FilingTaskInventoryCodec {
         val bytes = Base64.getUrlDecoder().decode(encoded)
         require(bytes.size <= MAX_BYTES)
         return DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-            require(input.readInt() == 1) { "Unsupported filing inventory version." }
+            val version = input.readInt().also { require(it in 1..2) { "Unsupported filing inventory version." } }
             val descendants = input.readInt().also { require(it >= 0) }
             val items = List(input.count(100_000)) {
                 val source = input.string(); val name = input.string(); val directory = input.readBoolean()
                 val outcome = FilingOutcome.valueOf(input.string()); val reason = input.string()
                 val sequence = input.readInt().also { require(it >= -1) }.takeUnless { it == -1 }
-                FilingTaskItem(source, name, directory, outcome, reason, sequence, input.nullable())
+                FilingTaskItem(source, name, directory, outcome, reason, sequence, input.nullable(), if (version >= 2) input.nullable() else null)
             }
             val intake = if (input.readBoolean()) {
                 val time = input.readLong()

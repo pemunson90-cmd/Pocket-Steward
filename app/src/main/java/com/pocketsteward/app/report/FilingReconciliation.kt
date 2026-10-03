@@ -83,8 +83,15 @@ object FilingReconciler {
         val knownSources = inventory.items.mapTo(hashSetOf()) { it.source }
         val knownRoots = inventory.intake?.roots.orEmpty().mapTo(hashSetOf()) { it.root }
         // Expected created checkpoint folders are results of this run, not new arrivals.
-        val completedResults = records.filter { it.status == MutationStatus.COMMITTED || it.status == MutationStatus.UNDONE }
-            .mapNotNullTo(hashSetOf()) { it.destinationAfter }
+        val completedResults = hashSetOf<String>()
+        for (record in records.filter { it.status == MutationStatus.COMMITTED || it.status == MutationStatus.UNDONE }) {
+            record.destinationAfter?.let { token ->
+                completedResults += token
+                try { completedResults += FileRefJournalCodec.encode(gateway.stat(FileRefJournalCodec.decode(token)).ref) }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { /* Missing results remain explicit item outcomes. */ }
+            }
+        }
         val roots = inventory.intake?.roots.orEmpty().map { root ->
             coroutineContext.ensureActive()
             try {
@@ -106,9 +113,10 @@ object FilingReconciler {
     private suspend fun inspect(item: FilingTaskItem, record: MutationRecord?, plan: DurablePlan, gateway: StorageGateway): FilingLocation {
         fun result(state: FilingLocationState, detail: String, destination: String? = record?.destinationAfter ?: item.destination) =
             FilingLocation(item, state, destination, detail)
-        val source = FileRefJournalCodec.decode(item.source)
+        val originalLocation = item.originalLocation ?: item.operationSequence?.let { plan.sourcePreconditions[it]?.location }
+        val source = FileRefJournalCodec.decode(originalLocation ?: item.source)
         if (item.operationSequence == null) {
-            if (!gateway.exists(source)) return result(FilingLocationState.MISSING, "The item is no longer present at its reviewed source.")
+            if (!gateway.verifyExists(source)) return result(FilingLocationState.MISSING, "The item is no longer present at its reviewed source.")
             return result(when (item.outcome) {
                 FilingOutcome.KEEP -> FilingLocationState.KEPT
                 FilingOutcome.RETAINED_UNCERTAIN -> FilingLocationState.RETAINED_UNCERTAIN
@@ -116,11 +124,11 @@ object FilingReconciler {
             }, "Present at the reviewed source. ${item.reason}")
         }
         if (record == null) return result(FilingLocationState.NOT_RUN, "No operation result has been journaled yet.")
-        if (record.sourceBefore != item.source || record.operationType.name != (if (item.outcome == FilingOutcome.COPY_RETAINED) "COPY" else "MOVE")) {
+        if ((record.sourceBefore != item.source && record.sourceBefore != originalLocation) || record.operationType.name != (if (item.outcome == FilingOutcome.COPY_RETAINED) "COPY" else "MOVE")) {
             return result(FilingLocationState.RECOVERY_REQUIRED, "Journal identity does not match the approved inventory.", null)
         }
         if (record.status == MutationStatus.UNDONE || record.undoState == UndoState.UNDONE) {
-            val sourcePresent = gateway.exists(source)
+            val sourcePresent = gateway.verifyExists(source)
             return result(if (sourcePresent) FilingLocationState.UNDONE else FilingLocationState.MISSING,
                 "Undo is recorded; ${if (sourcePresent) "the source is present" else "the source could not be found"}.")
         }
@@ -131,7 +139,7 @@ object FilingReconciler {
         }
         val actualDestination = record.destinationAfter ?: return result(FilingLocationState.RECOVERY_REQUIRED, "The committed record has no destination.")
         val destination = FileRefJournalCodec.decode(actualDestination)
-        if (!gateway.exists(destination)) return result(FilingLocationState.DESTINATION_MISSING, "The recorded destination could not be found.")
+        if (!gateway.verifyExists(destination)) return result(FilingLocationState.DESTINATION_MISSING, "The recorded destination could not be found.")
         val metadata = gateway.stat(destination)
         if (metadata.isDirectory != item.directory) return result(FilingLocationState.CHANGED, "The destination type differs from the approved item.")
         val expected = plan.sourcePreconditions[item.operationSequence]
@@ -142,7 +150,7 @@ object FilingReconciler {
                 else expected.sizeBytes == current.sizeBytes
             if (!matches) return result(FilingLocationState.CHANGED, "Destination metadata differs from the approved source; inspect it before further changes.")
         }
-        val sourcePresent = gateway.exists(source)
+        val sourcePresent = gateway.verifyExists(source)
         if (item.outcome != FilingOutcome.COPY_RETAINED && sourcePresent) return result(FilingLocationState.SOURCE_STILL_PRESENT, "Both the original source and recorded destination are present; review before taking action.")
         if (item.outcome == FilingOutcome.COPY_RETAINED && !sourcePresent) return result(FilingLocationState.MISSING, "The copied destination is present but the retained original could not be found.")
         return result(when (item.outcome) {

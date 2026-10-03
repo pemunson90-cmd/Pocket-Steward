@@ -6,6 +6,10 @@ import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.StorageAccessMode
 import com.pocketsteward.app.storage.rawValue
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 /** Android wiring; the shared inspector itself remains independently testable. */
 internal fun createFileEvidenceInspector(container: AppContainer): FileEvidenceInspector = with(container) {
@@ -39,7 +43,10 @@ internal fun createFileEvidenceInspector(container: AppContainer): FileEvidenceI
             observe = { ref, mode -> gatewayFor(mode).stat(com.pocketsteward.app.storage.parseFileRef(ref)) },
             fingerprint = { record, mode -> contentInspector(mode).evidenceFingerprint(record) },
             privacy = { settingsRepository.privacySettings.first().let { com.pocketsteward.app.evidence.EvidencePrivacy(it.metadataIndexingEnabled, it.contentInspectionEnabled, it.imageAnalysisEnabled) } },
-            metadata = { record -> metadataEnricher.enrich(record) },
+            metadata = { record -> withContext(Dispatchers.IO) {
+                val inspectionContext = currentCoroutineContext()
+                metadataEnricher.enrich(record) { inspectionContext.ensureActive() }
+            } },
             document = { record, mode, requestedRoot ->
                 val access = settingsRepository.storageAccessState.first()
                 val root = requestedRoot ?: requireNotNull(library.root(access)).rawValue()

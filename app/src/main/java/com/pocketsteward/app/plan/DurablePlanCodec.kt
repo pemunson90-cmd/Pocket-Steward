@@ -28,6 +28,7 @@ object DurablePlanCodec {
     private const val HEADER_V2 = "@psplan\t2"
     private const val HEADER_V3 = "@psplan\t3"
     private const val HEADER_V4 = "@psplan\t4"
+    private const val HEADER_V5 = "@psplan\t5"
     private const val GOAL_PREFIX = "@psgoal\t"
     private const val OP_PREFIX = "@psop\t"
     private const val INVENTORY_PREFIX = "@psfiling\t"
@@ -43,7 +44,7 @@ object DurablePlanCodec {
     ): String = buildString {
         filingInventory?.validate(operations)
         appendLine(humanLine(goal))
-        appendLine(HEADER_V4)
+        appendLine(HEADER_V5)
         appendLine(GOAL_PREFIX + encodeToken(goal))
         filingInventory?.let { appendLine(INVENTORY_PREFIX + com.pocketsteward.app.filing.FilingTaskInventoryCodec.encode(it)) }
         operations.forEachIndexed { sequence, operation ->
@@ -53,7 +54,7 @@ object DurablePlanCodec {
                 appendLine(
                     "$PRECONDITION_PREFIX$sequence\t${precondition.sizeBytes}\t" +
                         (precondition.modifiedAtEpochMs?.toString() ?: "null") + "\t" +
-                        (precondition.directoryDigest?.let(::encodeToken) ?: "null") + "\t" + precondition.directoryEntryCount,
+                        (precondition.directoryDigest?.let(::encodeToken) ?: "null") + "\t" + precondition.directoryEntryCount + "\t" + (precondition.location?.let(::encodeToken) ?: "null"),
                 )
             }
         }
@@ -61,8 +62,9 @@ object DurablePlanCodec {
 
     fun decodeOrNull(text: String): DurablePlan? = runCatching {
         val lines = text.lineSequence().toList()
-        require(lines.count { it in setOf(HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4) } == 1) { "Ambiguous durable plan headers." }
+        require(lines.count { it in setOf(HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5) } == 1) { "Ambiguous durable plan headers." }
         val version = when {
+            HEADER_V5 in lines -> 5
             HEADER_V4 in lines -> 4
             HEADER_V3 in lines -> 3
             HEADER_V2 in lines -> 2
@@ -88,7 +90,7 @@ object DurablePlanCodec {
             val entries = lines.mapNotNull { line ->
                 if (!line.startsWith(PRECONDITION_PREFIX)) return@mapNotNull null
                 val fields = line.split('\t')
-                require(fields.size == if (version >= 3) 6 else 4) { "Malformed source-precondition line." }
+                require(fields.size == if (version >= 5) 7 else if (version >= 3) 6 else 4) { "Malformed source-precondition line." }
                 val sequence = fields[1].toInt()
                 val sizeBytes = fields[2].toLong()
                 val modified = fields[3].takeUnless { it == "null" }?.toLong()
@@ -96,6 +98,7 @@ object DurablePlanCodec {
                     sizeBytes, modified,
                     if (version >= 3) fields[4].takeUnless { it == "null" }?.let { if (version >= 4) decodeToken(it) else it } else null,
                     if (version >= 3) fields[5].toInt() else 0,
+                    if (version >= 5) fields[6].takeUnless { it == "null" }?.let(::decodeToken) else null,
                 )
             }
             require(entries.map { it.first }.distinct().size == entries.size) { "Duplicate source preconditions." }
@@ -127,7 +130,7 @@ object DurablePlanCodec {
     }.getOrNull()
 
     fun isDurable(text: String): Boolean =
-        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 || it == HEADER_V3 || it == HEADER_V4 }
+        text.lineSequence().any { it == HEADER_V1 || it == HEADER_V2 || it == HEADER_V3 || it == HEADER_V4 || it == HEADER_V5 }
 
     private fun humanLine(value: String): String = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
 

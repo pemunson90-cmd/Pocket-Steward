@@ -46,6 +46,17 @@ class KeeperReasonTest {
 
 class DuplicateAssertionTest {
 
+    @Test fun folderStructuralWitnessIsNotReportedAsADuplicateSha256() {
+        val entry = ManifestEntry(0, "TRASH", "Inbox/Lilith", "Trash/bucket/Lilith",
+            "ps-folder-v1:${"a".repeat(64)}:2:42", true, null, "Reviewed intact folder")
+        assertThat(TaskManifest.duplicateAssertion(listOf(entry)).groups).isEqualTo(0)
+        val rendered = TaskManifest.render("Folder Trash", "today", "completed", listOf(entry))
+        assertThat(rendered).contains("Intact folders moved to Trash")
+        assertThat(rendered).contains("do not prove whole-byte equality")
+        assertThat(rendered).doesNotContain("SHA-256:")
+        assertThat(rendered).doesNotContain("copies kept")
+    }
+
     @Test
     fun `two groups keeping one copy each is consistent`() {
         val entries = listOf(

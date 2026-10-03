@@ -101,6 +101,16 @@ class TestSafDocumentsProvider : DocumentsProvider() {
         return idForFile(target)
     }
 
+    override fun moveDocument(sourceDocumentId: String, sourceParentDocumentId: String, targetParentDocumentId: String): String {
+        val source = fileForId(sourceDocumentId)
+        val parent = fileForId(sourceParentDocumentId)
+        val destinationParent = fileForId(targetParentDocumentId)
+        if (!source.exists() || source == root || source.parentFile?.canonicalFile != parent.canonicalFile || !destinationParent.isDirectory) throw FileNotFoundException(sourceDocumentId)
+        val destination = File(destinationParent, source.name)
+        if (destination.exists() || !source.renameTo(destination)) throw FileNotFoundException("native move refused")
+        return idForFile(destination)
+    }
+
     override fun renameDocument(documentId: String, displayName: String): String {
         requireSafeName(displayName)
         val source = fileForId(documentId)
