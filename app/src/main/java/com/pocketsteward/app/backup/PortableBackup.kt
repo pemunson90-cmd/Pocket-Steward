@@ -12,7 +12,7 @@ data class PortableBackup(val format: String = "PocketStewardSettings", val vers
 
 object PortableSettingsPolicy {
     val booleanKeys = setOf("metadata_indexing_enabled", "content_inspection_enabled", "image_analysis_enabled", "on_device_ai_enabled", "advanced_mode_enabled", "wallpaper_colors_enabled", "thumbnails_enabled", "library_content_while_charging", "library_evidence_while_charging")
-    val stringKeys = setOf("project_keywords", "hierarchy_template", "named_hierarchy_templates", "saved_workflows", "saved_searches", "favorite_destinations", "correction_rules", "project_homes", "inbox_roots", "scheduled_cleanup")
+    val stringKeys = setOf("project_keywords", "hierarchy_template", "named_hierarchy_templates", "document_topic_rules", "named_document_topic_templates", "saved_workflows", "saved_searches", "favorite_destinations", "correction_rules", "project_homes", "inbox_roots", "scheduled_cleanup")
     val allowedKeys = booleanKeys + stringKeys
 
     fun normalize(values: Map<String, String>): Map<String, String> {
@@ -24,6 +24,8 @@ object PortableSettingsPolicy {
                 value
             } else when (key) {
                 "hierarchy_template" -> HierarchyTemplate.parse(value).encode()
+                "document_topic_rules" -> DocumentTopicRules.parse(value).encode()
+                "named_document_topic_templates" -> checkedList(value, NamedDocumentTopicTemplateCodec.decode(value), 20, NamedDocumentTopicTemplateCodec::encode)
                 "named_hierarchy_templates" -> checkedList(value, NamedHierarchyTemplateCodec.decode(value), 20, NamedHierarchyTemplateCodec::encode)
                 "saved_workflows" -> checkedList(value, SavedWorkflowCodec.decode(value), 20, SavedWorkflowCodec::encode)
                 "saved_searches" -> checkedList(value, SavedSearchCodec.decode(value), 20, SavedSearchCodec::encode)

@@ -118,6 +118,8 @@ class SettingsRepository(private val context: Context) {
         val METADATA_INDEXING = booleanPreferencesKey("metadata_indexing_enabled")
         val HIERARCHY_TEMPLATE = stringPreferencesKey("hierarchy_template")
         val NAMED_HIERARCHY_TEMPLATES = stringPreferencesKey("named_hierarchy_templates")
+        val DOCUMENT_TOPICS = stringPreferencesKey("document_topic_rules")
+        val NAMED_DOCUMENT_TOPICS = stringPreferencesKey("named_document_topic_templates")
         val CONTENT_INSPECTION = booleanPreferencesKey("content_inspection_enabled")
         val IMAGE_ANALYSIS = booleanPreferencesKey("image_analysis_enabled")
         val ON_DEVICE_AI = booleanPreferencesKey("on_device_ai_enabled")
@@ -570,6 +572,53 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             val values = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.decode(prefs[Keys.NAMED_HIERARCHY_TEMPLATES])
             prefs[Keys.NAMED_HIERARCHY_TEMPLATES] = com.pocketsteward.app.saved.NamedHierarchyTemplateCodec.encode(values.filterNot { it.name == name })
+        }
+    }
+
+    val documentTopicRules: Flow<com.pocketsteward.app.saved.DocumentTopicRules> = context.dataStore.data.map { prefs ->
+        val raw = prefs[Keys.DOCUMENT_TOPICS]
+        if (raw == null) com.pocketsteward.app.saved.DocumentTopicRules.Defaults
+        else runCatching { com.pocketsteward.app.saved.DocumentTopicRules.parse(raw) }.getOrDefault(com.pocketsteward.app.saved.DocumentTopicRules())
+    }
+    val namedDocumentTopicTemplates: Flow<List<com.pocketsteward.app.saved.NamedDocumentTopicTemplate>> = context.dataStore.data.map {
+        com.pocketsteward.app.saved.NamedDocumentTopicTemplateCodec.decode(it[Keys.NAMED_DOCUMENT_TOPICS])
+    }
+    suspend fun setDocumentTopicRules(text: String) {
+        val rules = com.pocketsteward.app.saved.DocumentTopicRules.parse(text)
+        context.dataStore.edit { it[Keys.DOCUMENT_TOPICS] = rules.encode() }
+    }
+    suspend fun saveDocumentTopicRule(previousName: String?, name: String, folder: String, terms: String) {
+        val rule = com.pocketsteward.app.saved.DocumentTopicTemplate(name.trim(), folder.trim(), terms.split(',').map { it.trim() }).also { it.validate() }
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.DOCUMENT_TOPICS]?.let { com.pocketsteward.app.saved.DocumentTopicRules.parse(it) }
+                ?: com.pocketsteward.app.saved.DocumentTopicRules.Defaults
+            val rules = com.pocketsteward.app.saved.DocumentTopicRules(current.topics.filterNot { it.name == previousName } + rule).also { it.validate() }
+            prefs[Keys.DOCUMENT_TOPICS] = rules.encode()
+        }
+    }
+    suspend fun removeDocumentTopicRule(name: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.DOCUMENT_TOPICS]?.let { com.pocketsteward.app.saved.DocumentTopicRules.parse(it) }
+                ?: com.pocketsteward.app.saved.DocumentTopicRules.Defaults
+            prefs[Keys.DOCUMENT_TOPICS] = current.copy(topics = current.topics.filterNot { it.name == name }).encode()
+        }
+    }
+    suspend fun saveNamedDocumentTopicTemplate(name: String) {
+        val title = name.trim()
+        require(title.isNotBlank() && title.length <= 60 && title.none(Char::isISOControl)) { "Use a template name from 1 to 60 characters." }
+        context.dataStore.edit { prefs ->
+            val rules = prefs[Keys.DOCUMENT_TOPICS]?.let { com.pocketsteward.app.saved.DocumentTopicRules.parse(it) }
+                ?: com.pocketsteward.app.saved.DocumentTopicRules.Defaults
+            val existing = com.pocketsteward.app.saved.NamedDocumentTopicTemplateCodec.decode(prefs[Keys.NAMED_DOCUMENT_TOPICS])
+            val updated = existing.filterNot { it.name.equals(title, true) } + com.pocketsteward.app.saved.NamedDocumentTopicTemplate(title, rules)
+            require(updated.size <= 20) { "Remove a saved topic template before adding another." }
+            prefs[Keys.NAMED_DOCUMENT_TOPICS] = com.pocketsteward.app.saved.NamedDocumentTopicTemplateCodec.encode(updated)
+        }
+    }
+    suspend fun removeNamedDocumentTopicTemplate(name: String) {
+        context.dataStore.edit { prefs ->
+            val current = com.pocketsteward.app.saved.NamedDocumentTopicTemplateCodec.decode(prefs[Keys.NAMED_DOCUMENT_TOPICS])
+            prefs[Keys.NAMED_DOCUMENT_TOPICS] = com.pocketsteward.app.saved.NamedDocumentTopicTemplateCodec.encode(current.filterNot { it.name == name })
         }
     }
 

@@ -1,6 +1,6 @@
 # App completion implementation progress
 
-Updated 2026-10-02. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. GOAL_APP_COMPLETION_SPEC.md and APP_COMPLETION_REGISTER.md track the accepted remaining build path. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md retain historical/master traceability.
+Updated 2026-10-03. This is an implementation checkpoint, not a declaration that the entire master plan or target-phone acceptance is finished. GOAL_APP_COMPLETION_SPEC.md and APP_COMPLETION_REGISTER.md track the accepted remaining build path. APP_COMPLETION_PLAN.md and MASTER_PLAN_RECONCILIATION.md retain historical/master traceability.
 
 ## Implemented in dev7
 
@@ -184,3 +184,6 @@ The user explicitly requests continued whole-app implementation without further 
 
 
 2026-10-02 workflow integration follow-up: selected-tree filing sessions now retain their typed home base through saved drafts and assignment/deferral rebuilding. This prevents an opaque chosen destination from reverting to the inbox during an edit. Direct new-project assignments use live workflow destination checks and require one unambiguous base when source-local preferences span several roots. Existing homes remain preferred. App compilation and targeted filing/saved-draft checks passed, including a real atomic draft restart with an opaque destination, a role reassignment and retained-checkpoint deferral. No APK checkpoint.
+
+
+2026-10-03 continued internal work (no APK checkpoint): grounded document topic suggestions now use two distinct phrases from inspected excerpts, with existing project evidence taking priority. Multiple topic matches remain uncertain; suggestions are probable and unchecked, neither establish intact-folder ownership nor inherit project releases by a matching category name. Settings supports editing/removing rules, safe relative category destinations, defaults/disable and reusable named templates. Portable backup/restore validates both active and saved templates before atomic restore. Direct and selected-tree filing use the workflow destination base and typed category destinations; review identifies category groups. The actual API36 Settings/DataStore save/edit/template/backup/restore journey passed. All 805 host tests and lintDebug passed before a final cancellation refinement; subsequent filing regressions passed with a 16k-source cancellation case. The latest prior workflow-base source also passed independent GitHub CI (run 37079189865). Physical corpus/UI acceptance and remaining mandatory packages stay open. No APK was signed or published.

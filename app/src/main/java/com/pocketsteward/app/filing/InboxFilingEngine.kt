@@ -37,17 +37,23 @@ object InboxFilingEngine {
         storageRoot: String,
         newProjectRoles: Map<String, String> = emptyMap(),
         newProjectRoots: Map<String, String> = emptyMap(),
+        documentTopics: com.pocketsteward.app.saved.DocumentTopicRules = com.pocketsteward.app.saved.DocumentTopicRules.Defaults,
+        newTopicRoots: Map<String, String> = emptyMap(),
+        checkCancelled: () -> Unit = {},
     ): InboxFilingResult {
         if (artifacts.isEmpty()) return InboxFilingResult(emptyList())
+        checkCancelled()
+        val topicClassifier = DocumentTopicClassifier(documentTopics, checkCancelled)
 
         val homes = (persistedHomes + discoveredHomes)
             .distinctBy { normalize(it.path) }
         val repeatedLabels = artifacts
-            .mapNotNull { guessedProjectLabel(it.displayName) }
+            .mapNotNull { checkCancelled(); guessedProjectLabel(it.displayName) }
             .groupingBy { normalizeCompact(it) }
             .eachCount()
 
         val anchors = artifacts.map { artifact ->
+            checkCancelled()
             resolveAnchor(
                 artifact = artifact,
                 homes = homes,
@@ -56,17 +62,20 @@ object InboxFilingEngine {
                 storageRoot = storageRoot,
                 repeatedLabels = repeatedLabels,
                 newProjectRoot = newProjectRoots[artifact.stableRef],
+                topicClassifier = topicClassifier,
+                newTopicRoot = newTopicRoots[artifact.stableRef],
             )
         }
 
         // Second pass: a file with real project evidence but no release can
         // inherit a nearby unique release from that same project. Time alone
         // is never enough to establish project membership.
-        val releaseIndex = anchors.filter { it.projectName != null && it.release != null }
+        val releaseIndex = anchors.filter { it.projectName != null && it.release != null && it.projectHome?.categoryHome != true }
             .groupBy { normalizeCompact(requireNotNull(it.projectName)) }
             .mapValues { (_, decisions) -> decisions.groupBy { requireNotNull(it.release) }.mapValues { (_, group) -> TimedCohort(group) } }
         val releaseResolved = anchors.map { decision ->
-            if (decision.artifact.isDirectory || decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
+            checkCancelled()
+            if (decision.artifact.isDirectory || decision.projectHome?.categoryHome == true || decision.confidence == FilingConfidence.UNRESOLVED || decision.release != null || decision.projectName == null) {
                 decision
             } else {
                 val releases = releaseIndex[normalizeCompact(decision.projectName)].orEmpty()
@@ -101,7 +110,9 @@ object InboxFilingEngine {
             .groupBy { normalize(requireNotNull(it.projectHome).path) to it.release }
             .values.map { TimedCohort(it) }
         val resolved = releaseResolved.map { decision ->
+            checkCancelled()
             if (decision.evidence.any { it.kind in setOf(FilingEvidenceKind.DESTINATION_CONFLICT, FilingEvidenceKind.SOURCE_UNAVAILABLE, FilingEvidenceKind.PROJECT_AMBIGUITY) }) return@map decision
+            if (decision.confidence == FilingConfidence.UNRESOLVED && decision.evidence.any { it.kind == FilingEvidenceKind.DOCUMENT_TOPIC }) return@map decision
             val categoryOnly = decision.confidence == FilingConfidence.PROBABLE && decision.evidence.all { it.kind in setOf(FilingEvidenceKind.IMAGE_CONTENT, FilingEvidenceKind.MEDIA_METADATA) }
             if ((!categoryOnly && decision.confidence != FilingConfidence.UNRESOLVED) || !isSupportingArtifact(decision.artifact)) {
                 decision
@@ -175,6 +186,8 @@ object InboxFilingEngine {
         storageRoot: String,
         repeatedLabels: Map<String, Int>,
         newProjectRoot: String?,
+        topicClassifier: DocumentTopicClassifier,
+        newTopicRoot: String?,
     ): FilingDecision {
         val imageTopic = if (!artifact.isDirectory && !storageRoot.startsWith("content://") &&
                 artifact.extension.lowercase(Locale.ROOT) in setOf("png", "jpg", "jpeg", "webp", "gif", "heic")) {
@@ -328,6 +341,7 @@ object InboxFilingEngine {
             .sortedByDescending { (_, evidence) -> evidence.sumOf { it.weight } }
         val best = ranked.firstOrNull()
         if (best == null) {
+            topicClassifier.propose(artifact, storageRoot, newTopicRoot ?: newProjectRoot)?.let { return it }
             NonProjectMediaFiling.propose(artifact, storageRoot)?.let { return it }
             if (imageTopic != null) {
                 val topicHome = ProjectHomeCandidate(imageTopic, "${storageRoot.trimEnd('/')}/Images/$imageTopic", hierarchy = ProjectHierarchyStrategy.FLAT, categoryHome = true)

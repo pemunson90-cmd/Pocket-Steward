@@ -318,6 +318,7 @@ fun SettingsScreen(
             }
         }
 
+        DocumentTopicSettingsCard(viewModel)
         val template by viewModel.hierarchyTemplate.collectAsState()
         val templateMessage by viewModel.hierarchyTemplateMessage.collectAsState()
         val namedTemplates by viewModel.namedHierarchyTemplates.collectAsState()

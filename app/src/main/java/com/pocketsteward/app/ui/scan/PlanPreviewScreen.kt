@@ -802,7 +802,7 @@ private fun FilingDestinationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else if (group.isTopicDestination) "Media category" else {
+                        if (group.isUncertainCheckpoint) "Uncertain checkpoint" else if (group.isTopicDestination) "Category" else {
                             group.destinationPath.removePrefix(group.projectHomePath).trim('/').replace("/", " › ")
                                 .ifBlank { "Project root" }
                         },

@@ -28,6 +28,7 @@ enum class FilingEvidenceKind {
     IMAGE_CONTENT,
     IMAGE_TEXT,
     FOLDER_CONTENT,
+    DOCUMENT_TOPIC,
 }
 
 data class FilingEvidence(

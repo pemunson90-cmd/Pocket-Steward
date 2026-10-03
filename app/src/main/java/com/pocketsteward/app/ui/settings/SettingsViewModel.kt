@@ -112,6 +112,19 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.deleteNamedHierarchyTemplate(name) }
     }
     val hierarchyTemplateMessage = MutableStateFlow<String?>(null)
+    val documentTopicRules = settingsRepository.documentTopicRules.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.pocketsteward.app.saved.DocumentTopicRules.Defaults)
+    val namedDocumentTopicTemplates = settingsRepository.namedDocumentTopicTemplates.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val documentTopicMessage = MutableStateFlow<String?>(null)
+    private fun updateDocumentTopics(action: suspend () -> Unit) {
+        viewModelScope.launch { documentTopicMessage.value = runCatching { action() }.fold({ "Document topic settings saved. Rebuild a filing review to use them." }, { it.message ?: "Topic settings could not be saved." }) }
+    }
+    fun saveDocumentTopicRule(previousName: String?, name: String, folder: String, terms: String) = updateDocumentTopics {
+        settingsRepository.saveDocumentTopicRule(previousName, name, folder, terms)
+    }
+    fun removeDocumentTopicRule(name: String) = updateDocumentTopics { settingsRepository.removeDocumentTopicRule(name) }
+    fun setDocumentTopicRules(text: String) = updateDocumentTopics { settingsRepository.setDocumentTopicRules(text) }
+    fun saveNamedDocumentTopicTemplate(name: String) = updateDocumentTopics { settingsRepository.saveNamedDocumentTopicTemplate(name) }
+    fun removeNamedDocumentTopicTemplate(name: String) = updateDocumentTopics { settingsRepository.removeNamedDocumentTopicTemplate(name) }
     fun saveHierarchyTemplate(text: String) {
         viewModelScope.launch {
             hierarchyTemplateMessage.value = runCatching { settingsRepository.setHierarchyTemplate(text) }

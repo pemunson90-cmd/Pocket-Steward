@@ -174,7 +174,7 @@ object InboxFilingPlanAdapter {
                     items = decisions.map(::reviewItem),
                     hierarchy = home.hierarchy,
                     roleFolders = home.roleFolders,
-                    isTopicDestination = home.hierarchy == ProjectHierarchyStrategy.FLAT && listOf("Images", "Music", "Movies").any { home.path.startsWith("$rootPath/$it/") },
+                    isTopicDestination = home.categoryHome || home.hierarchy == ProjectHierarchyStrategy.FLAT && listOf("Images", "Music", "Movies").any { home.path.startsWith("$rootPath/$it/") },
                     editableDirectDestination = home.path.trimEnd('/').lowercase() in existing,
                 )
             }
@@ -334,6 +334,7 @@ object InboxFilingSafPlanAdapter {
                 hierarchy = home.hierarchy,
                     roleFolders = home.roleFolders,
                 editableDirectDestination = false,
+                isTopicDestination = home.categoryHome,
             )
         }
 

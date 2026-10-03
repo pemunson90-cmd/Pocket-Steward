@@ -222,11 +222,13 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
             }.toMap()
             val childRoots = folderMaterial.ownerByChild.mapNotNull { (child, owner) -> preferredRoots[owner]?.let { child to it } }.toMap()
             val inferred = withContext(Dispatchers.Default) {
+                val context = kotlinx.coroutines.currentCoroutineContext()
                 val keywords = settingsRepository.projectKeywords.first()
                 val corrections = settingsRepository.correctionRules.first()
                 val roles = settingsRepository.hierarchyTemplate.first().roleFolders
+                val topics = settingsRepository.documentTopicRules.first()
                 val children = InboxFilingEngine.resolve(folderMaterial.children, (savedHomes + favorites).distinctBy { it.path.lowercase() },
-                    observedHomes + discovered, keywords, corrections, storageRoot.absolutePath, roles, childRoots)
+                    observedHomes + discovered, keywords, corrections, storageRoot.absolutePath, roles, childRoots, documentTopics = topics, checkCancelled = { context.ensureActive() })
                 val resolved = InboxFilingEngine.resolve(
                     artifacts = artifacts,
                     persistedHomes = (savedHomes + favorites).distinctBy { it.path.lowercase() },
@@ -236,6 +238,8 @@ internal fun ScanViewModel.proposeInboxFiling(summary: ScanUiState.Summary, chec
                     storageRoot = storageRoot.absolutePath,
                     newProjectRoles = roles,
                     newProjectRoots = preferredRoots,
+                    documentTopics = topics,
+                    checkCancelled = { context.ensureActive() },
                 )
                 com.pocketsteward.app.filing.FilingFolderEvidence.reconcile(resolved, children, folderMaterial.ownerByChild,
                     folderMaterial.entryCounts, snapshots.baselines.filterValues { it.directoryDigest != null }.mapValues { it.value.directoryEntryCount })
@@ -408,6 +412,7 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
     }
     val workflowHomeRoot = workflowDestination(scope, summary.mode)
     val inferred = withContext(Dispatchers.Default) {
+        val context = kotlinx.coroutines.currentCoroutineContext()
         InboxFilingEngine.resolve(
             artifacts = artifacts,
             persistedHomes = emptyList(),
@@ -417,6 +422,9 @@ private suspend fun ScanViewModel.proposeInboxFilingSaf(summary: ScanUiState.Sum
             storageRoot = scope.root.rawValue(),
             newProjectRoles = settingsRepository.hierarchyTemplate.first().roleFolders,
             newProjectRoots = artifacts.associate { it.stableRef to (workflowHomeRoot?.rawValue() ?: scope.root.rawValue()) },
+            documentTopics = settingsRepository.documentTopicRules.first(),
+            newTopicRoots = artifacts.associate { it.stableRef to (workflowHomeRoot ?: scope.root.child("Documents")).rawValue() },
+            checkCancelled = { context.ensureActive() },
         )
     }
     val result = FilingSourceAvailability.block(FilingContinuationPolicy.applyAssignments(inferred, continuation?.assignments.orEmpty()), unavailableSources)
