@@ -46,6 +46,8 @@ class MetadataEnricher(
     private val observedRevision: (String) -> String? = { null },
 ) {
     private val evidenceCache = MetadataEvidenceCache(File(context.cacheDir, "artifact-evidence-v3"))
+    /** App-private; RAR/7z staging never writes beside the user's files. */
+    private val stagingDirectory = File(context.cacheDir, ArchiveStaging.DIRECTORY_NAME)
 
     fun supports(record: FileRecord): Boolean {
         if (record.isDirectory) return false
@@ -57,7 +59,11 @@ class MetadataEnricher(
             ext in ArchiveInspector.supportedExtensions
     }
 
-    fun enrich(record: FileRecord): MetadataEnrichment {
+    /**
+     * [checkCancelled] is polled during archive inspection and must throw to stop it;
+     * cancellation propagates instead of becoming an "unreadable archive" result.
+     */
+    fun enrich(record: FileRecord, checkCancelled: () -> Unit = ::interruptCheck): MetadataEnrichment {
         if (!supports(record)) return MetadataEnrichment(record, changed = false)
         if (!record.stableRef.startsWith("content://") && !File(record.stableRef).isFile) {
             return MetadataEnrichment(record, changed = false)
@@ -136,14 +142,10 @@ class MetadataEnricher(
         }
 
         if (record.extension.lowercase() in ArchiveInspector.supportedExtensions) {
-            val inspection = runCatching {
-                if (!record.isSaf() && record.extension.lowercase() in setOf("zip", "apks", "xapk")) {
-                    ArchiveInspector.zipFile(File(record.stableRef))
-                } else {
-                    val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
-                    requireNotNull(input).use { ArchiveInspector.stream(it, record.extension) }
-                }
-            }.getOrElse { ArchiveInspection(0, emptyList(), false, "Archive could not be inspected. No files were extracted.") }
+            val inspection = try { inspectArchive(record, checkCancelled) } catch (failure: Exception) {
+                if (failure.isCancellation()) throw failure.asCancellation()
+                ArchiveInspection(0, emptyList(), false, "Archive could not be inspected. No files were extracted.")
+            }
             archiveCount = inspection.observedEntries
             archiveSample = inspection.names
             archiveComplete = inspection.complete
@@ -171,6 +173,31 @@ class MetadataEnricher(
                     archiveNote = "Source evidence could not be verified; refresh the inventory before using it.")
             } else result.also { evidenceCache.write(it, before) }
         }
+    }
+
+    private fun inspectArchive(record: FileRecord, checkCancelled: () -> Unit): ArchiveInspection {
+        val extension = record.extension.lowercase()
+        if (extension in ArchiveInspector.randomAccessExtensions) {
+            if (!record.isSaf()) return ArchiveInspector.file(File(record.stableRef), extension, checkCancelled)
+            // Regular files behind SAF expose a seekable descriptor; pipes and virtual
+            // documents (statSize < 0) are staged to an owned app-private copy instead.
+            val descriptor = try { context.contentResolver.openFileDescriptor(record.uri(), "r") } catch (failure: Exception) {
+                if (failure.isCancellation()) throw failure.asCancellation()
+                null
+            }
+            if (descriptor != null) {
+                return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                    if (descriptor.statSize >= 0) ArchiveInspector.channel(input.channel, extension, checkCancelled)
+                    else ArchiveInspector.stream(input, extension, stagingDirectory, checkCancelled, record.sizeBytes)
+                }
+            }
+            return requireNotNull(context.contentResolver.openInputStream(record.uri())).use { input ->
+                ArchiveInspector.stream(input, extension, stagingDirectory, checkCancelled, record.sizeBytes)
+            }
+        }
+        if (!record.isSaf() && extension in setOf("zip", "apks", "xapk")) return ArchiveInspector.zipFile(File(record.stableRef))
+        val input = if (record.isSaf()) context.contentResolver.openInputStream(record.uri()) else File(record.stableRef).inputStream()
+        return requireNotNull(input).use { ArchiveInspector.stream(it, record.extension, checkCancelled) }
     }
 
     private fun sourceSample(record: FileRecord): String? = try {

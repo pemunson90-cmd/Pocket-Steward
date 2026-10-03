@@ -9,8 +9,18 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 
-/** Rebuildable private cache; never holds filesystem mutation authority. */
-class MetadataEvidenceCache(private val directory: File) {
+/**
+ * Rebuildable private cache; never holds filesystem mutation authority.
+ *
+ * Archive results are additionally keyed by [archiveInspectorRevision], so an entry
+ * written by an older inspector (for example "unsupported" before RAR/7z listing)
+ * is never reused as current support. Other entries keep their existing keys.
+ * A null revision reproduces the pre-revision key and exists for migration tests.
+ */
+class MetadataEvidenceCache(
+    private val directory: File,
+    private val archiveInspectorRevision: Int? = ArchiveInspector.REVISION,
+) {
     fun read(record: FileRecord, fingerprint: String?): MetadataEnrichment? = runCatching {
         if (record.modifiedAt == null || fingerprint == null) return null // Unknown freshness is not proof of reuse.
         val file = fileFor(record)
@@ -18,7 +28,7 @@ class MetadataEvidenceCache(private val directory: File) {
         DataInputStream(file.inputStream().buffered()).use { input ->
             require(input.readInt() == 0x50534D32 && input.readInt() == 4)
             require(input.readUTF() == record.stableRef && input.readLong() == record.sizeBytes && input.readLong() == record.modifiedAt)
-            require(input.readUTF() == fingerprint)
+            require(input.readUTF() == derivationKey(record, fingerprint))
             val updated = record.copy(
                 mediaType = input.string(), width = input.integer(), height = input.integer(), durationMs = input.long(),
                 apkPackageName = input.string(), apkVersionName = input.string(),
@@ -55,7 +65,7 @@ class MetadataEvidenceCache(private val directory: File) {
                 val record = result.record
                 output.writeInt(0x50534D32); output.writeInt(4)
                 output.writeUTF(record.stableRef); output.writeLong(record.sizeBytes); output.writeLong(requireNotNull(record.modifiedAt))
-                output.writeUTF(fingerprint)
+                output.writeUTF(derivationKey(record, fingerprint))
                 output.string(record.mediaType); output.integer(record.width); output.integer(record.height); output.long(record.durationMs)
                 output.string(record.apkPackageName); output.string(record.apkVersionName)
                 output.integer(result.pdfPageCount); output.integer(result.archiveEntryCount); output.string(result.apkLabel); output.long(result.apkVersionCode)
@@ -70,6 +80,11 @@ class MetadataEvidenceCache(private val directory: File) {
             // A cache failure cannot prevent inspection or modify user files.
         } finally { temporary?.delete() }
     }
+
+    private fun derivationKey(record: FileRecord, fingerprint: String): String =
+        if (archiveInspectorRevision != null && record.extension.lowercase() in ArchiveInspector.supportedExtensions) {
+            "$fingerprint|archive-inspector:$archiveInspectorRevision"
+        } else fingerprint
 
     private fun fileFor(record: FileRecord): File {
         val hash = MessageDigest.getInstance("SHA-256").digest(record.stableRef.toByteArray()).joinToString("") { "%02x".format(it) }
