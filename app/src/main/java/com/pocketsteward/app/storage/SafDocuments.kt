@@ -32,6 +32,7 @@ internal class SafDocuments(private val context: Context) {
     private fun query(tree: Uri, queryUri: Uri): List<Node> {
         val result = ArrayList<Node>()
         val identities = HashSet<String>()
+        var estimatedBytes = 0L
         resolver.query(queryUri, columns, null, null, null)?.use { cursor ->
             val indexes = columns.map { cursor.getColumnIndexOrThrow(it) }
             while (cursor.moveToNext()) {
@@ -46,7 +47,10 @@ internal class SafDocuments(private val context: Context) {
                 val size = if (mime == DocumentsContract.Document.MIME_TYPE_DIR) 0L else {
                     if (cursor.isNull(indexes[3])) -1L else cursor.getLong(indexes[3])
                 }
-                result += Node(DocumentsContract.buildDocumentUriUsingTree(tree, id), id, name, mime, size,
+                val childUri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                estimatedBytes += 256L + 2L * (id.length + name.length + mime.length + childUri.toString().length)
+                check(estimatedBytes <= 32L * 1024 * 1024) { "Provider listing exceeds the bounded metadata memory budget." }
+                result += Node(childUri, id, name, mime, size,
                     if (cursor.isNull(indexes[4])) null else cursor.getLong(indexes[4]).takeIf { it > 0 },
                     if (cursor.isNull(indexes[5])) 0 else cursor.getInt(indexes[5]))
             }

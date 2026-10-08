@@ -243,8 +243,11 @@ fun ResultsScreen(viewModel: ScanViewModel, onBack: () -> Unit, onScanAgain: () 
                         Switch(checked = includeSubfolders, onCheckedChange = null)
                     }
                 }
-                if (hasBroadAccess && projectHomes.size >= 2) item {
-                    ProjectConsolidationCard(projectHomes, busy == null, viewModel::proposeProjectConsolidation)
+                val availableHomes = projectHomes.filter { home ->
+                    if (hasBroadAccess) home.path.startsWith('/') else home.path.startsWith("content://")
+                }
+                if (availableHomes.size >= 2) item {
+                    ProjectConsolidationCard(availableHomes, busy == null, viewModel::proposeProjectConsolidation)
                 }
                 item { SectionHeader("Find") }
                 item {

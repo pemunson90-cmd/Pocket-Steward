@@ -39,6 +39,12 @@ data class InboxRoot(
     val name: String,
 )
 
+/** Provider document IDs are opaque and case-sensitive; direct paths retain existing collision policy. */
+fun organizationReferenceIdentity(value: String): String {
+    val ref = value.trim().trimEnd('/')
+    return if (ref.startsWith("content://") || ref.startsWith("ps-child:")) ref else ref.lowercase(java.util.Locale.ROOT)
+}
+
 object OrganizationPreferenceCodec {
     private const val LIST_SEPARATOR = '\u001F'
 
@@ -108,7 +114,7 @@ object OrganizationPreferenceCodec {
                 )
             }.getOrNull()
         }.filter { it.name.isNotBlank() && it.path.isNotBlank() }
-            .distinctBy { it.path.lowercase() }
+            .distinctBy { organizationReferenceIdentity(it.path) }
             .toList()
     }
 
@@ -124,7 +130,7 @@ object OrganizationPreferenceCodec {
             if (parts.size != 2) return@mapNotNull null
             runCatching { InboxRoot(dec(parts[0]), dec(parts[1])) }.getOrNull()
         }.filter { it.path.isNotBlank() && it.name.isNotBlank() }
-            .distinctBy { it.path.lowercase() }
+            .distinctBy { organizationReferenceIdentity(it.path) }
             .toList()
     }
 

@@ -23,6 +23,14 @@ class SafStorageGateway(
     private val documents = SafDocuments(context)
     private val nativeFolders = SafNativeFolderMover(context, documents, protection)
 
+    override fun entryIdentity(ref: FileRef): String = if (ref is FileRef.Saf) {
+        val uri = documents.documentUri(Uri.parse(ref.documentUri))
+        "provider:" + uri.authority + "\u0000" + DocumentsContract.getDocumentId(uri)
+    } else ref.rawValue()
+
+    override suspend fun containsInScope(ref: FileRef, scopeRoot: String): Boolean? =
+        ref is FileRef.Saf && scopeRoot.startsWith("content://") && SafScopeAccess.contains(context, scopeRoot, ref.documentUri)
+
     override suspend fun rootOf(scope: StorageScope): FileRef {
         check(scope is StorageScope.Tree) {
             "SafStorageGateway only serves StorageScope.Tree, got $scope"

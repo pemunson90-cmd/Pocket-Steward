@@ -51,6 +51,13 @@ class OrganizationPreferenceCodecTest {
         )).containsExactlyElementsIn(input).inOrder()
     }
 
+    @Test fun opaqueProviderIdsWithDifferentCaseRemainDistinctHomes() {
+        val input = listOf(ProjectHome(name = "First", path = "content://provider/tree/root/document/HomeA"),
+            ProjectHome(name = "Second", path = "content://provider/tree/root/document/homea"))
+        assertThat(OrganizationPreferenceCodec.decodeProjectHomes(OrganizationPreferenceCodec.encodeProjectHomes(input)))
+            .containsExactlyElementsIn(input).inOrder()
+    }
+
     @Test
     fun inboxRootsRoundTrip() {
         val input = listOf(InboxRoot("/storage/emulated/0/Download", "Downloads"))

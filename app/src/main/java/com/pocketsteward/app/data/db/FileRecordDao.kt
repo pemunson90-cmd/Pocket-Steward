@@ -110,6 +110,20 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE parentRef = :parentRef ORDER BY isDirectory DESC, displayName ASC")
     fun observeChildren(parentRef: String): Flow<List<FileRecord>>
 
+    @Query("SELECT stableRef, displayName, isDirectory FROM file_records WHERE parentRef IN (:parents) AND stableRef > :afterRef ORDER BY stableRef LIMIT :limit")
+    suspend fun getIndexedChildren(parents: List<String>, afterRef: String, limit: Int): List<IndexedChildRef>
+
+    @Query("DELETE FROM file_records WHERE stableRef IN (:refs)")
+    suspend fun deleteByStableRefs(refs: List<String>)
+
+    /** Replace the complete observed moved subtree atomically, including scope memberships. */
+    @Transaction
+    suspend fun replaceMovedSubtree(oldRefs: List<String>, records: List<FileRecord>, scopes: List<FileScope>) {
+        oldRefs.chunked(SCAN_LOOKUP_CHUNK).forEach { deleteByStableRefs(it) }
+        records.chunked(SCAN_LOOKUP_CHUNK).forEach { upsertAllFromScan(it) }
+        scopes.chunked(SCAN_LOOKUP_CHUNK).forEach { insertScopeTags(it) }
+    }
+
     @Query("SELECT COUNT(*) FROM file_records WHERE parentRef = :parentRef")
     suspend fun countChildren(parentRef: String): Int
 
@@ -155,7 +169,7 @@ interface FileRecordDao {
     @Query("DELETE FROM file_records WHERE stableRef = :stableRef")
     suspend fun deleteByStableRef(stableRef: String)
 
-    @Query("SELECT DISTINCT scopeRoot FROM file_scopes")
+    @Query("SELECT scopeRoot FROM file_scopes UNION SELECT scopeRootRef FROM scan_checkpoints")
     suspend fun getKnownScopeRoots(): List<String>
 
     @Query("DELETE FROM file_scopes WHERE scopeRoot = :scopeRootRef")
@@ -280,3 +294,6 @@ data class ExtensionStat(val extension: String, val fileCount: Int, val totalByt
 data class IndexedProjectLayout(val path: String, val name: String, val hidden: Boolean, val observedRoles: String)
 
 data class ProjectDiscoveryRevision(val rowCount: Long, val scannedAt: Long, val maxId: Long)
+
+/** Thin keyset projection for bounded descendant-index reconciliation. */
+data class IndexedChildRef(val stableRef: String, val displayName: String, val isDirectory: Boolean)

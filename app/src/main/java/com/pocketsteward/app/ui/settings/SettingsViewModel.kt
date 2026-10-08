@@ -413,7 +413,7 @@ class SettingsViewModel(
                     aliases = aliases,
                     packageIds = packages,
                     hierarchy = hierarchy,
-                    roleFolders = projectHomes.value.firstOrNull { it.path.equals(head[1].trim(), true) }?.roleFolders.orEmpty(),
+                    roleFolders = projectHomes.value.firstOrNull { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) == com.pocketsteward.app.saved.organizationReferenceIdentity(head[1]) }?.roleFolders.orEmpty(),
                 )
             }
             .toList()

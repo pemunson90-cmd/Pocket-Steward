@@ -15,6 +15,15 @@ interface StorageGateway {
     suspend fun exists(ref: FileRef): Boolean
     /** Mutation/recovery checks must distinguish absence from unavailable or incomplete provider access. */
     suspend fun verifyExists(ref: FileRef): Boolean = exists(ref)
+    /** Exact entry identity for rebuildable indexing; never a grant or mutation authorization. */
+    fun entryIdentity(ref: FileRef): String = ref.rawValue()
+
+    /** Live scope membership for index reconciliation; null when this backend cannot observe it. */
+    suspend fun containsInScope(ref: FileRef, scopeRoot: String): Boolean? = if (ref is FileRef.Direct && scopeRoot.startsWith('/')) {
+        val root = scopeRoot.trimEnd('/')
+        ref.absolutePath == root || ref.absolutePath.startsWith("$root/")
+    } else null
+
     suspend fun openRead(ref: FileRef): InputStream
 
     /** Optional provider-verified parent/name; opaque IDs alone do not prove a source location. */

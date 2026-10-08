@@ -256,7 +256,7 @@ class SettingsRepository(private val context: Context) {
                 )
             }
             .filter { it.name.isNotBlank() && it.path.isNotBlank() }
-            .distinctBy { it.path.lowercase() }
+            .distinctBy { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) }
             .take(20)
         context.dataStore.edit {
             it[Keys.FAVORITE_DESTINATIONS] = OrganizationPreferenceCodec.encodeDestinations(cleaned)
@@ -316,7 +316,7 @@ class SettingsRepository(private val context: Context) {
                 )
             }
             .filter { it.name.isNotBlank() && it.path.isNotBlank() }
-            .distinctBy { it.path.lowercase() }
+            .distinctBy { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) }
             .take(100)
         context.dataStore.edit { prefs ->
             prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(cleaned)
@@ -336,7 +336,7 @@ class SettingsRepository(private val context: Context) {
         if (cleanName.isBlank() || cleanPath.isBlank()) return
         context.dataStore.edit { prefs ->
             val current = OrganizationPreferenceCodec.decodeProjectHomes(prefs[Keys.PROJECT_HOMES])
-            val existing = current.firstOrNull { it.path.equals(cleanPath, ignoreCase = true) }
+            val existing = current.firstOrNull { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) == com.pocketsteward.app.saved.organizationReferenceIdentity(cleanPath) }
             val merged = ProjectHome(
                 id = existing?.id ?: UUID.randomUUID().toString(),
                 name = cleanName,
@@ -348,7 +348,7 @@ class SettingsRepository(private val context: Context) {
                 hierarchy = existing?.hierarchy ?: hierarchy,
                 roleFolders = existing?.roleFolders?.takeIf { it.isNotEmpty() } ?: roleFolders,
             )
-            val updated = listOf(merged) + current.filterNot { it.path.equals(cleanPath, ignoreCase = true) }
+            val updated = listOf(merged) + current.filterNot { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) == com.pocketsteward.app.saved.organizationReferenceIdentity(cleanPath) }
             prefs[Keys.PROJECT_HOMES] = OrganizationPreferenceCodec.encodeProjectHomes(updated.take(100))
         }
     }
@@ -357,7 +357,7 @@ class SettingsRepository(private val context: Context) {
         val cleaned = values
             .map { InboxRoot(path = it.path.trim().trimEnd('/'), name = it.name.trim().take(80)) }
             .filter { it.path.isNotBlank() && it.name.isNotBlank() }
-            .distinctBy { it.path.lowercase() }
+            .distinctBy { com.pocketsteward.app.saved.organizationReferenceIdentity(it.path) }
             .take(20)
         context.dataStore.edit { prefs ->
             prefs[Keys.INBOX_ROOTS] = OrganizationPreferenceCodec.encodeInboxRoots(cleaned)

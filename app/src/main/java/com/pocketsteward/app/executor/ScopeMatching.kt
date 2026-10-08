@@ -2,6 +2,9 @@ package com.pocketsteward.app.executor
 
 import com.pocketsteward.app.storage.FileRef
 import com.pocketsteward.app.storage.rawValue
+import com.pocketsteward.app.storage.StorageGateway
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Which of [knownScopes] contain [ref], by path.
@@ -22,4 +25,22 @@ internal fun matchingScopeRoots(ref: FileRef, knownScopes: List<String>): List<S
         val normalized = scope.trimEnd('/')
         raw == normalized || raw.startsWith("$normalized/")
     }
+}
+
+/** Provider scope membership is observed through real parent routes, never a URI prefix. */
+internal suspend fun matchingStorageScopes(gateway: StorageGateway, ref: FileRef, knownScopes: List<String>, taskScope: String): Set<String> {
+    val result = linkedSetOf<String>()
+    for (scope in knownScopes.distinct()) {
+        currentCoroutineContext().ensureActive()
+        when (gateway.containsInScope(ref, scope)) {
+            true -> result += scope
+            false -> Unit
+            null -> {
+                // Compatibility for gateways that expose no provider route;
+                // the production SAF gateway always supplies a live result.
+                if (scope in matchingScopeRoots(ref, listOf(scope)) || ref !is FileRef.Direct && scope == taskScope) result += scope
+            }
+        }
+    }
+    return result
 }

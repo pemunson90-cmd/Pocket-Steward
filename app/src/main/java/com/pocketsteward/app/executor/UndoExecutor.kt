@@ -96,7 +96,7 @@ class UndoExecutor(
                         undoError = null,
                     ),
                 )
-                reindexAfterUndo(pending, task.scopeRootRef, gateway)
+                refreshUndoneIndex(pending, task.scopeRootRef, gateway)
                 result
             }
 
@@ -196,7 +196,7 @@ class UndoExecutor(
                             undoError = null,
                         ),
                     )
-                    reindexAfterUndo(pending, task.scopeRootRef, gateway)
+                    refreshUndoneIndex(pending, task.scopeRootRef, gateway)
                     undone++
                 }
 
@@ -298,6 +298,15 @@ class UndoExecutor(
         catch (failure: Exception) { MutationResult.Failure("Undo could not verify current storage: ${failure.message ?: "restore provider access"}", failure) }
     }
 
+    private suspend fun refreshUndoneIndex(record: MutationRecord, scope: String, gateway: StorageGateway) {
+        try { reindexAfterUndo(record, scope, gateway) }
+        catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (failure: Exception) {
+            mutationRecordDao.update(record.copy(status = MutationStatus.UNDONE, undoState = UndoState.UNDONE,
+                undoError = "Library refresh needs attention: ${failure.message ?: "inventory unavailable"}. Refresh the library before relying on its index."))
+        }
+    }
+
     private suspend fun reindexAfterUndo(record: MutationRecord, scopeRootRef: String, gateway: StorageGateway) {
         val destinationAfter = record.destinationAfter?.let(FileRefJournalCodec::decode) ?: return
         when (record.operationType) {
@@ -312,18 +321,16 @@ class UndoExecutor(
             MutationOperationType.TRASH,
             -> {
                 val restored = FileRefJournalCodec.decode(record.sourceBefore)
-                fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
                 val meta = gateway.stat(restored)
+                if (meta.isDirectory) {
+                    MovedFolderIndex(fileRecordDao, gateway).replace(destinationAfter, meta.ref, scopeRootRef)
+                    return
+                }
+                fileRecordDao.deleteByStableRef(destinationAfter.rawValue())
                 val restoredRecord = meta.toFileRecord(restored.knownParentOrNull())
                 fileRecordDao.upsert(restoredRecord)
                 val knownScopes = (fileRecordDao.getKnownScopeRoots() + scopeRootRef).distinct()
-                val matchedScopes = matchingScopeRoots(meta.ref, knownScopes).toMutableSet()
-                if (restored !is FileRef.Direct) {
-                    // SAF mode has one granted tree per task. A symbolic child
-                    // restores into that exact tree even though the provider's
-                    // concrete URI is assigned only after the inverse move.
-                    matchedScopes += scopeRootRef
-                }
+                val matchedScopes = matchingStorageScopes(gateway, meta.ref, knownScopes, scopeRootRef)
                 fileRecordDao.insertScopeTags(
                     matchedScopes.map { FileScope(restoredRecord.stableRef, it) },
                 )

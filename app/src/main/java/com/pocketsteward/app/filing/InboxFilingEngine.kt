@@ -597,7 +597,7 @@ object InboxFilingEngine {
     }
     private fun meaningfulTokens(value: String): Set<String> = normalizedText(value).meaningful
 
-    private fun normalize(value: String): String = value.trim().trimEnd('/').lowercase(Locale.ROOT)
+    private fun normalize(value: String): String = com.pocketsteward.app.saved.organizationReferenceIdentity(value)
     private fun normalizeCompact(value: String): String = normalizedText(value).compact
     private fun isUsefulLabel(value: String): Boolean = value.trim().length >= 3 && value.lowercase(Locale.ROOT) !in genericTokens
     private fun isUsefulVersion(value: String): Boolean = value.any(Char::isDigit) && value.length <= 40

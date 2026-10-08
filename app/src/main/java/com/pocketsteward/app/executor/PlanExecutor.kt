@@ -201,6 +201,7 @@ class PlanExecutor(
         var filesWritten = 0
         var failed = 0
         var needsReview = false
+        var indexWarnings = 0
         val failures = mutableListOf<OperationFailure>()
         val createdFolders = mutableListOf<String>()
 
@@ -311,7 +312,7 @@ class PlanExecutor(
                     )
                     mutationRecordDao.update(committed)
                     if (result.changed) {
-                        reindexAfterMutation(operation, result.resultRef, scopeRootRef)
+                        if (!refreshCommittedIndex(committed, operation, result.resultRef, scopeRootRef)) indexWarnings++
                         when (operation) {
                             is PlannedOperation.CreateDirectory -> {
                                 foldersCreated++
@@ -399,7 +400,7 @@ class PlanExecutor(
                     summary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
                 },
-                summary = durableExecutionSummaryText(summary, validated.rejected.size),
+                summary = durableExecutionSummaryText(summary, validated.rejected.size, indexWarnings),
             ),
         )
 
@@ -463,6 +464,7 @@ class PlanExecutor(
         var filesWritten = 0
         var failed = 0
         var needsReview = false
+        var indexWarnings = 0
         val failures = mutableListOf<OperationFailure>()
         val createdFolders = mutableListOf<String>()
         val existingBySequence = existingRecords.associateBy { it.sequence }
@@ -488,7 +490,10 @@ class PlanExecutor(
 
         for (record in existingRecords) {
             when (record.status) {
-                MutationStatus.COMMITTED -> countCommitted(record.sequence, record)
+                MutationStatus.COMMITTED -> {
+                    countCommitted(record.sequence, record)
+                    if (record.error?.startsWith("Library refresh") == true) indexWarnings++
+                }
                 MutationStatus.FAILED -> {
                     val reason = record.error ?: "Operation failed before interruption."
                     failures += operations[record.sequence].toFailure(record.sequence, reason)
@@ -640,7 +645,7 @@ class PlanExecutor(
                     )
                     mutationRecordDao.update(committed)
                     if (result.changed) {
-                        reindexAfterMutation(operation, result.resultRef, task.scopeRootRef)
+                        if (!refreshCommittedIndex(committed, operation, result.resultRef, task.scopeRootRef)) indexWarnings++
                         when (operation) {
                             is PlannedOperation.CreateDirectory -> {
                                 foldersCreated++
@@ -703,7 +708,7 @@ class PlanExecutor(
                     finishedSummary.succeededTotal > 0 -> TaskRunStatus.PARTIAL
                     else -> TaskRunStatus.FAILED
                 },
-                summary = durableExecutionSummaryText(finishedSummary, leftUntouched = 0),
+                summary = durableExecutionSummaryText(finishedSummary, leftUntouched = 0, indexWarnings = indexWarnings),
             ),
         )
         if (!needsReview) {
@@ -712,7 +717,7 @@ class PlanExecutor(
         return finishedSummary
     }
 
-    private fun durableExecutionSummaryText(summary: ExecutionSummary, leftUntouched: Int): String {
+    private fun durableExecutionSummaryText(summary: ExecutionSummary, leftUntouched: Int, indexWarnings: Int = 0): String {
         val protectionBlocked = summary.protectionBlocked
         val otherFailures = (summary.failed - protectionBlocked).coerceAtLeast(0)
         return buildString {
@@ -721,6 +726,7 @@ class PlanExecutor(
             append(", $protectionBlocked blocked by protection checks")
             append(", $otherFailures failed for other reasons")
             if (leftUntouched > 0) append(", $leftUntouched left untouched")
+            if (indexWarnings > 0) append(", library refresh needed after $indexWarnings change(s); see task details")
         }
     }
 
@@ -991,6 +997,19 @@ class PlanExecutor(
         )
     }
 
+    private suspend fun refreshCommittedIndex(record: MutationRecord, operation: PlannedOperation, result: FileRef, scope: String): Boolean {
+        return try {
+            reindexAfterMutation(operation, result, scope)
+            true
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (failure: Exception) {
+            // The mutation is already committed. A rebuildable index failure must
+            // not convert it into a failed/replayable file operation.
+            mutationRecordDao.update(record.copy(error = "Library refresh needs attention: ${failure.message ?: "inventory unavailable"}. Refresh the library before relying on its index."))
+            false
+        }
+    }
+
     private suspend fun reindexAfterMutation(
         operation: PlannedOperation,
         newRef: FileRef,
@@ -1006,6 +1025,14 @@ class PlanExecutor(
             is PlannedOperation.CreateDirectory,
             is PlannedOperation.WriteTextFile,
             -> null
+        }
+
+        if ((operation is PlannedOperation.Move || operation is PlannedOperation.Rename || operation is PlannedOperation.Trash) &&
+            (sourceRecord?.isDirectory == true || sourceRecord == null && gateway.stat(newRef).isDirectory)) {
+            val folders = MovedFolderIndex(fileRecordDao, gateway)
+            if (operation is PlannedOperation.Trash) folders.remove(operation.source)
+            else folders.replace(operation.sourceRef(), newRef, scopeRootRef)
+            return
         }
 
         val destinationParent = when (operation) {
@@ -1041,8 +1068,7 @@ class PlanExecutor(
                 isHidden = meta.isHidden,
             )
             fileRecordDao.upsert(copied)
-            val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
-            if (newRef is FileRef.Saf) scopes += scopeRootRef
+            val scopes = matchingStorageScopes(gateway, newRef, knownScopes, scopeRootRef)
             fileRecordDao.insertScopeTags(
                 scopes.map { FileScope(copied.stableRef, it) },
             )
@@ -1054,8 +1080,7 @@ class PlanExecutor(
         ) {
             val record = meta.toFileRecord(destinationParent)
             fileRecordDao.upsert(record)
-            val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
-            if (newRef is FileRef.Saf) scopes += scopeRootRef
+            val scopes = matchingStorageScopes(gateway, newRef, knownScopes, scopeRootRef)
             fileRecordDao.insertScopeTags(
                 scopes.map { FileScope(record.stableRef, it) },
             )
@@ -1079,8 +1104,7 @@ class PlanExecutor(
             isHidden = meta.isHidden,
         )
         fileRecordDao.upsert(moved)
-        val scopes = matchingScopeRoots(newRef, knownScopes).toMutableSet()
-        if (newRef is FileRef.Saf) scopes += scopeRootRef
+        val scopes = matchingStorageScopes(gateway, newRef, knownScopes, scopeRootRef)
         fileRecordDao.insertScopeTags(
             scopes.map { FileScope(newRef.rawValue(), it) },
         )

@@ -178,6 +178,108 @@ class SafNativeFolderTest {
             assertThat(provider.moves).isEqualTo(1)
         }
     }
+    @Test fun movedFolderDescendantsChangeHomeMembershipAndUndoRestoresEveryScannedScope() = runTest {
+        withDatabase { db ->
+            val scanner = com.pocketsteward.app.scan.FileScanner(gateway, db.fileRecordDao(), db.scanCheckpointDao())
+            for (id in listOf("inbox", "homes", "bundle", "notes")) scanner.scan(ref(id))
+            val dao = db.fileRecordDao()
+            assertThat(dao.scopeTagCount(ref("text").rawValue(), ref("inbox").rawValue())).isEqualTo(1)
+            val result = executor(db).execute(reviewedPlan(), ref("root").rawValue(), StorageAccessMode.SAF)
+            assertThat(result.failed).isEqualTo(0)
+            assertThat(dao.scopeTagCount(ref("text").rawValue(), ref("inbox").rawValue())).isEqualTo(0)
+            for (id in listOf("root", "homes", "bundle", "notes")) {
+                assertThat(dao.scopeTagCount(ref("text").rawValue(), ref(id).rawValue())).isEqualTo(1)
+            }
+            assertThat(dao.getByStableRef(ref("bundle").rawValue())!!.parentRef).isEqualTo(ref("homes").rawValue())
+            val mutation = db.mutationRecordDao().getForTaskRun(result.taskRunId).single()
+            assertThat(undo(db).undoSingleMutation(mutation.id)).isInstanceOf(MutationResult.Success::class.java)
+            assertThat(dao.scopeTagCount(ref("text").rawValue(), ref("homes").rawValue())).isEqualTo(0)
+            for (id in listOf("root", "inbox", "bundle", "notes")) {
+                assertThat(dao.scopeTagCount(ref("text").rawValue(), ref(id).rawValue())).isEqualTo(1)
+            }
+        }
+    }
+    @Test fun folderTrashRemovesDescendantRowsAndUndoRestoresTheirScopeRegistry() = runTest {
+        withDatabase { db ->
+            val scanner = com.pocketsteward.app.scan.FileScanner(gateway, db.fileRecordDao(), db.scanCheckpointDao())
+            for (id in listOf("inbox", "bundle", "notes")) scanner.scan(ref(id))
+            val source = ref("bundle")
+            val baseline = SourcePreconditions.capture(gateway, source)
+            val plan = AgentPlan("Trash an intact bundle", listOf(PlannedOperation.Trash(source, "Explicit review")), mapOf(source.rawValue() to baseline))
+            val result = executor(db).execute(plan, ref("root").rawValue(), StorageAccessMode.SAF)
+            assertThat(result.failed).isEqualTo(0)
+            val dao = db.fileRecordDao()
+            for (id in listOf("bundle", "notes", "text")) assertThat(dao.getByStableRef(ref(id).rawValue())).isNull()
+            assertThat(dao.getKnownScopeRoots()).contains(ref("notes").rawValue())
+            assertThat(undo(db).undoSingleMutation(db.mutationRecordDao().getForTaskRun(result.taskRunId).single().id)).isInstanceOf(MutationResult.Success::class.java)
+            for (id in listOf("root", "inbox", "bundle", "notes")) {
+                assertThat(dao.scopeTagCount(ref("text").rawValue(), ref(id).rawValue())).isEqualTo(1)
+            }
+        }
+    }
+    @Test fun failedDerivedIndexRefreshKeepsTheMoveCommittedAndUndoAvailable() = runTest {
+        withDatabase { db ->
+            var destinationReads = 0
+            val intermittent = object : StorageGateway by gateway {
+                override suspend fun listChildren(directory: FileRef): List<FileEntry> {
+                    if (directory == ref("bundle") && provider.moves > 0 && ++destinationReads == 2) {
+                        throw IllegalStateException("Provider temporarily unavailable for index refresh")
+                    }
+                    return gateway.listChildren(directory)
+                }
+            }
+            val runner = PlanExecutor(intermittent, db.fileRecordDao(), db.taskRunDao(), db.mutationRecordDao())
+            val result = runner.execute(reviewedPlan(), ref("root").rawValue(), StorageAccessMode.SAF)
+            assertThat(result.failed).isEqualTo(0)
+            assertThat(result.filesMoved).isEqualTo(1)
+            val mutation = db.mutationRecordDao().getForTaskRun(result.taskRunId).single()
+            assertThat(mutation.status).isEqualTo(MutationStatus.COMMITTED)
+            assertThat(mutation.undoState).isEqualTo(UndoState.AVAILABLE)
+            assertThat(mutation.error).startsWith("Library refresh needs attention")
+            assertThat(db.taskRunDao().getById(result.taskRunId)!!.summary).contains("library refresh needed")
+            assertThat(undo(db).undoSingleMutation(mutation.id)).isInstanceOf(MutationResult.Success::class.java)
+            assertThat(provider.moves).isEqualTo(2)
+        }
+    }
+    @Test fun reviewedConsolidationMovesAnUnmatchedBundleAndMergesExistingRoles() = runTest {
+        provider.seed("target", "homes", "Lilith main")
+        provider.seed("target-notes", "target", "Notes")
+        provider.seed("release", "bundle", "Release")
+        provider.seed("build", "release", "build.txt", "Reviewed release")
+        withDatabase { db ->
+            val scanner = com.pocketsteward.app.scan.FileScanner(gateway, db.fileRecordDao(), db.scanCheckpointDao())
+            scanner.scan(ref("bundle")); scanner.scan(ref("target"))
+            val dao = db.fileRecordDao()
+            val proposed = com.pocketsteward.app.projects.ProjectConsolidationPlanner.build(ref("bundle"), ref("target"),
+                dao.getAllUnderScopeRoot(ref("bundle").rawValue()), dao.getAllUnderScopeRoot(ref("target").rawValue()))
+            assertThat(proposed.moves).hasSize(2)
+            val sources = ReviewedSources.capture(proposed.moves, gateway)
+            val index = InMemoryFileIndex(dao.getAllUnderScopeRoot(ref("root").rawValue()))
+            val result = executor(db).execute(AgentPlan("Reviewed consolidation", proposed.moves, sources), ref("root").rawValue(), StorageAccessMode.SAF, index)
+            assertThat(result.failed).isEqualTo(0)
+            assertThat(result.filesMoved).isEqualTo(2)
+            assertThat(gateway.openRead(ref("target-notes").child("scene.txt")).bufferedReader().use { it.readText() }).isEqualTo("Chapter one")
+            val filedScene = gateway.stat(ref("target-notes").child("scene.txt")).ref
+            assertThat(dao.scopeTagCount(filedScene.rawValue(), ref("target").rawValue())).isEqualTo(1)
+            assertThat(dao.scopeTagCount(filedScene.rawValue(), ref("bundle").rawValue())).isEqualTo(0)
+            assertThat(gateway.exists(ref("target").child("Release"))).isTrue()
+            assertThat(gateway.openRead(ref("build")).bufferedReader().use { it.readText() }).isEqualTo("Reviewed release")
+            assertThat(dao.scopeTagCount(ref("build").rawValue(), ref("bundle").rawValue())).isEqualTo(0)
+            assertThat(dao.scopeTagCount(ref("build").rawValue(), ref("target").rawValue())).isEqualTo(1)
+            assertThat(undo(db).undo(result.taskRunId).blocked).isEqualTo(0)
+            assertThat(gateway.openRead(ref("notes").child("scene.txt")).bufferedReader().use { it.readText() }).isEqualTo("Chapter one")
+            assertThat(gateway.exists(ref("bundle").child("Release"))).isTrue()
+        }
+    }
+    @Test fun currentGrantBindingPreservesCaseSensitiveOpaqueIdentityAndRefusesOutsideHomes() {
+        provider.seed("Bundle", "homes", "Other project")
+        val grant = DocumentsContract.buildTreeDocumentUri(OpaqueDocumentsProvider.AUTHORITY, "root").toString()
+        assertThat(SafScopeAccess.bind(app, grant, ref("bundle", "inbox").rawValue())).isEqualTo(ref("bundle"))
+        assertThat(SafScopeAccess.bind(app, grant, ref("Bundle", "homes").rawValue())).isEqualTo(ref("Bundle"))
+        val narrow = DocumentsContract.buildTreeDocumentUri(OpaqueDocumentsProvider.AUTHORITY, "inbox").toString()
+        try { SafScopeAccess.bind(app, narrow, ref("Bundle").rawValue()); throw AssertionError("Outside home was bound") }
+        catch (expected: IllegalArgumentException) { assertThat(expected.message).contains("outside") }
+    }
     private suspend fun pendingMove(db: AppDatabase): MutationRecord {
         val plan = reviewedPlan()
         val task = executor(db).enqueueApproved(plan, ref("root").rawValue(), StorageAccessMode.SAF)

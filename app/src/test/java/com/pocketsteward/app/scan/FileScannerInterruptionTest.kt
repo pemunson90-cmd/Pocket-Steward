@@ -431,6 +431,12 @@ class FileScannerInterruptionTest {
         override suspend fun getById(id: Long): FileRecord? =
             records.values.firstOrNull { it.id == id }
 
+        override suspend fun getIndexedChildren(parents: List<String>, afterRef: String, limit: Int): List<com.pocketsteward.app.data.db.IndexedChildRef> =
+            records.values.filter { it.parentRef in parents && it.stableRef > afterRef }.sortedBy { it.stableRef }.take(limit)
+                .map { com.pocketsteward.app.data.db.IndexedChildRef(it.stableRef, it.displayName, it.isDirectory) }
+
+        override suspend fun deleteByStableRefs(refs: List<String>) { refs.forEach { deleteByStableRef(it) } }
+
         override fun observeChildren(parentRef: String): Flow<List<FileRecord>> =
             flowOf(records.values.filter { it.parentRef == parentRef })
 
