@@ -1,3 +1,7 @@
+## November 20 owner operating directive — connected product delivery
+
+**Before new project work, read [AGENTS.md](AGENTS.md) and [Discovery → Delivery](docs/AGENT_DISCOVERY_TO_DELIVERY_PROTOCOL.md).** Their connected-feature contract covers the real user experience, interface, implementation, model/AI where applicable, and outcome. Prioritize useful integrated product and evidence-grounded use over repetitive component tests; preserve observations and handoffs before context resets. These rules extend rather than discard existing project-specific release, safety and continuity requirements. Apply at the next safe boundary; never interrupt another agent's active worktree.
+
 ## Non-negotiable feature continuity (owner directive)
 
 **If Pat did not explicitly authorize removing a working capability, it stays.** Existing working features, gameplay rules, card effects, interfaces, workflows, integrations, content, data, settings, accessibility, and tools survive fixes, refactors, rewrites, ports, engine replacements and architecture changes. Do not silently delete, stub, disable, simplify, postpone or leave them behind because a new implementation is cleaner or the task named only one feature. Lack of an explicit preservation list is **not** permission to drop anything.
